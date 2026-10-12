@@ -1,6 +1,6 @@
 {
   "$type": "PvZCards.Engine.Queries.DiscardedFromQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
   "$data": {
-    "Source": "2"
+    "Source": 2
   }
 }
