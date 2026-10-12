@@ -1,0 +1,23 @@
+{
+	"$type" : "PvZCards.Engine.Components.DrawCardFromSubsetEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+	"$data" : {
+		"SubsetQuery" : {
+			"$type" : "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+			"$data" : {
+				"queries" : [
+					{
+						"$type" : "PvZCards.Engine.Queries.HasComponentQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+						"$data" : {
+							"ComponentType" : "PvZCards.Engine.Components.Plants, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
+						}
+					},
+					{
+						"$type" : "PvZCards.Engine.Queries.InDiscardPileGuidQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+						"$data" : {}
+					}
+				]
+			}
+		},
+		"DrawAmount" : 1
+	}
+}
