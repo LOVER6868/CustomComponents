@@ -1,9 +1,0 @@
-{
-  "$type": "PvZCards.Engine.Components.GrantAbilityEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
-  "$data": {
-    "GrantableAbilityType": "Charge",
-    "Duration": "NextFighter",
-    "AbilityValue": 5,
-    "ModifyOperation": "Add"
-  }
-}

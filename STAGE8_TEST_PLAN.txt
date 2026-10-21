@@ -1,0 +1,9 @@
+Stage-8 split diagnostics (rebuild/install required once):
+Keep startup stage 8 and pick3 mode 0. Change [Pick3Stage8Isolation] in the configuration that Bloom actually loads, then restart game.
+A CandidateBridge=false, SubmissionHooks=false (no new Stage 8 hooks)
+B CandidateBridge=true, SubmissionHooks=false (candidate hooks only)
+C CandidateBridge=true, SubmissionHooks=true (candidate + submission, original behavior)
+Run 10 launches each under identical APK/card data/network conditions.
+Check logcat for CustomComponents/Pick3/STAGE8_SPLIT to verify settings took effect.
+Changes to config.ini may require rebuilding/packaging per your Bloom configuration setup.
+Do not use these reduced stages for normal gameplay; PickFromThree may softlock.

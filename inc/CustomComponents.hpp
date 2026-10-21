@@ -1,39 +1,44 @@
 #pragma once
 
-// Core registries
+// Shared component and ability registries
 #include "core/CustomComponentRegistry.hpp"
 #include "core/AbilityRegistry.hpp"
-#include "systems/CustomFieldBridgeSystem.hpp"
+#include "core/EnumSerializationSupport.hpp"
+#include "core/CustomFieldBridgeSystem.hpp"
 
-// Traits/Ability Components
-#include "components/Charge.hpp"
-#include "components/Armor.hpp"
-#include "components/Thrash.hpp"
+// Ability components
+#include "abilities/Charge.hpp"
+#include "abilities/Armor.hpp"
+#include "abilities/Thrash.hpp"
 
-//Queries
+// Entity-backed and discard provenance queries
 #include "queries/QuerySupport.hpp"
 #include "queries/InDeckQuery.hpp"
 #include "queries/InDiscardPileQuery.hpp"
 #include "queries/DiscardedFromQuery.hpp"
+#include "queries/PickedFromThreeQuery.hpp"
 
-// Custom trigger framework
-#include "systems/CustomTriggerSystem.hpp"
-#include "systems/TargetingPresentationRefreshSystem.hpp"
-#include "systems/ZoneTriggeredAbilityPresentationSystem.hpp"
-#include "components/CustomTrigger.hpp"
-#include "components/CustomTriggerCarrierEffect.hpp"
+// Custom triggers and shared presentation infrastructure
+#include "triggers/CustomTriggerSystem.hpp"
+#include "presentation/TargetingPresentationRefreshSystem.hpp"
+#include "pick3/PickFromThreeCore.hpp"
+#include "pick3/PickFromThreeTargetBridge.hpp"
+#include "presentation/PickFromThreePreviewSystem.hpp"
+#include "presentation/ZoneTriggeredAbilityPresentationSystem.hpp"
+#include "triggers/CustomTrigger.hpp"
+#include "triggers/CustomTriggerCarrierEffect.hpp"
 
-// Runtime systems
-#include "systems/NumericAbility.hpp"
-#include "systems/GrantableAbilityRuntime.hpp"
-#include "systems/ComponentSupport.hpp"
-#include "systems/AbilityDefinitions.hpp"
-#include "systems/GrantAbilityPresentation.hpp"
-#include "systems/ChargeSystem.hpp"
-#include "systems/ThrashSystem.hpp"
-#include "systems/GrantAbilitySystem.hpp"
-#include "systems/TargetScopeSupport.hpp"
+// Ability runtime and gameplay systems
+#include "abilities/NumericAbility.hpp"
+#include "abilities/GrantableAbilityRuntime.hpp"
+#include "core/ComponentSupport.hpp"
+#include "abilities/AbilityDefinitions.hpp"
+#include "abilities/GrantAbilityPresentation.hpp"
+#include "abilities/ChargeSystem.hpp"
+#include "abilities/ThrashSystem.hpp"
+#include "abilities/GrantAbilitySystem.hpp"
+#include "queries/TargetScopeSupport.hpp"
 
-//Extra Gameplay Functions
-#include "utilities/DeckMaterializer.hpp"
-#include "utilities/DiscardPileViewer.hpp"
+// Deck persistence and discard inspection systems
+#include "zones/DeckMaterializer.hpp"
+#include "presentation/DiscardPileViewer.hpp"

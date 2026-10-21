@@ -1,1 +1,6 @@
-docs/
+# Track source documentation, architecture notes, and JSON examples.
+# Only ignore local editor and operating-system artifacts here.
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp

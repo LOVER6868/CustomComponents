@@ -1,0 +1,20 @@
+Passive active-card-data metadata test
+======================================
+Source: PvZCards.Core.Utilities.CardDataMapper.SetCardData, as the game populates its map.
+This is NOT a parser for AssetBundle files, and cannot capture definitions loaded BEFORE its hook is installed.
+Mode 0: off, 1: existing CardAssetsTask snapshots, 2: mapper SetCardData snapshots, 3: both.
+
+ADB commands (run from PowerShell):
+adb shell "echo 2 > /sdcard/Android/data/com.ea.gp.pvzheroes/files/pick3_metadata_source.txt"
+adb shell "echo 2 > /sdcard/Android/data/com.ea.gp.pvzheroes/files/pick3_metadata_isolation.txt"
+adb shell am force-stop com.ea.gp.pvzheroes
+
+After opening game and playing GUID 704:
+adb logcat -d -v time -s Sprig:I "*:S" | Select-String "META_SOURCE|META_SNAPSHOT" | Select-Object -Last 100
+
+To return to stable:
+adb shell "echo 0 > /sdcard/Android/data/com.ea.gp.pvzheroes/files/pick3_metadata_source.txt"
+adb shell am force-stop com.ea.gp.pvzheroes
+
+Keep pick3_metadata_isolation=2 to avoid stock-icon crash and pick3 hooks=3 for submission.
+If no captures occur, inspect initialization order: game's SetCardData may be called before this hook is installed.

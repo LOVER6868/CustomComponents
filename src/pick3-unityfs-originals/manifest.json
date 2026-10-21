@@ -1,0 +1,51 @@
+[
+  {
+    "slot": "Circle",
+    "origin_archive": "downloaded-dependencies.zip",
+    "origin_member": "downloaded-dependencies/53bddfe24e1719146baf8fa4757904c4.bundle",
+    "hash_sha256": "9b7905d163e7c8c303afa0046b56b6b5d89fbde40e2727d71ce3be2dbeb626d1",
+    "bytes": 426399
+  },
+  {
+    "slot": "Sun",
+    "origin_archive": "downloaded-dependencies.zip",
+    "origin_member": "downloaded-dependencies/6d4f51dcf9f5a1740a2877feefc82dca.bundle",
+    "hash_sha256": "dd0efb087b179c2baa3a38ab98449409b639b9e9b25278bd72718b5d05bb1928",
+    "bytes": 30784
+  },
+  {
+    "slot": "Heart",
+    "origin_archive": "downloaded-dependencies.zip",
+    "origin_member": "downloaded-dependencies/5af871305c68ee44a98c42f87f8ec1f2.bundle",
+    "hash_sha256": "eeefde8ee33e16cfd0c5cf3fd4174473891eab76c1621c6f22445ce1b5c389e9",
+    "bytes": 19005
+  },
+  {
+    "slot": "Attack",
+    "origin_archive": "downloaded-dependencies.zip",
+    "origin_member": "downloaded-dependencies/27cc2d46890beeb40bbae42d125adf85.bundle",
+    "hash_sha256": "2681411b49be2ab89bab3802cc2b8580ce442946fe451e8150ce6c04645eb232",
+    "bytes": 8502
+  },
+  {
+    "slot": "Brain",
+    "origin_archive": "downloaded-dependencies.zip",
+    "origin_member": "downloaded-dependencies/a8950d3e2ede40b43b06e4e3b7638c0b.bundle",
+    "hash_sha256": "b4545122d2af779d21dcd1958bd9a24a7d72c0b1cd680d726dfa250e7466ce98",
+    "bytes": 13540
+  },
+  {
+    "slot": "Button",
+    "origin_archive": "files.zip",
+    "origin_member": "files/autotagged/e5d5acadbf08441f3b54e53a689d0233_1",
+    "hash_sha256": "9d60375fd2afb3618350c14eb007b8f2216f6eed9eb5d792ce1eef1e10fbbd24",
+    "bytes": 15630
+  },
+  {
+    "slot": "Colors",
+    "origin_archive": "files.zip",
+    "origin_member": "files/autotagged/0730566efa0de774eabe303a5e6b39af_1",
+    "hash_sha256": "83494dce2d63fe124a2f05819a15e2b420a764a07c2a8b6150845b66d6222ad9",
+    "bytes": 502120
+  }
+]

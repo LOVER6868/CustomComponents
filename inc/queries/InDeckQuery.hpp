@@ -5,6 +5,7 @@
 #include <BNM/ClassesManagement.hpp>
 #include <BNM/Defaults.hpp>
 #include <BNM/Field.hpp>
+#include <BNM/Method.hpp>
 
 #include "queries/QueryRegistry.hpp"
 #include "log.h"
@@ -112,7 +113,7 @@ inline bool InitializeInDeckMembershipMetadata() {
 //
 // InHandQuery provides the stock EntityQuery / Poolable / DeepCopyable lifecycle.
 // This subclass overrides Matches() with real entity-backed deck membership.
-// Phase 0 keeps main-deck CardPoolEntry.EntityId values materialized, so membership
+// Persistent main-deck CardPoolEntry.EntityId values make membership
 // is a direct Entity.Id == CardPoolEntry.EntityId test.
 struct InDeckQuery final : BNM::IL2CPP::Il2CppObject {
     // Real public parameterless IL2CPP constructor. InstanceManager's stock
@@ -148,7 +149,7 @@ struct InDeckQuery final : BNM::IL2CPP::Il2CppObject {
             return false;
 
         // A card is in deck iff its live Entity.Id occurs in an OrderedCardPool
-        // CardPoolEntry.EntityId. Phase 0 guarantees main-deck entries remain
+        // CardPoolEntry.EntityId. Deck materialization ensures main-deck entries remain
         // materialized through mulligan and normal gameplay.
         for (int e = 0; e < entities->size; ++e) {
             Obj* poolOwner = InDeckListAt(entities, e);

@@ -1,0 +1,27 @@
+PickFromThree two-stage puff + ADB artwork tracing
+====================================================
+Based on ActiveMapper_ADB (mapper metadata mode 2, working multi-match version).
+
+Selected-card dismissal:
+  Phase 1: other 2 cards and chosen card's button/label/shadow slide/fade out.
+  Phase 2: chosen card grows ~14% (puff) and fades out.
+  Submission and gameplay hooks unchanged.
+
+Art tracing (read once per popup):
+  pick3_art_trace.txt = 0 : off (default)
+  pick3_art_trace.txt = 1 : log candidate GUIDs/colors and resident probe results
+  pick3_art_trace.txt = 2 : additionally trace existing async request paths and sprite results
+
+Important: Tracing does NOT enable async or resident loaders.
+Keep pick3_async_art.txt=0 initially; pick3_metadata_source.txt=2;
+pick3_metadata_isolation.txt=2; customcomponents_pick3_hooks.txt=3.
+
+PowerShell (prints only; no local output files):
+adb shell "echo 1 > /sdcard/Android/data/com.ea.gp.pvzheroes/files/pick3_art_trace.txt"
+adb logcat -d -v time -s Sprig:I "*:S" | Select-String "ART_TRACE|Pick3Preview/ASYNC|Pick3Preview/DYNAMIC" | Select-Object -Last 120
+
+Mode 2 does NOT start requests; use the independent pick3_async_art.txt selector
+only if you accept the risk of the existing experimental loader. If it crashes,
+return async selector to zero and restart the game.
+
+Source files have not been compiled or tested on device.

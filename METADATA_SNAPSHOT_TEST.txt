@@ -1,0 +1,16 @@
+PickFromThree metadata snapshot ADB experiment
+
+The default is OFF. This code does NOT call CardDataMapper.GetCardData.
+It copies scalar data and names from CardAssetsTask.CardData after the game calls Start().
+It only covers GUIDs that the game itself opens through CardAssetsTask.
+
+Before STARTING the game:
+adb shell "echo 1 > /sdcard/Android/data/com.ea.gp.pvzheroes/files/pick3_metadata_snapshot.txt"
+Restart game (hook installed only at module initialization).
+After playing cards and opening PickFromThree, inspect:
+adb logcat -d -s Sprig:I "*:S" | Select-String "META_SNAPSHOT"
+Look for captured GUIDs and HIT lines. If no HIT, source does not cover those cards.
+
+Rollback:
+adb shell "echo 0 > /sdcard/Android/data/com.ea.gp.pvzheroes/files/pick3_metadata_snapshot.txt"
+Restart the game. Gameplay hooks remain unchanged.

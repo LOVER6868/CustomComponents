@@ -1,0 +1,23 @@
+Deleted obsolete project files (relative to CustomComponents):
+inc/presentation/detail/Pick3SamplePortraitBytes.hpp
+src/Pick3SamplePortraitBytes.cpp
+assets/pick3-static/choose_button.png
+assets/pick3-static/selected_button.png
+assets/pick3-static/portrait_disc.png
+assets/pick3-static/portrait_rim.png
+assets/pick3-static/class_ring.png
+assets/pick3-static/inspection_rim_left.png
+assets/pick3-static/inspection_rim_right.png
+docs/reference-art/choose_button_opaque.png
+docs/reference-art/selected_button_opaque.png
+docs/reference-art/inline_tooltip_rounded.png
+docs/reference-art/inspection_grass_from_reference.png
+docs/reference-art/inspection_grass_polished.png
+docs/reference-art/inspection_rim_from_reference.png
+docs/reference-art/inspection_rim_left.png
+docs/reference-art/inspection_rim_right.png
+docs/reference-art/inspection_rim_seamless_white.png
+docs/PICK3_INSPECTION_CIRCLE.md
+docs/PICK3_UI_POLISH_MULTICLASS.md
+docs/PICK3_SELF_OWNED_STATIC_ASSETS.md
+docs/PICK3_NATIVE_SHELL_CLEANUP.md

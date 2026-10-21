@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstdint>
+
+#include <BNM/UserSettings/GlobalSettings.hpp>
 #include <BNM/Il2CppHeaders.hpp>
 
 #include <mutex>

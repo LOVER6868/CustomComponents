@@ -1,6 +1,7 @@
 #pragma once
 
 #include <BNM/Class.hpp>
+#include <BNM/Method.hpp>
 
 #include <string>
 

@@ -1,24 +1,26 @@
 #pragma once
 
-//Discard to Location
-#include "components/RemoveFromDiscardPileEffectDescriptor.hpp"
-#include "components/ReturnFromDiscardPileToDeckEffectDescriptor.hpp"
-#include "components/ReturnFromDiscardPileToLaneEffectDescriptor.hpp"
-#include "components/ReturnFromDiscardPileEffectDescriptor.hpp"
-#include "systems/ReturnFromDiscardPileSystem.hpp"
+// Discard-pile removal and return effects
+#include "effects/RemoveFromDiscardPileEffectDescriptor.hpp"
+#include "effects/ReturnFromDiscardPileToDeckEffectDescriptor.hpp"
+#include "effects/ReturnFromDiscardPileToLaneEffectDescriptor.hpp"
+#include "effects/ReturnFromDiscardPileEffectDescriptor.hpp"
+#include "effects/MoveCardInDeckEffectDescriptor.hpp"
+#include "zones/MoveCardInDeckSystem.hpp"
+#include "zones/ReturnDiscardToHandSystem.hpp"
 
-//Location to Discard
-#include "components/DiscardFromDeckEffectDescriptor.hpp"
-#include "components/DiscardFromHandEffectDescriptor.hpp"
-#include "systems/DiscardFromDeckSystem.hpp"
-#include "systems/DiscardFromHandSystem.hpp"
-#include "systems/DiscardFromHandSystem.hpp"
-#include "systems/DiscardFromHandPresentationSystem.hpp"
+// Hand/deck discard effects
+#include "effects/DiscardFromDeckEffectDescriptor.hpp"
+#include "effects/DiscardFromHandEffectDescriptor.hpp"
+#include "zones/DiscardFromDeckSystem.hpp"
+#include "zones/DiscardFromHandSystem.hpp"
+#include "presentation/DiscardFromHandPresentationSystem.hpp"
 
-//Main Systems
-#include "systems/DiscardPileZoneEffectsSystem.hpp"
-#include "systems/DiscardedSystem.hpp"
+// Discard pile transfers and origin tracking
+#include "zones/DiscardPileTransferSystem.hpp"
+#include "zones/DiscardProvenanceSystem.hpp"
 
-//New Triggers
-#include "components/ReturnedFromDiscardPileTrigger.hpp"
-#include "components/DiscardOutsidePlayTrigger.hpp"
+// Discard and return trigger components
+#include "triggers/ReturnedFromDiscardPileTrigger.hpp"
+#include "triggers/DiscardOutsidePlayTrigger.hpp"
+

@@ -1,0 +1,72 @@
+{
+  "description_plate": {
+    "source": "project PNG (not verified stock)",
+    "dimensions": [
+      440,
+      184
+    ]
+  },
+  "cost_sun": {
+    "source": "native UnityFS",
+    "dimensions": [
+      122,
+      127
+    ]
+  },
+  "cost_brain": {
+    "source": "project PNG (not verified stock)",
+    "dimensions": [
+      260,
+      260
+    ]
+  },
+  "attack_leaf": {
+    "source": "project PNG (not verified stock)",
+    "dimensions": [
+      260,
+      260
+    ]
+  },
+  "health_heart": {
+    "source": "native UnityFS",
+    "dimensions": [
+      113,
+      103
+    ]
+  },
+  "inspection_grass": {
+    "source": "native UnityFS",
+    "dimensions": [
+      487,
+      487
+    ]
+  },
+  "inspection_reference_rim": {
+    "source": "native UnityFS",
+    "dimensions": [
+      498,
+      497
+    ]
+  },
+  "inline_tooltip_plate": {
+    "source": "project PNG (not verified stock)",
+    "dimensions": [
+      320,
+      132
+    ]
+  },
+  "inspection_rim_left": {
+    "source": "derived transparent left half of verified native UnityFS inspection_reference_rim PNG; no new UnityFS loading",
+    "dimensions": [
+      498,
+      497
+    ]
+  },
+  "inspection_rim_right": {
+    "source": "derived transparent right half of verified native UnityFS inspection_reference_rim PNG; no new UnityFS loading",
+    "dimensions": [
+      498,
+      497
+    ]
+  }
+}

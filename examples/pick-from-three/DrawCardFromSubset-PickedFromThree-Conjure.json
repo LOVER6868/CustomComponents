@@ -1,0 +1,10 @@
+{
+  "$type": "PvZCards.Engine.Components.DrawCardFromSubsetEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "SubsetQuery": {
+      "$type": "PvZCards.Engine.Queries.PickedFromThreeQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+      "$data": {}
+    },
+    "DrawAmount": 1
+  }
+}
