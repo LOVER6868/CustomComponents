@@ -166,8 +166,18 @@ namespace CustomComponents::Systems {
         inline void ProcessBlockableDamageHook(
             void* self, void* effect, void* targetEntity, const void* method
         ) {
-            const bool previousActive = activeCharge;
-            const int previousAmount = activeChargeAmount;
+            // Restore the enclosing hook's thread-local state on every C++ exit path.
+            struct ScopedChargeState {
+                bool savedActive;
+                int savedAmount;
+                ScopedChargeState() : savedActive(activeCharge), savedAmount(activeChargeAmount) {}
+                ~ScopedChargeState() {
+                    activeCharge = savedActive;
+                    activeChargeAmount = savedAmount;
+                }
+                ScopedChargeState(const ScopedChargeState&) = delete;
+                ScopedChargeState& operator=(const ScopedChargeState&) = delete;
+            } scopedState;
 
             int amount = 0;
             if (TryGetTeamUpChargeAmount(self, effect, amount)) {
@@ -180,10 +190,8 @@ namespace CustomComponents::Systems {
                 activeChargeAmount = 0;
             }
 
-            originalProcessBlockableDamage(self, effect, targetEntity, method);
-
-            activeCharge = previousActive;
-            activeChargeAmount = previousAmount;
+            if (originalProcessBlockableDamage)
+                originalProcessBlockableDamage(self, effect, targetEntity, method);
         }
 
         inline int GetChargeAmountHook(void* self, void* blocker, const void* method) {

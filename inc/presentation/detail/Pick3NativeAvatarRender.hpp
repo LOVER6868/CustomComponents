@@ -33,12 +33,25 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarRender {
         std::uint32_t cameraRoot=0,rtRoot=0,rawRoot=0;
         bool prepared=false,visible=false,reported=false,environment=false;
         int paintedFrames=0;
+        // Read-only opt-in inspector; all handles released by Stop().
+        std::uint32_t inspectedAvatarRoot=0;
+        Bounds inspectInitial{};
+        Vec3 inspectRootInitial{};
+        std::chrono::steady_clock::time_point inspectStart{};
+        int inspectNextSample=0;
+        int inspectGuid=0;
+        bool environmentRecentered=false;
+        bool hasPreviousSettlingCenter=false;
+        Vec3 previousSettlingCenter{};
         int category=0; // 0=fighter, 1=environment, 2=trick/other
         std::chrono::steady_clock::time_point lastCardPaint{};
         std::uint32_t ticket=0;
     };
     inline Stage stages[kOptions]{};
     inline bool ready=false,requested=false;
+    inline bool inspectEnabled=false;
+    inline constexpr std::array<int,8> inspectSampleTimesMs{0,100,250,500,750,1200,2000,3200};
+    inline void RefreshInspectionSetting(){ inspectEnabled=true; }
     // Camera framing (config.ini, percents/100). Preserves game-owned CardView
     // transforms and never overwrites the prefab's authored local scale.
     inline float cameraZoom=1.f,portraitPadding=1.22f;
@@ -109,6 +122,7 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarRender {
     inline BNM::Method<Obj*> getTransform,getComponent,getChild,getGameObject;
     inline BNM::Method<int> getChildCount;
     inline BNM::Method<Bounds> getBounds;
+    inline BNM::Method<Vec3> getWorldPosition;
     inline BNM::Method<void> setLayer,setPosition,setOrthoSize,setTexture,setEnabled,destroyObject;
     inline BNM::Method<Obj*> addComponent;
     inline BNM::Method<void> setRaycast;
@@ -137,6 +151,7 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarRender {
     }
     inline bool Initialize(bool enable) {
         requested=enable;ready=false;renderTickCounter=0;paintSlot=0;paintCalls=0;lastPaint={};
+        RefreshInspectionSetting();
         if(!enable) return true;
         cameraClass=BNM::Class("UnityEngine","Camera");
         renderTextureClass=BNM::Class("UnityEngine","RenderTexture");
@@ -156,6 +171,7 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarRender {
             getChildCount=transformClass.GetMethod("get_childCount",0).cast<int>();
             getChild=transformClass.GetMethod("GetChild",1).cast<Obj*>();
             setPosition=transformClass.GetMethod("set_position",1).cast<void>();
+            getWorldPosition=transformClass.GetMethod("get_position",0).cast<Vec3>();
         }
         if(componentClass.IsValid()) getGameObject=componentClass.GetMethod("get_gameObject",0).cast<Obj*>();
         if(rendererClass.IsValid()) getBounds=rendererClass.GetMethod("get_bounds",0).cast<Bounds>();
@@ -222,7 +238,7 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarRender {
             if(destroyObject.IsValid()) BNM::TryInvoke([&]{destroyObject(camGO);});
         }
         if(rt && destroyObject.IsValid()) BNM::TryInvoke([&]{destroyObject(rt);});
-        Free(s.rawRoot);Free(s.cameraRoot);Free(s.rtRoot);s=Stage{};
+        Free(s.inspectedAvatarRoot);Free(s.rawRoot);Free(s.cameraRoot);Free(s.rtRoot);s=Stage{};
     }
     inline void EndSession(){for(int i=0;i<kOptions;++i)Stop(i);}
     inline bool BeginStage(int option,Obj* /*parent*/,std::uint32_t ticket,int category=0){
@@ -251,9 +267,9 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarRender {
         LOG_INFO("CustomComponents/Pick3/AVATAR_RENDER: STAGE option=%d rt=%p",option+1,rt);
         return true;
     }
-    inline void Relayer(Obj* go,int layer,int depth,Bounds& bounds,bool& found,std::array<Bounds,128>& samples,int& n){
+    inline void Relayer(Obj* go,int layer,int depth,Bounds& bounds,bool& found,std::array<Bounds,128>& samples,int& n,bool changeLayer=true){
         if(!go||depth>18)return;
-        setLayer[go](layer);
+        if(changeLayer)setLayer[go](layer);
         Obj* renderer=getComponent[go](rendererClass.GetMonoType());
         if(renderer&&getBounds.IsValid()){
             Bounds b{};
@@ -282,10 +298,10 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarRender {
         for(int i=0;i<count;++i){
             Obj* child=getChild[tr](i);
             Obj* childGO=child?getGameObject[child]():nullptr;
-            Relayer(childGO,layer,depth+1,bounds,found,samples,n);
+            Relayer(childGO,layer,depth+1,bounds,found,samples,n,changeLayer);
         }
     }
-    inline bool AvatarReady(int option,Obj* avatarGO,Obj* parentGO,bool environment=false){
+    inline bool AvatarReady(int option,Obj* avatarGO,Obj* parentGO,bool environment=false,int guid=0){
         if(!ready||option<0||option>=kOptions||!stages[option].prepared||!avatarGO)return false;
         Bounds b{};bool found=false;
         std::array<Bounds,128> samples{};int sampleCount=0;
@@ -346,6 +362,32 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarRender {
                 }
             }
         }
+        // Character-center guard: the initial union can be dominated by distant
+        // entrance particles (Starfruit and other projectile-heavy prefabs).
+        // Use a size-weighted median of nearby renderer centers to anchor the
+        // portrait, keeping the existing conservative camera zoom and bounds.
+        // This runs only when the avatar first becomes ready; no camera chasing.
+        if (dominantRenderer && sampleCount >= 3) {
+            std::array<float,128> xs{},ys{};
+            int count=0;
+            for(int i=0;i<sampleCount;++i){
+                const float dx=std::abs(samples[i].center.x-b.center.x);
+                const float dy=std::abs(samples[i].center.y-b.center.y);
+                const float span=std::max(b.extents.x,b.extents.y);
+                if(dx > span*2.f || dy > span*2.f)continue;
+                xs[count]=samples[i].center.x;
+                ys[count]=samples[i].center.y;
+                ++count;
+            }
+            if(count>=3){
+                std::sort(xs.begin(),xs.begin()+count);
+                std::sort(ys.begin(),ys.begin()+count);
+                const float midX=xs[count/2],midY=ys[count/2];
+                // Don't move drastically from the robust existing body cluster.
+                if(std::abs(midX-b.center.x)<=b.extents.x*.60f) b.center.x=midX;
+                if(std::abs(midY-b.center.y)<=b.extents.y*.60f) b.center.y=midY;
+            }
+        }
         // Square portrait RT. Fit both dimensions BEFORE zoom/padding;
         // otherwise the narrow render texture clips wide/tall characters.
         const float fullExtent=std::max(b.extents.x*static_cast<float>(kTexHeight)/kTexWidth,b.extents.y);
@@ -369,6 +411,22 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarRender {
         });
         if(ex.IsValid())return false;
         stages[option].environment=environment;
+        // Capture the same bounds used for camera framing. Subsequent inspector
+        // samples only READ renderers and transforms; they never move anything.
+        if(inspectEnabled && environment){
+            Stage& stage=stages[option];
+            stage.inspectedAvatarRoot=Root(avatarGO);
+            stage.inspectInitial=b;
+            stage.inspectStart=std::chrono::steady_clock::now();
+            stage.inspectNextSample=0;
+            stage.inspectGuid=guid;
+            Obj* rootTr=nullptr;
+            if(getTransform.IsValid()) BNM::TryInvoke([&]{rootTr=getTransform[avatarGO]();});
+            if(rootTr&&getWorldPosition.IsValid())BNM::TryInvoke([&]{stage.inspectRootInitial=getWorldPosition[rootTr]();});
+            LOG_INFO("CustomComponents/Pick3/FRAMING_INSPECT: START option=%d guid=%d anchor=(%.3f,%.3f) fullExtent=(%.3f,%.3f) root=(%.3f,%.3f,%.3f)",
+                     option+1,guid,b.center.x,b.center.y,b.extents.x,b.extents.y,
+                     stage.inspectRootInitial.x,stage.inspectRootInitial.y,stage.inspectRootInitial.z);
+        }
         // Paint the first transparent-background frame before exposing the UI
         // texture. An uninitialized RawImage / RenderTexture may show a white
         // quad if card loading finishes between two render ticks.
@@ -424,6 +482,69 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarRender {
     }
     inline void Tick(){
         if(!ready)return;
+        if(inspectEnabled){
+            const auto stamp=std::chrono::steady_clock::now();
+            for(int i=0;i<kOptions;++i){
+                Stage& s=stages[i];
+                if(!s.visible || !s.inspectedAvatarRoot || s.inspectNextSample>=static_cast<int>(inspectSampleTimesMs.size()))continue;
+                const auto elapsed=std::chrono::duration_cast<std::chrono::milliseconds>(stamp-s.inspectStart).count();
+                if(elapsed<inspectSampleTimesMs[s.inspectNextSample])continue;
+                Obj* avatar=Target(s.inspectedAvatarRoot);
+                if(!avatar){s.inspectNextSample=static_cast<int>(inspectSampleTimesMs.size());continue;}
+                Bounds bounds{};bool found=false;std::array<Bounds,128> samples{};int count=0;
+                // Read-only hierarchy sample. DO NOT relayer or change Animator state.
+                auto error=BNM::TryInvoke([&]{Relayer(avatar,PortraitLayer(i),0,bounds,found,samples,count,false);});
+                Vec3 rootPosition{};Obj* rootTr=nullptr;
+                if(getTransform.IsValid())BNM::TryInvoke([&]{rootTr=getTransform[avatar]();});
+                if(rootTr&&getWorldPosition.IsValid())BNM::TryInvoke([&]{rootPosition=getWorldPosition[rootTr]();});
+                if(!error.IsValid()&&found){
+                    LOG_INFO("CustomComponents/Pick3/FRAMING_INSPECT: SAMPLE option=%d guid=%d tMs=%lld center=(%.3f,%.3f) deltaCamera=(%.3f,%.3f) bounds=(%.3f,%.3f) root=(%.3f,%.3f,%.3f) rootDelta=(%.3f,%.3f,%.3f) renderers=%d",
+                             i+1,s.inspectGuid,static_cast<long long>(elapsed),bounds.center.x,bounds.center.y,
+                             bounds.center.x-s.inspectInitial.center.x,bounds.center.y-s.inspectInitial.center.y,
+                             bounds.extents.x,bounds.extents.y,rootPosition.x,rootPosition.y,rootPosition.z,
+                             rootPosition.x-s.inspectRootInitial.x,rootPosition.y-s.inspectRootInitial.y,
+                             rootPosition.z-s.inspectRootInitial.z,count);
+                    // The environment's children settle after the first avatar render;
+                    // only recenter after two samples agree. Never modify fighter cameras.
+                    if (s.environment && !s.environmentRecentered &&
+                        elapsed>=100 && elapsed<=1000) {
+                        if (s.hasPreviousSettlingCenter &&
+                            std::fabs(bounds.center.x-s.previousSettlingCenter.x)<0.10f &&
+                            std::fabs(bounds.center.y-s.previousSettlingCenter.y)<0.10f) {
+                            Obj* camGO=Target(s.cameraRoot);
+                            Obj* camTransform=nullptr;
+                            if(camGO && getTransform.IsValid())
+                                BNM::TryInvoke([&]{camTransform=getTransform[camGO]();});
+                            if(camTransform && getWorldPosition.IsValid() && setPosition.IsValid()) {
+                                Vec3 camera{};
+                                const auto cameraEx=BNM::TryInvoke([&]{camera=getWorldPosition[camTransform]();});
+                                const float dx=bounds.center.x-s.inspectInitial.center.x;
+                                const float dy=bounds.center.y-s.inspectInitial.center.y;
+                                if(!cameraEx.IsValid() && std::isfinite(dx) && std::isfinite(dy) &&
+                                   std::fabs(dx)<6.f && std::fabs(dy)<6.f) {
+                                    const auto moveEx=BNM::TryInvoke([&]{
+                                        setPosition[camTransform](Vec3{camera.x+dx,camera.y+dy,camera.z});
+                                    });
+                                    if(!moveEx.IsValid()) {
+                                        s.environmentRecentered=true;
+                                        LOG_INFO("CustomComponents/Pick3/ENV_RECENTER: option=%d guid=%d tMs=%lld dx=%.3f dy=%.3f",
+                                                 i+1,s.inspectGuid,static_cast<long long>(elapsed),dx,dy);
+                                    }
+                                }
+                            }
+                        }
+                        s.previousSettlingCenter=bounds.center;
+                        s.hasPreviousSettlingCenter=true;
+                    }
+                }else LOG_INFO("CustomComponents/Pick3/FRAMING_INSPECT: SAMPLE_UNAVAILABLE option=%d guid=%d tMs=%lld exception=%d renderers=%d",
+                               i+1,s.inspectGuid,static_cast<long long>(elapsed),error.IsValid()?1:0,count);
+                ++s.inspectNextSample;
+                if(s.inspectNextSample==static_cast<int>(inspectSampleTimesMs.size())){
+                    LOG_INFO("CustomComponents/Pick3/FRAMING_INSPECT: DONE option=%d guid=%d recentered=%d",i+1,s.inspectGuid,s.environmentRecentered?1:0);
+                    Free(s.inspectedAvatarRoot);
+                }
+            }
+        }
         if(++renderTickCounter%static_cast<std::uint32_t>(renderEveryNTicks)!=0)return;
         const auto now=std::chrono::steady_clock::now();
         // Previous implementation painted only ONE camera per Unity UI tick.

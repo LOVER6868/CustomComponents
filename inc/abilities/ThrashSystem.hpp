@@ -265,12 +265,19 @@ namespace CustomComponents::Systems {
             void* effect,
             const void* method
         ) {
-            void* previousRouter = activeEffectRouter;
-            activeEffectRouter = self;
+            // Restore nested effect-router state even if a C++ exception exits early.
+            struct ScopedEffectRouter {
+                void* previous;
+                explicit ScopedEffectRouter(void* current) : previous(activeEffectRouter) {
+                    activeEffectRouter = current;
+                }
+                ~ScopedEffectRouter() { activeEffectRouter = previous; }
+                ScopedEffectRouter(const ScopedEffectRouter&) = delete;
+                ScopedEffectRouter& operator=(const ScopedEffectRouter&) = delete;
+            } scopedRouter(self);
 
-            originalEffectRouterProcess(self, effect, method);
-
-            activeEffectRouter = previousRouter;
+            if (originalEffectRouterProcess)
+                originalEffectRouterProcess(self, effect, method);
         }
 
         inline bool EmitThrashDamageEffect(

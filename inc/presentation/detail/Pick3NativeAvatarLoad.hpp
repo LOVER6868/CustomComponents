@@ -47,23 +47,7 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarLoad {
     // Controls are read per request; ADB changes need no APK rebuild after installation.
     // File: pick3_native_test.txt: overload(0=explicit,1=factory root) avatar inHand inspection phase(0=call,1=config,2=delegate,3=receiver-callback)
     struct NativeTestControls { int overload=0, avatar=1, inHand=1, inspection=1, phase=0; };
-    inline NativeTestControls ReadNativeTestControls() {
-        NativeTestControls c{};
-        constexpr const char* path="/sdcard/Android/data/com.ea.gp.pvzheroes/files/pick3_native_test.txt";
-        if (FILE* f=std::fopen(path,"r")) {
-            int a=0,b=1,d=1,e=1,phase=0;
-            const int n=std::fscanf(f,"%d %d %d %d %d",&a,&b,&d,&e,&phase);
-            if(n>=4) {
-                c.overload=a==1?1:0;
-                c.avatar=b!=0;
-                c.inHand=d!=0;
-                c.inspection=e!=0;
-                c.phase=n==5 && phase>=1 && phase<=3 ? phase:0;
-            }
-            std::fclose(f);
-        }
-        return c;
-    }
+    inline NativeTestControls ReadNativeTestControls() { return {0,1,0,1,0}; }
     inline bool enabled = false, initialized = false;
     inline std::uint32_t serial = 1;
 
@@ -191,16 +175,7 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarLoad {
     // 0=skip; 1=binder; 2=injection; 3=factory; 4=unloader; 5=full creation.
     // Keep the release opt-in independent of stale diagnostic stage files.
     inline bool releaseCreationAllowed=false;
-    inline int FactoryDiStage() {
-        constexpr const char* path =
-            "/sdcard/Android/data/com.ea.gp.pvzheroes/files/pick3_factory_di_stage.txt";
-        FILE* f = std::fopen(path, "r");
-        if (!f) return 0;
-        int value=0;
-        const int read=std::fscanf(f,"%d",&value);
-        std::fclose(f);
-        return read==1 && value>=0 && value<=5 ? value : 0;
-    }
+    inline int FactoryDiStage() { return 5; }
 
     inline Obj* ResolveInjected(BNM::Class klass, const char* label) {
         LOG_INFO("CustomComponents/Pick3/FACTORY_DI: %s step=class valid=%d",
@@ -303,7 +278,9 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarLoad {
         // Diagnostic checkpoints for the recurring 0x38 IL2CPP null dereference.
         // The faulty build logged FACTORY_READY but never logged AVATAR_RENDER: STAGE.
         LOG_INFO("CustomComponents/Pick3/AVATAR_LOAD: CACHED_CARD option=%d guid=%d available=%d fighter=%d environment=%d nativeMetadataCalls=0",option+1,guid,metadata.hasCardData?1:0,metadata.fighter?1:0,metadata.environment?1:0);
-        if (!metadata.hasCardData) return false;  // Preserve static image if picker metadata is unavailable.
+        // Candidate GUID is authoritative for the factory request. Missing UI
+        // metadata must not prevent native avatar creation on slower devices.
+        // Unknown types use the avatar-only path; never guess hand-sprite mode.
         const MotionMode mode=Classify(metadata);
         // Tricks and powers use the game's actual IN-HAND sprite task.
         // Their one-shot avatar 'idle' has no loop and can disappear entirely.
@@ -494,7 +471,7 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarLoad {
                         auto goError=BNM::TryInvoke([&]{avatarGO=getAvatarObject[avatar]();});
                         if(!goError.IsValid() && avatarGO) {
                             rendered=Pick3NativeAvatarRender::AvatarReady(
-                                s.option,avatarGO,Target(s.parentRoot),s.motion==MotionMode::Environment);
+                                s.option,avatarGO,Target(s.parentRoot),s.motion==MotionMode::Environment,s.guid);
                         }
                     }
                     // A non-fighter may legitimately only provide in-hand art.
@@ -517,7 +494,7 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarLoad {
                         }
                         if(handGO && sprite) {
                             rendered=Pick3NativeAvatarRender::AvatarReady(s.option,handGO,
-                                       Target(s.parentRoot),false);
+                                       Target(s.parentRoot),false,s.guid);
                             staticCardFace=rendered;
                         }
                     }

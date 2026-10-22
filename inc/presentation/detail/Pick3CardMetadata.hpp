@@ -58,6 +58,8 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
         std::string prefab, base;
         int cost=0, attack=0, health=0, faction=0, color=0;
         bool fighter=false, environment=false;
+        int attackIconType=0, healthIconType=1;
+        bool traitTypesResolved=false;
     };
     inline std::unordered_map<int,Snapshot> snapshots;
     inline std::mutex snapshotMutex;
@@ -69,11 +71,25 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
     inline SetCardDataFn originalSetCardData = nullptr;
     inline bool mapperCaptureActive = false;
     inline unsigned int mapperCaptured = 0;
+    // Exactly one subscriber: SuperpowerEditor observes the same game-driven
+    // SetCardData event; it must not install another native detour.
+    using SharedObserver = void (*)(void*, int, void*, const void*);
+    inline SharedObserver sharedObserver = nullptr;
+    inline bool RegisterSharedObserver(SharedObserver observer) {
+        if (!observer || (sharedObserver && sharedObserver != observer)) return false;
+        sharedObserver = observer;
+        return true;
+    }
+
     inline void CaptureSnapshot(int guid, Obj* data);
     inline void SetCardDataCapture(Obj* self, int guid, Obj* data, const void* method) {
         if (!originalSetCardData) return;
         // Preserve game behavior before performing any optional observations.
         originalSetCardData(self, guid, data, method);
+        // Read-only shared observer runs after the original game method.
+        // Do not pass pointers to background work or retain managed objects.
+        if (sharedObserver && self && data && guid > 0)
+            sharedObserver(self, guid, data, method);
         if (mapperCaptureActive && self && guid>0 && data &&
             mapperClass.IsValid() && BNM::IsA(self,mapperClass) &&
             dataClass.IsValid() && BNM::IsA(data,dataClass)) {
@@ -103,6 +119,24 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
         if(cardColorField.IsValid()) v.color=cardColorField[data].Get();
         if(prefabName.IsValid()) { Str* x=prefabName[data].Get(); if(x) v.prefab=x->str(); }
         if(baseId.IsValid()) { Str* x=baseId[data].Get(); if(x) v.base=x->str(); }
+        // Resolve stock icon types while the actual CardData is in scope.
+        // Save only integer enum values; never persist SpecialAbilities or CardData.
+        if (v.fighter && useTraitIcons && specialAbilities.IsValid() &&
+            attackIconDecider.IsValid() && healthIconDecider.IsValid()) {
+            Obj* abilities=nullptr;
+            const auto fieldEx=BNM::TryInvoke([&]{abilities=specialAbilities[data].Get();});
+            if (!fieldEx.IsValid() && abilities) {
+                int atk=0, hp=1;
+                const auto atkEx=BNM::TryInvoke([&]{atk=attackIconDecider(abilities);});
+                const auto hpEx=BNM::TryInvoke([&]{hp=healthIconDecider(abilities);});
+                if (!atkEx.IsValid() && !hpEx.IsValid() &&
+                    atk>=0 && atk<15 && hp>=0 && hp<15) {
+                    v.attackIconType=atk;
+                    v.healthIconType=hp;
+                    v.traitTypesResolved=true;
+                }
+            }
+        }
         bool inserted=false;
         {
             std::lock_guard<std::mutex> lock(snapshotMutex);
@@ -123,6 +157,11 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
         info.hasCardData=true; info.fighter=v.fighter;
         info.environment=v.environment; info.zombie=v.faction==1;
         info.cardColor=v.color;
+        if (v.traitTypesResolved) {
+            info.attackIconType=v.attackIconType;
+            info.healthIconType=v.healthIconType;
+            info.iconDecidersUsed=true;
+        }
         info.cost=std::to_string(v.cost);
         info.stats=v.fighter ? std::to_string(v.attack)+" / "+std::to_string(v.health) : "-";
         if(mapper) {
@@ -277,6 +316,55 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
         return false;
     }
 
+    // Resolve stock trait badges only while building a visible preview.
+    // Snapshot capture stores only scalar decider results; never retain an IL2CPP
+    // SpecialAbilities list. Fallback below handles uncached cards.
+    // One attempt per visible fighter. Log the exact failing stage rather than
+    // claiming that initialization of the deciders proves icon rendering.
+    inline void ResolveStockTraitIcons(int guid, CardInfo& info) {
+        if (!info.fighter) return;
+        if (!useTraitIcons || !dataReady || !specialAbilities.IsValid() ||
+            !attackIconDecider.IsValid() || !healthIconDecider.IsValid() ||
+            !mapperClass.IsValid() || !dataClass.IsValid() || !getCardData.IsValid()) {
+            LOG_INFO("CustomComponents/Pick3/TRAIT_TRACE: guid=%d status=unavailable enabled=%d dataReady=%d abilitiesField=%d attackDecider=%d healthDecider=%d",
+                     guid, useTraitIcons?1:0, dataReady?1:0, specialAbilities.IsValid()?1:0,
+                     attackIconDecider.IsValid()?1:0, healthIconDecider.IsValid()?1:0);
+            return;
+        }
+        Obj* provider=Pick3SpriteCache::Target(Pick3SpriteCache::providerRoot);
+        if (!provider || !BNM::IsA(provider,mapperClass)) {
+            LOG_INFO("CustomComponents/Pick3/TRAIT_TRACE: guid=%d status=no-provider root=%u provider=%d",
+                     guid, Pick3SpriteCache::providerRoot, provider?1:0);
+            return;
+        }
+        Obj* data=nullptr;
+        const auto fetched=BNM::TryInvoke([&] { data=getCardData[provider](guid); });
+        if (fetched.IsValid() || !data || !BNM::IsA(data,dataClass)) {
+            LOG_INFO("CustomComponents/Pick3/TRAIT_TRACE: guid=%d status=no-card-data exception=%d data=%d",
+                     guid, fetched.IsValid()?1:0, data?1:0);
+            return;
+        }
+        Obj* abilities=specialAbilities[data].Get();
+        if (!abilities) {
+            LOG_INFO("CustomComponents/Pick3/TRAIT_TRACE: guid=%d status=no-abilities",guid);
+            return;
+        }
+        int attackType=0, healthType=1;
+        const auto a=BNM::TryInvoke([&] { attackType=attackIconDecider(abilities); });
+        const auto h=BNM::TryInvoke([&] { healthType=healthIconDecider(abilities); });
+        if (!a.IsValid() && !h.IsValid() && attackType>=0 && attackType<15 &&
+            healthType>=0 && healthType<15) {
+            info.attackIconType=attackType;
+            info.healthIconType=healthType;
+            info.iconDecidersUsed=true;
+            LOG_INFO("CustomComponents/Pick3/TRAIT_TRACE: guid=%d status=resolved attackType=%d healthType=%d",
+                     guid,attackType,healthType);
+        } else {
+            LOG_INFO("CustomComponents/Pick3/TRAIT_TRACE: guid=%d status=decider-failed attackException=%d healthException=%d attackType=%d healthType=%d",
+                     guid,a.IsValid()?1:0,h.IsValid()?1:0,attackType,healthType);
+        }
+    }
+
     inline CardInfo Read(int cardId, Obj* localizationMapper) {
         CardInfo info;
         char numeric[48]{};
@@ -285,7 +373,15 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
         info.cost = "?";
         info.stats = "?";
         info.description = "Text unavailable";
-        if (ReadSnapshot(cardId,localizationMapper,info)) return info;
+        if (ReadSnapshot(cardId,localizationMapper,info)) {
+            if (info.iconDecidersUsed) {
+                LOG_INFO("CustomComponents/Pick3/TRAIT_TRACE: guid=%d status=snapshot-resolved attackType=%d healthType=%d",
+                         cardId,info.attackIconType,info.healthIconType);
+            } else {
+                ResolveStockTraitIcons(cardId, info);
+            }
+            return info;
+        }
         if (!dataReady) return info;
         Obj* provider = Pick3SpriteCache::Target(Pick3SpriteCache::providerRoot);
         if (!provider || !BNM::IsA(provider, mapperClass)) {

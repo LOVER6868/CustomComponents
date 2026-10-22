@@ -392,7 +392,7 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
     inline float tooltipMaxHeightScale=.17f;
     inline float tooltipEnterSeconds=.12f,tooltipExitSeconds=.09f;
     inline void ConfigureTooltipStyle(int font,int width,int height,int enterMs,int exitMs){
-        tooltipFontScale=std::clamp(font,70,160)/100.f;
+        tooltipFontScale=std::clamp(font,70,250)/100.f;
         tooltipMaxWidthScale=std::clamp(width,40,85)/100.f;
         tooltipMaxHeightScale=std::clamp(height,8,30)/100.f;
         tooltipEnterSeconds=std::clamp(enterMs,40,350)/1000.f;
@@ -515,6 +515,7 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
         float nameBelowStats=.80f,plateBelowName=.28f,buttonBelowPlate=.31f;
         float plateWidth=1.36f,plateHeight=.39f,buttonWidth=.98f,buttonHeight=1.20f;
         float badgeScale=.235f,statSpacing=.126f,statsBelowPortrait=.40f;
+        float attackBadgeYOffset=0.f,healthBadgeYOffset=0.f;
         float nameScale=1.40f,statScale=1.26f,buttonTextScale=1.08f;
         float buttonTextOffset=0.f;
     };
@@ -536,16 +537,20 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
         layout.plateBelowName=std::clamp(plateGapPercent,18,65)/100.f;
         layout.buttonBelowPlate=std::clamp(buttonGapPercent,15,60)/100.f;
         layout.plateWidth=std::clamp(plateWidthPercent,100,165)/100.f;
-        layout.plateHeight=std::clamp(plateHeightPercent,28,55)/100.f;
+        layout.plateHeight=std::clamp(plateHeightPercent,28,130)/100.f;
         layout.buttonWidth=std::clamp(buttonWidthPercent,72,150)/100.f;
         layout.buttonHeight=std::clamp(buttonHeightPercent,75,160)/100.f;
         layout.nameScale=std::clamp(nameSizePercent,75,175)/100.f;
-        layout.statScale=std::clamp(statSizePercent,70,170)/100.f;
+        layout.statScale=std::clamp(statSizePercent,70,220)/100.f;
         layout.buttonTextScale=std::clamp(buttonTextPercent,75,165)/100.f;
         layout.buttonTextOffset=std::clamp(buttonTextYOffset,-15,15)/100.f;
         layout.badgeScale=std::clamp(badgeSizePercent,15,36)/100.f;
         layout.statSpacing=std::clamp(statSpacingPercent,8,21)/100.f;
         layout.statsBelowPortrait=std::clamp(statVerticalPercent,22,57)/100.f;
+    }
+    inline void ConfigureBadgeYOffsets(int attackPercent,int healthPercent) {
+        layout.attackBadgeYOffset=std::clamp(attackPercent,-50,50)/100.f;
+        layout.healthBadgeYOffset=std::clamp(healthPercent,-50,50)/100.f;
     }
     // Per-element typography: font sizes remain relative to the stock
     // StatSizePercent for backwards compatibility. Offsets are percentages
@@ -997,8 +1002,8 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
             if (tmpSetAutoSize.IsValid()) tmpSetAutoSize[text](shrinkToFit);
             if (tmpSetRichText.IsValid()) tmpSetRichText[text](true);
             if (tmpSetWordWrap.IsValid()) tmpSetWordWrap[text](shrinkToFit);
-            if (tmpSetOverflowMode.IsValid()) tmpSetOverflowMode[text](3); // Truncate avoids missing-glyph markers on truncated TMP text
-            if (tmpSetMinFontSize.IsValid()) tmpSetMinFontSize[text](shrinkToFit?std::max(9.f,fontSize*.78f):static_cast<float>(fontSize));
+            if (tmpSetOverflowMode.IsValid()) tmpSetOverflowMode[text](3); // Bounded by auto-fit and dynamically sized plate
+            if (tmpSetMinFontSize.IsValid()) tmpSetMinFontSize[text](shrinkToFit?std::max(9.f,fontSize*(std::strncmp(name,"Pick3_Desc_",11)==0 ? .45f : .60f)):static_cast<float>(fontSize));
             if (tmpSetMaxFontSize.IsValid()) tmpSetMaxFontSize[text](static_cast<float>(fontSize));
             setGraphicColor[text](color);
             setRaycastTarget[text](std::strncmp(name,"Pick3_Desc_",11)==0);
@@ -1128,6 +1133,8 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
                     const char* prefix[2]={"Pick3_AttackBadge_","Pick3_HealthBadge_"};
                     for (int stat=0;stat<2;++stat) {
                         Obj* original=Pick3GameOwnedAssetRegistry::Icon(icons[stat]);
+                        LOG_INFO("CustomComponents/Pick3/TRAIT_SPRITE: option=%d guid=%d stat=%d type=%d available=%d decidersUsed=%d",
+                                 i+1,previewCardIds[i],stat,icons[stat],original?1:0,info.iconDecidersUsed?1:0);
                         if (!original) continue; // Keep previously rendered basic icon.
                         std::snprintf(statBadge,sizeof(statBadge),"%s%d",prefix[stat],i+1);
                         Obj* badgeGO=findByName(BNM::CreateMonoString(statBadge));
@@ -1152,6 +1159,12 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
                         Obj* attackGo = findByName(BNM::CreateMonoString(name));
                         std::snprintf(number, sizeof(number), "%d", attack);
                         SetLabelValue(attackGo, number);
+                        // Zero/negative attack has no visible attack stat in the picker.
+                        // Hide both the value and its icon; do not change card data.
+                        if (attackGo) setGameObjectActive[attackGo](attack > 0);
+                        std::snprintf(name, sizeof(name), "Pick3_AttackBadge_%d", i + 1);
+                        if (Obj* attackBadgeGo = findByName(BNM::CreateMonoString(name)))
+                            setGameObjectActive[attackBadgeGo](attack > 0);
                         std::snprintf(name, sizeof(name), "Pick3_Health_%d", i + 1);
                         Obj* healthGo = findByName(BNM::CreateMonoString(name));
                         std::snprintf(number, sizeof(number), "%d", health);
@@ -2031,17 +2044,25 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
         BNM::TryInvoke([&]{preferredHeight=tmpGetPreferredHeight[tmp]();});
         if(!std::isfinite(preferredHeight)||preferredHeight<1.f)preferredHeight=minH;
         float plateH=std::clamp(preferredHeight+2.f*pad,minH,maxH);
-        if(tmpSetAutoSize.IsValid())tmpSetAutoSize[tmp](descriptionLayout.autoFit && preferredHeight+2.f*pad>maxH);
+        // Use TMP's actual wrapped preferred height. A character-count heuristic
+        // overestimated multiline descriptions and left visible blank space above
+        // and below the text, especially when markup/inline links were present.
+        // If TMP cannot provide a valid height, minH is the safe fallback.
+        if(tmpSetAutoSize.IsValid())tmpSetAutoSize[tmp](descriptionLayout.autoFit);
+        // Pin the top of the plate below the name. Growing downward avoids
+        // covering the title, unlike a center-anchored resize.
+        const float growth=plateH-descriptionBasePlateHeight[option];
+        const float newPlateY=descriptionPlateY[option]-growth*.5f;
         Position(textGO,cardW*layout.plateWidth*statText.descriptionX,
-                 descriptionPlateY[option]+cardH*layout.plateHeight*statText.descriptionY,
+                 newPlateY+cardH*layout.plateHeight*statText.descriptionY,
                  std::max(12.f,plateW-2.f*pad),std::max(12.f,plateH-2.f*pad));
         std::snprintf(name,sizeof(name),"Pick3_DescriptionPlate_%d",option+1);
         Obj* plate=findByName(BNM::CreateMonoString(name));
-        if(plate)Position(plate,0.f,descriptionPlateY[option],plateW,plateH);
-        // Preserve the normal gap to the bottom edge, move the entire Choose
-        // button (and hit box) if the description grows downwards.
-        const float delta=(plateH-descriptionBasePlateHeight[option])*.5f;
-        const float buttonY=descriptionButtonY[option]-delta;
+        if(plate)Position(plate,0.f,newPlateY,plateW,plateH);
+        // The lower edge moves by the entire height increase: move the Choose
+        // button, shadow, and hit rect by that SAME amount.
+        descriptionPlateY[option]=newPlateY;
+        const float buttonY=descriptionButtonY[option]-growth;
         const float h=std::max(34.f,64.f*cardUnit)*layout.buttonHeight;
         const float bw=cardW*layout.buttonWidth;
         std::snprintf(name,sizeof(name),"Pick3_ChooseButton_%d",option);
@@ -2054,7 +2075,7 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
         std::snprintf(name,sizeof(name),"Pick3_ChooseShadow_%d",option+1);
         Obj* shadow=findByName(BNM::CreateMonoString(name));
         if(shadow)Position(shadow,1.5f*cardUnit,textY-1.5f*cardUnit,bw*.95f,h*.95f);
-        choiceRects[option].y-=delta;
+        choiceRects[option].y-=growth;
         descriptionButtonY[option]=buttonY;
         descriptionBasePlateHeight[option]=plateH;
     }
@@ -2333,20 +2354,20 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
             if(label) {
                 Obj* labelRect=GetRect(label);
                 if(labelRect && setAnchoredPosition.IsValid())
-                    setAnchoredPosition[labelRect](Vec2{0.f,labelY-buttonDrop});
+                    setAnchoredPosition[labelRect](Vec2{0.f,labelY});
                 Obj* graphic=getComponent[label](textClass.GetMonoType());
                 if(graphic && setGraphicColor.IsValid())
-                    setGraphicColor[graphic](Color{1.f,1.f,1.f,1.f-eased});
+                    setGraphicColor[graphic](Color{1.f,1.f,1.f,0.f});
             }
             std::snprintf(name,sizeof(name),"Pick3_ChooseShadow_%d",i+1);
             Obj* shadow=findByName(BNM::CreateMonoString(name));
             if(shadow) {
                 Obj* shadowRect=GetRect(shadow);
                 if(shadowRect && setAnchoredPosition.IsValid())
-                    setAnchoredPosition[shadowRect](Vec2{1.5f*cardUnit,labelY-1.5f*cardUnit-buttonDrop});
+                    setAnchoredPosition[shadowRect](Vec2{1.5f*cardUnit,labelY-1.5f*cardUnit});
                 Obj* graphic=getComponent[shadow](textClass.GetMonoType());
                 if(graphic && setGraphicColor.IsValid())
-                    setGraphicColor[graphic](Color{.02f,.12f,.03f,1.f-eased});
+                    setGraphicColor[graphic](Color{.02f,.12f,.03f,0.f});
             }
             // Only after the two nonselected cards and selected button
             // have departed may the selected card itself begin fading.
@@ -2454,15 +2475,15 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
 
     inline bool Open() {
         // Read once per popup; no mode switches while Unity objects are live.
-        const int diagnosticMode=Pick3DiagnosticMode::ReadMode();
+        const int diagnosticMode=0;
         Pick3MetadataIsolation::ReadMode();
-        const bool rawAsyncSelector = ReadArtSelector(kAsyncArtSelector, configuredAsyncGameArt);
-        const bool overrideAsyncSuppression = ReadArtSelector(kAsyncArtOverrideSelector, false);
+        const bool rawAsyncSelector = configuredAsyncGameArt;
+        const bool overrideAsyncSuppression = false;
         const bool blockedByAssetTrace = traceCardAssetsTask;
         const bool blockedByOwnerProbe = probeLiveOwners;
         useAsyncGameArt = rawAsyncSelector &&
             (overrideAsyncSuppression || (!blockedByAssetTrace && !blockedByOwnerProbe));
-        residentArtEnabledForPopup = ReadArtSelector(kResidentArtSelector, true);
+        residentArtEnabledForPopup = false;
         lastInspectedArtWrapper = nullptr;
         LOG_INFO("CustomComponents/Pick3/ART_GATE: requested=%d config=%d override=%d "
                  "blockedAssetTrace=%d blockedOwnerProbe=%d effective=%d asyncReady=%d externalOnly=%d",
@@ -2470,17 +2491,11 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
                  overrideAsyncSuppression ? 1 : 0, blockedByAssetTrace ? 1 : 0,
                  blockedByOwnerProbe ? 1 : 0, useAsyncGameArt ? 1 : 0,
                  asyncMethodsReady ? 1 : 0, externalOnly ? 1 : 0);
-        artTraceModeForPopup = ReadArtTraceMode();
+        artTraceModeForPopup = 0;
         // Deliberately hard-disable the crash-associated holder inspection
         // regardless of any stale ADB selector on the device.
         holderInspectForPopup = false;
-        factoryProbeModeForPopup = 0;
-        if (FILE* f = std::fopen(kFactoryProbeSelector, "rb")) {
-            int requested = 0;
-            if (std::fscanf(f, "%d", &requested) == 1)
-                factoryProbeModeForPopup = std::clamp(requested, 0, 7);
-            std::fclose(f);
-        }
+        factoryProbeModeForPopup = 0; // release: never enter diagnostic factory modes
         if (factoryProbeModeForPopup) {
             LOG_INFO("CustomComponents/Pick3/FACTORY_TEST: mode=%d holderInspectorHardDisabled=1 createsCard=%d", factoryProbeModeForPopup, factoryProbeModeForPopup >= 5);
             LOG_INFO("CustomComponents/Pick3/FACTORY_TEST: API factory=%d config=%d create4=%d avatar=%d enter=%d idle=%d getAvatar=%d",
@@ -2767,7 +2782,9 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
             std::snprintf(healthBadge, sizeof(healthBadge), "Pick3_HealthBadge_%d", i+1);
             const float badgeSize = cardW*layout.badgeScale;
             const float attackX = cx - cardW*layout.statSpacing;
+            const float attackY = artY - artSize*layout.statsBelowPortrait + badgeSize*layout.attackBadgeYOffset;
             const float healthX = cx + cardW*layout.statSpacing;
+            const float healthY = artY - artSize*layout.statsBelowPortrait + badgeSize*layout.healthBadgeYOffset;
             const float statsY = artY - artSize*layout.statsBelowPortrait;
             // Use the packaged static cost badge; independent of scene state.
             RewardImage(cardParent, costBadge, cx+cardW*.41f, artY+artSize*.34f,
@@ -2779,10 +2796,10 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
                 if (Obj* costImage=getComponent[costGO](imageClass.GetMonoType()))
                     setGraphicColor[costImage](Color{1.f,1.f,1.f,0.f});
             }
-            RewardImage(cardParent, attackBadge, attackX, statsY,
+            RewardImage(cardParent, attackBadge, attackX, attackY,
                         badgeSize, badgeSize, Pick3RewardArt::AttackLeaf,
                         Color{.36f,.74f,.16f,1.f});
-            RewardImage(cardParent, healthBadge, healthX, statsY,
+            RewardImage(cardParent, healthBadge, healthX, healthY,
                         badgeSize, badgeSize, Pick3RewardArt::HealthHeart,
                         Color{.85f,.25f,.19f,1.f});
             char costLabel[] = "Pick3_Cost_0";
@@ -2794,7 +2811,7 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
             std::snprintf(healthLabel, sizeof(healthLabel), "Pick3_Health_%d", i+1);
             // Text is constrained to the badge's central area, with TMP
             // autosizing enabled for multi-digit values (not a fixed 21px font).
-            const float baseBadgeFont = std::min(cardText*layout.statScale,badgeSize*.45f);
+            const float baseBadgeFont = std::min(static_cast<float>(cardText), badgeSize*.45f); // Per-stat scale is the single font control.
             const auto badgeFont=[&](float multiplier) {
                 return std::max(9,static_cast<int>(std::lround(baseBadgeFont*multiplier)));
             };
@@ -2802,15 +2819,15 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
                   cx+cardW*.41f+badgeSize*statText.costX,
                   artY+artSize*.34f+badgeSize*statText.costY,
                   badgeSize*statText.costWidth, badgeSize*.85f,
-                  badgeFont(statText.costSize), Color{.13f,.08f,.04f,1.f}, false, false);
+                  badgeFont(statText.costSize), Color{.13f,.08f,.04f,1.f}, false, true);
             Label(cardParent, attackLabel, "?",
-                  attackX+badgeSize*statText.attackX,statsY+badgeSize*statText.attackY,
+                  attackX+badgeSize*statText.attackX,attackY+badgeSize*statText.attackY,
                   badgeSize*statText.attackWidth,badgeSize*.85f,
-                  badgeFont(statText.attackSize), Color{1,1,.90f,1},false,false);
+                  badgeFont(statText.attackSize), Color{1,1,.90f,1},false,true);
             Label(cardParent, healthLabel, "?",
-                  healthX+badgeSize*statText.healthX,statsY+badgeSize*statText.healthY,
+                  healthX+badgeSize*statText.healthX,healthY+badgeSize*statText.healthY,
                   badgeSize*statText.healthWidth,badgeSize*.85f,
-                  badgeFont(statText.healthSize),Color{1,1,.90f,1},false,false);
+                  badgeFont(statText.healthSize),Color{1,1,.90f,1},false,true);
             char placeholderName[48]{};
             std::snprintf(placeholderName, sizeof(placeholderName), "Card #%d", previewCardIds[i]);
             const float nameY = statsY-badgeSize*layout.nameBelowStats;
@@ -3292,12 +3309,14 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
                             frameCounter-avatarExperimentLastStartFrame>=static_cast<unsigned>(avatarExperimentSpacingFrames)){
                             avatarExperimentLastStartFrame=frameCounter;
                             const int guid=activeRequest.options[i].cardGuid;
-                            ++nativeAvatarLoadStartAttempts[i];
-                            if(animationCardInfoGuid[i]!=guid || !animationCardInfo[i].hasCardData){
-                                LOG_INFO("CustomComponents/Pick3/ANIMATION_EXPERIMENT: SKIP option=%d guid=%d reason=%s fallback=static",i+1,guid,
-                                    animationCardInfoGuid[i]!=guid || !animationCardInfo[i].hasCardData ? "metadata-pending" : "metadata-pending");
-                                ++avatarExperimentNextIndex;
-                            } else if(Pick3NativeAvatarLoad::Start(guid,i,animationCardInfo[i])){
+                            // Factory loading only needs the candidate GUID. Metadata is
+                            // optional and can arrive later (especially on emulators).
+                            // Never issue a second metadata lookup on this path.
+                            const bool cached = animationCardInfoGuid[i]==guid && animationCardInfo[i].hasCardData;
+                            const Pick3CardMetadata::CardInfo cardInfo = cached ? animationCardInfo[i] : Pick3CardMetadata::CardInfo{};
+                            if (!cached && nativeAvatarLoadStartAttempts[i]++ == 0)
+                                LOG_INFO("CustomComponents/Pick3/ANIMATION_EXPERIMENT: METADATA_OPTIONAL option=%d guid=%d using=unknown-type",i+1,guid);
+                            if(Pick3NativeAvatarLoad::Start(guid,i,cardInfo)){
                                 nativeAvatarLoadStarted[i]=true;
                                 ++avatarExperimentNextIndex;
                             } else {
@@ -3890,35 +3909,11 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
                  prefabLoadAsync.IsValid(),inspectionPrefabReceiverClass.IsValid(),
                  gameGetComponentsInChildren.IsValid());
         Pick3CardMetadata::Initialize();
-        // ADB metadata modes (read at module startup; restart game to change).
-        // 0=off; 1=task snapshots; 2=game-driven mapper SetCardData;
-        // 3=both. Neither mode calls GetCardData or loads bundles manually.
-        Pick3CardAssetsCapture::onCardDataSnapshot = nullptr;
-        {
-            int mode=0;
-            const char* path="/sdcard/Android/data/com.ea.gp.pvzheroes/files/pick3_metadata_source.txt";
-            if(FILE* f=std::fopen(path,"rb")) {
-                int value=0;
-                if(std::fscanf(f,"%d",&value)==1 && value>=0 && value<=3) mode=value;
-                std::fclose(f);
-            } else {
-                // Preserve previous snapshot selector for existing installs.
-                const char* old="/sdcard/Android/data/com.ea.gp.pvzheroes/files/pick3_metadata_snapshot.txt";
-                if(FILE* f=std::fopen(old,"rb")) {
-                    int value=0;
-                    if(std::fscanf(f,"%d",&value)==1 && value==1) mode=1;
-                    std::fclose(f);
-                }
-            }
-            if(mode&1) {
-                Pick3CardAssetsCapture::onCardDataSnapshot=&Pick3CardMetadata::CaptureSnapshot;
-                LOG_INFO("CustomComponents/Pick3/META_SOURCE: taskHook=%d",Pick3CardAssetsCapture::Initialize()?1:0);
-            }
-            Pick3CardMetadata::mapperCaptureActive = (mode&2)!=0;
-            if(mode&2)
-                LOG_INFO("CustomComponents/Pick3/META_SOURCE: mapperHook=%d source=game-SetCardData",Pick3CardMetadata::InstallMapperCapture()?1:0);
-            LOG_INFO("CustomComponents/Pick3/META_SOURCE: mode=%d task=%d mapper=%d",mode,(mode&1)?1:0,(mode&2)?1:0);
-        }
+        // Capture both native card-data sources automatically on every device.
+        Pick3CardAssetsCapture::onCardDataSnapshot=&Pick3CardMetadata::CaptureSnapshot;
+        LOG_INFO("CustomComponents/Pick3/META_SOURCE: taskHook=%d", Pick3CardAssetsCapture::Initialize()?1:0);
+        Pick3CardMetadata::mapperCaptureActive=true;
+        LOG_INFO("CustomComponents/Pick3/META_SOURCE: mapperHook=%d",Pick3CardMetadata::InstallMapperCapture()?1:0);
         pngArtReady = textureClass.IsValid() && textureClass.GetMethod(".ctor", 2).IsValid() &&
                       byteClass.IsValid() && spriteClass.IsValid() &&
                       loadPng.IsValid() && spriteCreate.IsValid() && setImageSprite.IsValid();
