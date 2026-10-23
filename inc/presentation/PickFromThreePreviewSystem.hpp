@@ -519,6 +519,12 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
         float buttonTextOffset=0.f;
     };
     inline RewardLayout layout{};
+    inline float attackBadgeYOffset = 0.f;
+    inline float healthBadgeYOffset = 0.f;
+    inline void ConfigureBadgeYOffsets(int attackPercent, int healthPercent) {
+        attackBadgeYOffset = std::clamp(attackPercent, -75, 75) / 100.f;
+        healthBadgeYOffset = std::clamp(healthPercent, -75, 75) / 100.f;
+    }
     inline void ConfigureLayout(int topPercent,int lowerPercent,int sidePercent,
                                 int portraitYPercent,int portraitSizePercent,
                                 int nameGapPercent,int plateGapPercent,int buttonGapPercent,
@@ -898,6 +904,10 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
     }
 
     inline void Close() {
+        if (requestActive && gameplaySubmissionEnabled) {
+            Pick3::Submission::FinishTransaction(activeRequest, false);
+            requestActive=false;
+        }
         inlineTooltipShowing=false;
         inlineTooltipClosing=false;
         inlineTooltipTappedOption=-1;
@@ -2779,10 +2789,10 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
                 if (Obj* costImage=getComponent[costGO](imageClass.GetMonoType()))
                     setGraphicColor[costImage](Color{1.f,1.f,1.f,0.f});
             }
-            RewardImage(cardParent, attackBadge, attackX, statsY,
+            RewardImage(cardParent, attackBadge, attackX, statsY + badgeSize*attackBadgeYOffset,
                         badgeSize, badgeSize, Pick3RewardArt::AttackLeaf,
                         Color{.36f,.74f,.16f,1.f});
-            RewardImage(cardParent, healthBadge, healthX, statsY,
+            RewardImage(cardParent, healthBadge, healthX, statsY + badgeSize*healthBadgeYOffset,
                         badgeSize, badgeSize, Pick3RewardArt::HealthHeart,
                         Color{.85f,.25f,.19f,1.f});
             char costLabel[] = "Pick3_Cost_0";
@@ -2804,11 +2814,11 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
                   badgeSize*statText.costWidth, badgeSize*.85f,
                   badgeFont(statText.costSize), Color{.13f,.08f,.04f,1.f}, false, false);
             Label(cardParent, attackLabel, "?",
-                  attackX+badgeSize*statText.attackX,statsY+badgeSize*statText.attackY,
+                  attackX+badgeSize*statText.attackX,statsY+badgeSize*(statText.attackY+attackBadgeYOffset),
                   badgeSize*statText.attackWidth,badgeSize*.85f,
                   badgeFont(statText.attackSize), Color{1,1,.90f,1},false,false);
             Label(cardParent, healthLabel, "?",
-                  healthX+badgeSize*statText.healthX,statsY+badgeSize*statText.healthY,
+                  healthX+badgeSize*statText.healthX,statsY+badgeSize*(statText.healthY+healthBadgeYOffset),
                   badgeSize*statText.healthWidth,badgeSize*.85f,
                   badgeFont(statText.healthSize),Color{1,1,.90f,1},false,false);
             char placeholderName[48]{};
@@ -3310,6 +3320,24 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
                     } else ++avatarExperimentNextIndex;
                 }
             }
+            if (externalOnly && requestActive && gameplaySubmissionEnabled) {
+                const auto outcome = Pick3::Submission::PollResult();
+                const bool accepted = outcome == SelectionCompletion::Result::Success;
+                const bool failed = outcome == SelectionCompletion::Result::Failure ||
+                                    outcome == SelectionCompletion::Result::Uncertain;
+                const bool expired = Pick3::Submission::DeadlineExpired();
+                if (accepted || failed || expired) {
+                    if (expired && !accepted)
+                        LOG_INFO("CustomComponents/Pick3/SUBMIT: TIMER_EXPIRED effect=%d pending=%d",
+                                 activeRequest.effectEntityId, Pick3::Submission::AwaitingResult() ? 1 : 0);
+                    submitPending=false;
+                    Pick3::Submission::FinishTransaction(activeRequest, accepted);
+                    requestActive=false;
+                    if (accepted) BeginExitAnimation();
+                    else Close();
+                    return;
+                }
+            }
             // The service has already completed; only the visual dismissal
             // stays alive for a short, uninterruptible fade/scale-out.
             if (AnimateExit()) return;
@@ -3320,8 +3348,8 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
                 submitPending=false;
                 Pick3::Submission::SetPopupInputCapture(false);
                 if (Pick3::Submission::Submit(activeRequest,picked.Indices(),false)) {
-                    requestActive=false;
-                    BeginExitAnimation();
+                    Pick3::Submission::SetPopupInputCapture(true);
+                    // Wait for the service callback; Process returning is not acceptance.
                 } else if (Pick3::Submission::CanRetryLastSubmission()) {
                     picked.Begin(activeChoiceCount,activeRequest.requiredTargets);
                     choiceTransitionActive=false;
@@ -3362,10 +3390,10 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
                     Pick3::Submission::SetPopupInputCapture(true);
                     LOG_ERR("CustomComponents/Pick3/SUBMIT: delayed preflight failed; UI rearmed");
                 } else {
-                    submissionServiceError=true;
-                    UpdatePickStatus();
-                    Pick3::Submission::SetPopupInputCapture(true);
-                    LOG_ERR("CustomComponents/Pick3/SUBMIT: delayed service dispatch uncertain; no retry");
+                    Pick3::Submission::FinishTransaction(activeRequest, false);
+                    requestActive=false;
+                    Close();
+                    LOG_ERR("CustomComponents/Pick3/SUBMIT: dispatch failed; modal released, no replay");
                 }
                 return;
             }
@@ -3432,32 +3460,35 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
                              readyNow ? 1 : 0, activeRequest.effectEntityId, picked.Required());
                 }
             }
-            // PvP timeout: add the remaining unique options, then ONE request.
+            // Select once near the deadline, only after readiness. Failed
+            // pre-dispatch validation unseals the UI; an entered call never replays.
             if (externalOnly && requestActive && gameplaySubmissionEnabled && !picked.Sealed() &&
-                !pvpTimeoutAttempted && Pick3::Submission::ShouldAutoPick()) {
-                pvpTimeoutAttempted = true;
-                if (Pick3::Submission::Ready()) {
-                    std::vector<int> unpicked;
-                    for (int i = 0; i < activeChoiceCount; ++i)
-                        if (!picked.Has(i)) unpicked.push_back(i);
-                    while (!picked.Complete() && !unpicked.empty()) {
-                        const int pos = Pick3::Submission::RandomIndex(static_cast<int>(unpicked.size()));
-                        picked.Add(unpicked[static_cast<std::size_t>(pos)]);
-                        unpicked.erase(unpicked.begin() + pos);
-                    }
+                !pvpTimeoutAttempted && Pick3::Submission::Ready() && Pick3::Submission::ShouldAutoPick()) {
+                std::vector<int> unpicked;
+                for (int i=0; i<activeChoiceCount; ++i)
+                    if (!picked.Has(i)) unpicked.push_back(i);
+                while (!picked.Complete() && !unpicked.empty()) {
+                    const int pos=Pick3::Submission::RandomIndex(static_cast<int>(unpicked.size()));
+                    picked.Add(unpicked[static_cast<std::size_t>(pos)]);
+                    unpicked.erase(unpicked.begin()+pos);
                 }
-                if (Pick3::Submission::Ready() && picked.Complete() && picked.Seal()) {
-                    CC_DIAG("CustomComponents/Pick3/SUBMIT: TIMER_PICK count=%d", picked.Count());
-                    UpdatePickStatus();
+                if (picked.Complete() && picked.Seal()) {
+                    pvpTimeoutAttempted=true;
+                    submitPending=false; // Cancel a delayed click: never send two Plays.
                     Pick3::Submission::SetPopupInputCapture(false);
-                    if (Pick3::Submission::Submit(activeRequest, picked.Indices(), true)) {
-                        requestActive = false;
-                        BeginExitAnimation();
-                    } else {
+                    if (Pick3::Submission::Submit(activeRequest,picked.Indices(),true)) {
                         Pick3::Submission::SetPopupInputCapture(true);
+                    } else {
+                        if (Pick3::Submission::CanRetryLastSubmission()) {
+                            picked.Begin(activeChoiceCount,activeRequest.requiredTargets);
+                            Pick3::Submission::SetPopupInputCapture(true);
+                            UpdatePickStatus();
+                        } else {
+                            Pick3::Submission::FinishTransaction(activeRequest,false);
+                            requestActive=false;
+                            Close();
+                        }
                     }
-                } else {
-                    LOG_ERR("CustomComponents/Pick3/SUBMIT: TIMER_NOT_READY_OR_UNFILLABLE");
                 }
                 return;
             }
@@ -3550,8 +3581,19 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
             Pick3::PreviewRequest request;
             if (!Pick3::TargetBridge::Consume(request)) return;
             if (request.options.empty()) return;
+            const int presentingPlayer = Pick3::TargetBridge::LocalPlayerId();
+            if (presentingPlayer >= 0 && request.ownerPlayerId >= 0 &&
+                request.ownerPlayerId != presentingPlayer) {
+                LOG_INFO("CustomComponents/Pick3/PVP_OWNER: LATE_REMOTE_POPUP_SUPPRESSED effect=%d group=%d owner=%d local=%d",
+                         request.effectEntityId, request.effectGroupId, request.ownerPlayerId, presentingPlayer);
+                // The incoming opponent action is not our UI transaction.
+                Pick3::TargetBridge::CompleteLocalSelection(request.effectEntityId,
+                                                             request.effectGroupId);
+                return;
+            }
             activeRequest = std::move(request);
             requestActive = true;
+            Pick3::Submission::BeginDeadline();
             pvpTimeoutAttempted = false;
             activeChoiceCount = static_cast<int>(activeRequest.options.size());
             wasReady = false;

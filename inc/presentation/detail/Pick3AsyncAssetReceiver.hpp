@@ -22,6 +22,11 @@ namespace CustomComponents::Presentation::Pick3AsyncAssetReceiver {
             BNM::CompileTimeClassBuilder("System", "Object", "mscorlib.dll").Build(),
             {}
         );
+        // Expose both receiver tokens as managed metadata fields. BNM already
+        // allocates sizeof(Receiver), but metadata should match native layout;
+        // do not confuse this consistency fix with a proven crash root cause.
+        BNM_CustomField(option, BNM::Defaults::Get<int>(), "option");
+        BNM_CustomField(generation, BNM::Defaults::Get<int>(), "generation");
 
         void OnLoaded(Obj* asset) {
             if (deliver) deliver(option, generation, asset);

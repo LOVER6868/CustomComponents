@@ -80,6 +80,9 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
 
     // InspectionItem
     inline BNM::Method<void> inspectionItemCtor;
+    // Stock InspectionItem(int cardId) initializes EntityId and CreationSourceGuid
+    // to -1.  The card inspection panel consumes CardId + CreationSourceGuid;
+    // a discard-pile entity is not a stable inspection resource identity.
     inline BNM::Method<void> inspectionItemSetEntityId;
 
     // CardInspectionOverlayConfig
@@ -96,6 +99,37 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
 
     inline BNM::Class inspectionItemClass;
     inline BNM::Class inspectionConfigClass;
+
+    // The stock inspection overlay recycles only a few panels and loads card
+    // views asynchronously. Coalesce touch navigation while the current panel
+    // generation is still loading; do not let re-entrant swipe requests race
+    // panel callbacks and pool-return operations.
+    using ScrollFn = void (*)(void*, const void*);
+    inline ScrollFn originalScrollNext = nullptr;
+    inline ScrollFn originalScrollPrev = nullptr;
+    inline BNM::Field<int> overlayActiveLoads;
+    inline BNM::Field<bool> overlayDismissed;
+    inline unsigned int coalescedScrolls = 0;
+    inline bool GuardScroll(Obj* mediator, const char* direction) {
+        if (!mediator || !overlayActiveLoads.IsValid() || !overlayDismissed.IsValid())
+            return false;
+        const int loading = overlayActiveLoads[mediator].Get();
+        if (loading <= 0 && !overlayDismissed[mediator].Get())
+            return false;
+        if (++coalescedScrolls <= 16 || (coalescedScrolls % 32) == 0)
+            CC_DIAG("CustomComponents/DiscardPileViewer/SCROLL: coalesced dir=%s pendingLoads=%d dismissed=%d count=%u",
+                    direction, loading, overlayDismissed[mediator].Get() ? 1 : 0,
+                    coalescedScrolls);
+        return true;
+    }
+    static void ScrollNextHook(void* self, const void* method) {
+        if (GuardScroll(static_cast<Obj*>(self), "next")) return;
+        if (originalScrollNext) originalScrollNext(self, method);
+    }
+    static void ScrollPrevHook(void* self, const void* method) {
+        if (GuardScroll(static_cast<Obj*>(self), "prev")) return;
+        if (originalScrollPrev) originalScrollPrev(self, method);
+    }
 
     template <typename T>
     inline T* ListAt(BNM::Structures::Mono::List<T*>* list, int index) {
@@ -251,10 +285,13 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
 
             inspectionItemCtor[item](guid);
 
-            // Keep the exact discarded EntityId attached to the inspection entry.
-            // Stock InspectionItem explicitly supports this field.
-            inspectionItemSetEntityId[item](entityId);
-
+            // Keep this a GUID-based *inspection snapshot*. The stock
+            // InspectionItem(int) constructor leaves EntityId=-1 and
+            // CreationSourceGuid=-1. A card may leave the discard pile while
+            // asynchronously loaded inspection panels are being recycled;
+            // setting EntityId to that short-lived match object would create
+            // a second, unnecessary lifetime dependency during fast swipes.
+            // Gameplay and targeting still use the real discarded EntityId.
             items->Add(item);
         }
 
@@ -486,6 +523,10 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
         auto showSignalClass = BNM::Class(
             "PvZCards.CardInspection",
             "ShowCardInspectionOverlaySignal"
+        );
+        auto inspectionMediator = BNM::Class(
+            "PvZCards.CardInspection",
+            "CardInspectionOverlayViewMediator"
         );
 
         if (!inspectCommand.IsValid() ||
@@ -740,6 +781,27 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
                 reinterpret_cast<void*>(originalPickTarget)
             );
             return false;
+        }
+
+        // The overlay itself is stock-owned. Install a narrowly scoped
+        // navigation gate for async panel recycling; normal swipes are
+        // forwarded unchanged once ActivePanelLoadRequests reaches zero.
+        if (inspectionMediator.IsValid()) {
+            overlayActiveLoads = inspectionMediator.GetField("ActivePanelLoadRequests").cast<int>();
+            overlayDismissed = inspectionMediator.GetField("Dismissed").cast<bool>();
+            auto next = inspectionMediator.GetMethod("ScrollToNext", 0);
+            auto prev = inspectionMediator.GetMethod("ScrollToPrev", 0);
+            if (overlayActiveLoads.IsValid() && overlayDismissed.IsValid() &&
+                next.IsValid() && prev.IsValid()) {
+                BNM::BasicHook(next, ScrollNextHook, originalScrollNext);
+                BNM::BasicHook(prev, ScrollPrevHook, originalScrollPrev);
+                LOG_INFO("CustomComponents/DiscardPileViewer/SCROLL: guard installed next=%d prev=%d",
+                         originalScrollNext ? 1 : 0, originalScrollPrev ? 1 : 0);
+            } else {
+                LOG_ERR("CustomComponents/DiscardPileViewer/SCROLL: stock mediator metadata unavailable; cannot serialize scroll loads");
+            }
+        } else {
+            LOG_ERR("CustomComponents/DiscardPileViewer/SCROLL: stock mediator not found");
         }
 
         CC_DIAG(

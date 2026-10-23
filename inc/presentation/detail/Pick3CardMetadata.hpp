@@ -69,11 +69,21 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
     inline SetCardDataFn originalSetCardData = nullptr;
     inline bool mapperCaptureActive = false;
     inline unsigned int mapperCaptured = 0;
+    using SharedObserver = void (*)(void*, int, void*, const void*);
+    inline SharedObserver sharedObserver = nullptr;
+    inline bool RegisterSharedObserver(SharedObserver observer) {
+        if (!observer) return false;
+        if (sharedObserver && sharedObserver != observer) return false;
+        sharedObserver = observer;
+        return true;
+    }
     inline void CaptureSnapshot(int guid, Obj* data);
     inline void SetCardDataCapture(Obj* self, int guid, Obj* data, const void* method) {
         if (!originalSetCardData) return;
         // Preserve game behavior before performing any optional observations.
         originalSetCardData(self, guid, data, method);
+        // Notify other Bloom modules after the stock mapper has updated.
+        if (sharedObserver) sharedObserver(self, guid, data, method);
         if (mapperCaptureActive && self && guid>0 && data &&
             mapperClass.IsValid() && BNM::IsA(self,mapperClass) &&
             dataClass.IsValid() && BNM::IsA(data,dataClass)) {

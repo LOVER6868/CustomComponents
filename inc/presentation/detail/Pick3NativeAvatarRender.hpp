@@ -253,8 +253,14 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarRender {
     }
     inline void Relayer(Obj* go,int layer,int depth,Bounds& bounds,bool& found,std::array<Bounds,128>& samples,int& n){
         if(!go||depth>18)return;
-        setLayer[go](layer);
-        Obj* renderer=getComponent[go](rendererClass.GetMonoType());
+        // Async CardView callbacks can expose a hierarchy before every Unity
+        // component is fully initialized. Never traverse on a failed call.
+        Obj* renderer=nullptr;
+        const auto access=BNM::TryInvoke([&]{
+            setLayer[go](layer);
+            renderer=getComponent[go](rendererClass.GetMonoType());
+        });
+        if(access.IsValid())return;
         if(renderer&&getBounds.IsValid()){
             Bounds b{};
             auto ex=BNM::TryInvoke([&]{b=getBounds[renderer]();});
@@ -275,13 +281,22 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarRender {
                 }
             }
         }
-        Obj* tr=getTransform[go]();
-        if(!tr)return;
-        int count=getChildCount[tr]();
+        Obj* tr=nullptr;
+        int count=0;
+        const auto hierarchy=BNM::TryInvoke([&]{
+            tr=getTransform[go]();
+            if(tr)count=getChildCount[tr]();
+        });
+        if(hierarchy.IsValid()||!tr)return;
         count=std::clamp(count,0,128);
         for(int i=0;i<count;++i){
-            Obj* child=getChild[tr](i);
-            Obj* childGO=child?getGameObject[child]():nullptr;
+            Obj* child=nullptr;
+            Obj* childGO=nullptr;
+            const auto childAccess=BNM::TryInvoke([&]{
+                child=getChild[tr](i);
+                if(child)childGO=getGameObject[child]();
+            });
+            if(childAccess.IsValid()||!childGO)continue;
             Relayer(childGO,layer,depth+1,bounds,found,samples,n);
         }
     }
@@ -303,9 +318,14 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarRender {
             return false;
         }
         Obj* camGO=Target(stages[option].cameraRoot);
-        Obj* cam=camGO?getComponent[camGO](cameraClass.GetMonoType()):nullptr;
-        Obj* tr=camGO?getTransform[camGO]():nullptr;
-        if(!cam||!tr)return false;
+        Obj* cam=nullptr;Obj* tr=nullptr;
+        const auto cameraError=BNM::TryInvoke([&]{
+            if(camGO){
+                cam=getComponent[camGO](cameraClass.GetMonoType());
+                tr=getTransform[camGO]();
+            }
+        });
+        if(cameraError.IsValid()||!cam||!tr)return false;
         // Do not refit to the ENTIRE animated hierarchy every few frames.
         // Particle systems / oversized FX can make a Dragonfruit's body
         // appear tiny. Use the dominant visible 2D renderer (excluding
@@ -446,8 +466,19 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarRender {
                    std::chrono::duration<double>(now-s.lastCardPaint).count()<1.0/fps)continue;
             }
             Obj* go=Target(s.cameraRoot);
-            Obj* cam=go?getComponent[go](cameraClass.GetMonoType()):nullptr;
-            if(!cam)continue;
+            Obj* cam=nullptr;
+            // A rooted managed wrapper can outlive its destroyed Unity native
+            // Camera. An unhandled managed GetComponent exception must not
+            // propagate through the UI tick into gameplay execution.
+            auto cameraError=BNM::TryInvoke([&]{
+                if(go) cam=getComponent[go](cameraClass.GetMonoType());
+            });
+            if(cameraError.IsValid() || !cam){
+                LOG_ERR("CustomComponents/Pick3/AVATAR_RENDER: CAMERA_LOST option=%d managedException=%d; releasing only this stale stage",
+                        i+1,cameraError.IsValid()?1:0);
+                Stop(i,s.ticket);
+                continue;
+            }
             const auto begin=std::chrono::steady_clock::now();
             render(cam);
             const auto elapsed=std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-begin).count();

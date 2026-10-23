@@ -256,6 +256,11 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarLoad {
         Request& s=slots[index];
         if(!s.used) return;
         auto cardHandle=Callbacks::cardHandles[index].exchange(0,std::memory_order_acq_rel);
+        // Unity Destroy is deferred; detach our camera and RawImage from the
+        // managed CardView BEFORE the stock unloader releases prefab assets.
+        // This preserves native artwork while preventing a one-frame render
+        // of a hierarchy already unloaded by CardAssetUnloader.
+        Pick3NativeAvatarRender::Stop(s.option,s.ticket);
         Obj* card=Target(cardHandle);
         Obj* unloader=Target(s.unloaderRoot);
         if(card && unloader && unloadAssets.IsValid()) {
@@ -264,7 +269,6 @@ namespace CustomComponents::Presentation::Pick3NativeAvatarLoad {
         }
         if(cardHandle && Core::SceneViewContext::freeGCHandle)
             Core::SceneViewContext::freeGCHandle(cardHandle);
-        Pick3NativeAvatarRender::Stop(s.option,s.ticket);
         Obj* parent=Target(s.parentRoot);
         if(parent && destroyObject.IsValid()) {
             const auto ex=BNM::TryInvoke([&]{destroyObject(parent);});

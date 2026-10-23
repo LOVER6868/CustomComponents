@@ -21,7 +21,7 @@ inline constexpr int kNoCardGuid = -1;
 
 enum class SelectionMode : std::uint8_t {
     RandomTargets = 0,     // Distinct eligible LIVE entities; repeated card GUIDs allowed.
-    UniqueGuidTargets = 1, // One uniformly chosen LIVE representative per card GUID.
+    UniqueGuidTargets = 1, // Weight by eligible live copies; at most one option per GUID.
     CardDatabase = 2       // Distinct card definitions; no live entity is required.
 };
 
@@ -46,7 +46,8 @@ inline bool IsUsable(const Candidate& candidate, SelectionMode mode) {
 
 // The input MUST already be restricted by stock query/faction/zone/condition
 // rules. Do not treat this sampler as a substitute for target eligibility.
-// Uniform selection without replacement from the normalized candidate set.
+// UniqueGuidTargets weights GUIDs by eligible live copies and removes the
+// entire GUID after each draw. Other modes sample their normalized set uniformly.
 // `rng` must be synchronized/authoritative in multiplayer; avoid wall-clock seeds.
 template<class UniformRandomBitGenerator>
 std::vector<Candidate> SelectOptions(
@@ -65,25 +66,39 @@ std::vector<Candidate> SelectOptions(
             normalized.push_back({kNoEntity, candidate.cardGuid});
         }
     } else if (mode == SelectionMode::UniqueGuidTargets) {
-        // Reservoir-sample ONE random representative from each card GUID group.
-        // For a group of size n, each live entity has probability 1/n.
-        std::unordered_map<int, std::size_t> groupIndex;
-        std::vector<std::size_t> groupCounts;
+        // Aggregate eligible live copies by GUID. Each distinct entity is
+        // counted once; its stack size is the sampling weight. Once selected,
+        // remove the whole stack, so a GUID cannot appear twice in one offer.
+        struct Stack { int guid; std::vector<Candidate> copies; };
+        std::vector<Stack> stacks;
+        std::unordered_map<int, std::size_t> byGuid;
         std::unordered_set<int> seenEntities;
         for (const auto& candidate : eligible) {
             if (!IsUsable(candidate, mode) || !seenEntities.insert(candidate.entityId).second)
                 continue;
-            const auto pair = groupIndex.emplace(candidate.cardGuid, normalized.size());
-            if (pair.second) {
-                normalized.push_back(candidate);
-                groupCounts.push_back(1);
-            } else {
-                const auto index = pair.first->second;
-                ++groupCounts[index];
-                std::uniform_int_distribution<std::size_t> draw(0, groupCounts[index] - 1);
-                if (draw(rng) == 0) normalized[index] = candidate;
+            auto found = byGuid.find(candidate.cardGuid);
+            if (found == byGuid.end()) {
+                byGuid.emplace(candidate.cardGuid, stacks.size());
+                stacks.push_back({candidate.cardGuid, {}});
+                found = byGuid.find(candidate.cardGuid);
             }
+            stacks[found->second].copies.push_back(candidate);
         }
+        std::vector<Candidate> chosen;
+        chosen.reserve(kMaximumChoices);
+        while (!stacks.empty() && chosen.size() < kMaximumChoices) {
+            std::vector<double> weights;
+            weights.reserve(stacks.size());
+            for (const auto& stack : stacks)
+                weights.push_back(static_cast<double>(stack.copies.size()));
+            std::discrete_distribution<std::size_t> stackDraw(weights.begin(), weights.end());
+            const std::size_t stackIndex = stackDraw(rng);
+            const auto& copies = stacks[stackIndex].copies;
+            std::uniform_int_distribution<std::size_t> copyDraw(0, copies.size() - 1);
+            chosen.push_back(copies[copyDraw(rng)]);
+            stacks.erase(stacks.begin() + static_cast<std::ptrdiff_t>(stackIndex));
+        }
+        return chosen;
     } else if (mode == SelectionMode::RandomTargets) {
         std::unordered_set<int> seenEntities;
         for (const auto& candidate : eligible) {
@@ -142,6 +157,9 @@ struct PreviewRequest {
     // The activating card, NEVER one of the three candidates. Used only for
     // the prefab-specific localized UI prompt.
     int sourceCardGuid = -1;
+    // Effect.PlayerId: the selecting player, not the side receiving the Play.
+    // -1 means unknown. This is kept with the request through the UI delay.
+    int ownerPlayerId = -1;
 };
 
 // Only used for the READ-ONLY Step 2 device probe. Real gameplay must use the
@@ -166,6 +184,23 @@ inline PreviewRequest MakePreviewRequest(int effectEntityId,
     std::mt19937 probeRng(seed);
     return PreviewRequest{effectEntityId, effectGroupId, mode, requiredTargets,
                           SelectOptions(mode, eligible, probeRng)};
+}
+// Canonicalize candidates and remove the local nonce for experimental
+// cross-client tests. This removes a known source of client-to-client choice
+// divergence when both have identical authoritative eligible entity IDs.
+// IT IS NOT A NETWORK PROTOCOL: the server still cannot verify the offered
+// three options, and CardDatabase GUIDs cannot be carried by stock Play.
+inline PreviewRequest MakeStableNetworkPreviewRequest(int effectEntityId,
+                                                      int effectGroupId,
+                                                      SelectionMode mode,
+                                                      const std::vector<Candidate>& eligible,
+                                                      int requiredTargets = 1) {
+    auto canonical = eligible;
+    std::sort(canonical.begin(), canonical.end(), [](const Candidate& a, const Candidate& b) {
+        if (a.entityId != b.entityId) return a.entityId < b.entityId;
+        return a.cardGuid < b.cardGuid;
+    });
+    return MakePreviewRequest(effectEntityId, effectGroupId, mode, canonical, 0u, requiredTargets);
 }
 } // namespace CustomComponents::Pick3
 

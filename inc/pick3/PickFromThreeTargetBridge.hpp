@@ -29,6 +29,13 @@ inline bool enabled = false;
 inline bool normalizeGameplayFilter = false;
 inline BNM::Field<int> selectionType, blockingEffectEntityId, blockingGroupId;
 inline BNM::Field<int> blockingSourceId; // Effect.SourceId of activating card
+inline BNM::Field<int> blockingPlayerId; // Effect.PlayerId is the choosing player
+// The submission service supplies the locally-injected GameModel.LocalPlayerId.
+// No extra hooks are necessary and the existing PvE path stays intact.
+inline int (*resolveLocalPlayerId)() = nullptr;
+inline int LocalPlayerId() { return resolveLocalPlayerId ? resolveLocalPlayerId() : -1; }
+// Provided by the game's selected target service capture; no separate hook.
+inline bool (*resolveRemoteSession)() = nullptr;
 inline BNM::Field<Obj*> finderEntityFinder, entityFinderModel;
 inline BNM::Method<Obj*> getEntityById;
 inline BNM::Method<Obj*> getComponent;
@@ -126,7 +133,12 @@ inline void RememberPlayedSource(int entityId,int guid) {
 inline bool requestReady = false;
 inline std::uint32_t nonce = 0;
 inline int latestEffect = -1, latestGroup = -1;
+inline int latestOwnerPlayerId = -1;
 inline std::vector<int> latestEligible;
+// Preserve exact entity/GUID pairs from the *stock-valid* target list.
+// Weighted choices must never quietly turn an entity selection into a
+// different copy of the same card definition.
+inline std::vector<Candidate> latestEligiblePairs;
 inline BNM::Field<int> numberOfTargets;
 inline int lastOfferedEffect = -1;
 inline int lastOfferedGroup = -1;
@@ -240,7 +252,7 @@ inline void RestoreOverride(const RuntimeManualOverride& item, const char* reaso
 }
 // Called after the synchronous local service has processed the selected
 // targets, before a future card can start another ChooseTarget phase.
-inline void CompleteLocalSelection(int effectId, int groupId) {
+inline void CompleteLocalSelection(int effectId, int groupId, bool rearm = true) {
     std::lock_guard<std::mutex> lock(snapshotMutex);
     for (auto it = runtimeOverrides.begin(); it != runtimeOverrides.end();) {
         if (it->effectId == effectId && it->groupId == groupId) {
@@ -254,13 +266,14 @@ inline void CompleteLocalSelection(int effectId, int groupId) {
             it = databaseQueryOverrides.erase(it);
         } else ++it;
     }
-    if (lastOfferedEffect == effectId && lastOfferedGroup == groupId) {
+    if (rearm && lastOfferedEffect == effectId && lastOfferedGroup == groupId) {
         lastOfferedEffect = -1;
         lastOfferedGroup = -1;
     }
     if (latestEffect == effectId && latestGroup == groupId) {
         latestEffect = latestGroup = -1;
-        latestEligible.clear(); latestDatabaseProxy = -1;
+        latestOwnerPlayerId = -1;
+        latestEligible.clear(); latestEligiblePairs.clear(); latestDatabaseProxy = -1;
     }
     CC_DIAG("CustomComponents/Pick3/STEP411: REARM effect=%d group=%d overridesRemaining=%zu",
              effectId, groupId, runtimeOverrides.size());
@@ -331,6 +344,24 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
     const int groupId = blockingGroupId[blockingObject].Get();
     if (effectId <= 0) return originalFindValid(self, blocking, method);
 
+    // Both PvP clients simulate the blocking Effect, but only Effect.PlayerId
+    // owns its selection UI. The older bridge queued a popup on BOTH clients.
+    // Use the engine's recorded owner, not VisualTurnPhaseModel.SubTurn: that
+    // visual value can change during entrance/press animations.
+    const int effectOwner = blockingPlayerId.IsValid()
+        ? blockingPlayerId[blockingObject].Get() : -1;
+    const int thisPlayer = LocalPlayerId();
+    if (effectOwner >= 0 && thisPlayer >= 0 && effectOwner != thisPlayer) {
+        static int lastLoggedEffect = -1, lastLoggedGroup = -1;
+        if (lastLoggedEffect != effectId || lastLoggedGroup != groupId) {
+            lastLoggedEffect = effectId; lastLoggedGroup = groupId;
+            LOG_INFO("CustomComponents/Pick3/PVP_OWNER: REMOTE_POPUP_SUPPRESSED effect=%d group=%d owner=%d local=%d",
+                     effectId, groupId, effectOwner, thisPlayer);
+        }
+        // Leave the simulation's original finder and targets unmodified.
+        return originalFindValid(self, blocking, method);
+    }
+
     // Stock asks for valid targets repeatedly, including after the popup has
     // been offered. An already-owned effect/group must not be resolved again
     // through an extra managed EntityModel.GetEntityById invocation.
@@ -367,6 +398,15 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
             return originalFindValid(self, blocking, method);
         }
         databaseQuery = OriginalDatabaseQuery(filter, effectId, groupId);
+    }
+    // Read-only boundary diagnostic: the call below may already apply stock
+    // target count/randomization. This records the filter state before it runs.
+    if (jsonMode == SelectionMode::UniqueGuidTargets) {
+        LOG_INFO("CustomComponents/Pick3/POOL_BOUNDARY: BEFORE_STOCK effect=%d group=%d mode=%d numTargets=%d lastOffered=%d requestReady=%d overrideCount=%zu",
+                 effectId, groupId, jsonSelectionType,
+                 numberOfTargets.IsValid() ? numberOfTargets[filter].Get() : -1,
+                 previouslyOffered ? 1 : 0, requestReady ? 1 : 0,
+                 runtimeOverrides.size());
     }
     // Stock now evaluates the recipient query for its legal phase-completion
     // entity; the original CardDatabase candidate query is still GC-rooted.
@@ -437,20 +477,64 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
     {
         std::lock_guard<std::mutex> lock(snapshotMutex);
         latestEffect = effectId; latestGroup = blockingGroupId[blocking].Get();
+        latestOwnerPlayerId = effectOwner;
         latestEligible.clear();
+        latestEligiblePairs.clear();
         latestDatabaseProxy = -1;
         if (jsonMode == SelectionMode::CardDatabase) {
             latestDatabaseProxy = source->items->m_Items[0];
             latestEligible.push_back(latestDatabaseProxy);
         } else {
+            latestEligiblePairs = candidates;
             for (const auto& candidate : candidates) latestEligible.push_back(candidate.entityId);
         }
     }
     // The database popup displays the original JSON Query's backing GUIDs.
     // The stock list contains only legal recipient proxy targets, never GUIDs.
     // Do not modify the PoolableList or stock selector's RNG stream.
-    auto request = MakePreviewRequest(effectId, blockingGroupId[blocking].Get(),
-                                      jsonMode, candidates, ++nonce, required);
+    // The query can run BEFORE SelectTargetCommand injects its service.
+    // Choosing the sampler based on Remote() at this point makes one peer use
+    // a local ++nonce while the other uses canonical ordering, even with
+    // identical eligible states. Use a canonical, nonce-free offer for BOTH
+    // local and remote completion. Different effect/group keys still produce
+    // different offers; the same pending effect never silently rerolls.
+    // This stabilizes client previews, not server-side GUID transmission.
+    if (jsonMode == SelectionMode::UniqueGuidTargets) {
+        LOG_INFO("CustomComponents/Pick3/POOL_BOUNDARY: AFTER_STOCK effect=%d group=%d returned=%d resolved=%zu required=%d",
+                 effectId, groupId, source->size, candidates.size(), required);
+        std::unordered_map<int, int> counts;
+        std::unordered_set<int> uniqueEntities;
+        for (const auto& card : candidates)
+            if (card.entityId > 0 && card.cardGuid > 0 && uniqueEntities.insert(card.entityId).second)
+                ++counts[card.cardGuid];
+        LOG_INFO("CustomComponents/Pick3/WEIGHTED_POOL: effect=%d group=%d raw=%d valid=%zu distinctEntities=%zu guidStacks=%zu targetSlots=3",
+                 effectId, blockingGroupId[blocking].Get(), source->size, candidates.size(),
+                 uniqueEntities.size(), counts.size());
+        // Log the post-stock GUID distribution so a stock-side truncation is
+        // distinguishable from duplicate-GUID removal in our sampler.
+        for (const auto& count : counts)
+            LOG_INFO("CustomComponents/Pick3/POOL_STACK: effect=%d group=%d guid=%d eligibleCopies=%d",
+                     effectId, groupId, count.first, count.second);
+        // A pool with only two distinct eligible GUIDs cannot provide three
+        // different GUIDs. Never invent targets or duplicate an offered GUID.
+        if (counts.size() < kMaximumChoices)
+            LOG_INFO("CustomComponents/Pick3/WEIGHTED_POOL: SHORT_POOL effect=%d availableGuidStacks=%zu",
+                     effectId, counts.size());
+    }
+    const bool networkSelection = resolveRemoteSession && resolveRemoteSession();
+    auto request = MakeStableNetworkPreviewRequest(
+        effectId, blockingGroupId[blocking].Get(), jsonMode, candidates, required);
+    CC_DIAG("CustomComponents/Pick3/PVP: CANONICAL_OPTIONS effect=%d group=%d count=%zu serviceRemote=%d; "
+            "server validation and remote GUID transport still required",
+            effectId, request.effectGroupId, request.options.size(), networkSelection ? 1 : 0);
+    if (jsonMode == SelectionMode::UniqueGuidTargets) {
+        LOG_INFO("CustomComponents/Pick3/WEIGHTED_OFFER: effect=%d group=%d offered=%zu first=%d second=%d third=%d",
+                 effectId, request.effectGroupId, request.options.size(),
+                 request.options.size() > 0 ? request.options[0].cardGuid : -1,
+                 request.options.size() > 1 ? request.options[1].cardGuid : -1,
+                 request.options.size() > 2 ? request.options[2].cardGuid : -1);
+    }
+    request.ownerPlayerId = effectOwner;
     // The instruction localization belongs to the card playing this ability.
     // Resolve while the originating Effect and its GameModel are still live;
     // a GUI lookup from one of the offered candidate cards would be incorrect.
@@ -529,6 +613,10 @@ inline bool HasAutomaticDatabaseRecipientPhase() {
     std::lock_guard<std::mutex> lock(snapshotMutex);
     return !databaseQueryOverrides.empty();
 }
+inline int ActiveOwnerPlayerId() {
+    std::lock_guard<std::mutex> lock(snapshotMutex);
+    return latestOwnerPlayerId;
+}
 inline bool HasQueuedChoice() {
     std::lock_guard<std::mutex> lock(snapshotMutex);
     return requestReady;
@@ -549,6 +637,16 @@ inline bool StillEligible(int effectId, int groupId, int entityId) {
     return latestEffect == effectId && latestGroup == groupId &&
         std::find(latestEligible.begin(), latestEligible.end(), entityId) != latestEligible.end();
 }
+// An offered weighted choice is an exact LIVE CARD, not merely its GUID.
+// This is checked immediately before the DTO is constructed. The snapshot is
+// not a substitute for the server's current-state target validation.
+inline bool StillEligibleWithGuid(int effectId, int groupId, int entityId, int guid) {
+    std::lock_guard<std::mutex> lock(snapshotMutex);
+    if (latestEffect != effectId || latestGroup != groupId || entityId <= 0 || guid <= 0)
+        return false;
+    return std::any_of(latestEligiblePairs.begin(), latestEligiblePairs.end(),
+        [=](const Candidate& item) { return item.entityId == entityId && item.cardGuid == guid; });
+}
 inline bool Consume(PreviewRequest& out) {
     std::lock_guard<std::mutex> lock(snapshotMutex);
     if (!requestReady) return false;
@@ -568,7 +666,8 @@ inline void Clear() {
     lastOfferedEffect = -1;
     lastOfferedGroup = -1;
     latestEffect = latestGroup = -1;
-    latestEligible.clear(); latestDatabaseProxy = -1;
+    latestOwnerPlayerId = -1;
+    latestEligible.clear(); latestEligiblePairs.clear(); latestDatabaseProxy = -1;
 }
 inline bool Initialize(bool requested, bool useStockManualRuntime = false) {
     normalizeGameplayFilter = useStockManualRuntime;
@@ -584,6 +683,7 @@ inline bool Initialize(bool requested, bool useStockManualRuntime = false) {
     blockingEffectClass = blocking;
     primaryFilterClass = BNM::Class("PvZCards.Engine.Components", "PrimaryTargetFilter");
     blockingSourceId = BNM::Class("PvZCards.Engine", "Effect").GetField("SourceId").cast<int>();
+    blockingPlayerId = BNM::Class("PvZCards.Engine", "Effect").GetField("PlayerId").cast<int>();
     cardClass = BNM::Class("PvZCards.Engine.Components", "Card");
     cardDatabaseClass = BNM::Class("PvZCards.Core.Utilities", "CardDatabase");
     if (cardDatabaseClass.IsValid()) {
@@ -617,7 +717,7 @@ inline bool Initialize(bool requested, bool useStockManualRuntime = false) {
     const bool ok = finderClass.IsValid() && entityFinderClass.IsValid() &&
         entityModelClass.IsValid() && blockingEffectClass.IsValid() &&
         primaryFilterClass.IsValid() && selectionType.IsValid() && numberOfTargets.IsValid() &&
-        blockingEffectEntityId.IsValid() && blockingGroupId.IsValid() &&
+        blockingEffectEntityId.IsValid() && blockingGroupId.IsValid() && blockingPlayerId.IsValid() &&
         finderEntityFinder.IsValid() && entityFinderModel.IsValid() && getEntityById.IsValid() && getComponent.IsValid() &&
         cardGuid.IsValid() && targetFilterQuery.IsValid() && additionalTargetQuery.IsValid() &&
         additionalTargetType.IsValid() && onlyApplyToAdditionalTargets.IsValid() &&

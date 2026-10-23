@@ -52,6 +52,9 @@
         if constexpr (CustomComponents::Diagnostics::kVerbose) CC_DIAG("CustomComponents/LANE-I2: PREFLIGHT ENTER effect=%p model=%p system=%p", effect, model, system);
         const int preflightCardId = effectTargetId[effect].Get();
         const int preflightLaneId = effectSecondaryTargetId[effect].Get();
+        LOG_INFO("CustomComponents/DiscardPile/LANE_TARGET_TRACE: "
+                 "effect=%d cardTargetEntityId=%d laneTargetEntityId=%d",
+                 sourceEffectEntityId, preflightCardId, preflightLaneId);
         if constexpr (CustomComponents::Diagnostics::kVerbose) CC_DIAG("CustomComponents/LANE-I2: TARGETS cardId=%d laneId=%d effectEntityId=%d", preflightCardId, preflightLaneId, sourceEffectEntityId);
 
         if constexpr (CustomComponents::Diagnostics::kVerbose) CC_DIAG("CustomComponents/LANE-I2: SYSTEM before modifier/history reads");

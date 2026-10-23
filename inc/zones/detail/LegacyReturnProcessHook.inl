@@ -20,6 +20,13 @@
         Obj* model = returnSystemModel[system].Get();
         Obj* discardModifier = returnSystemDiscardModifier[system].Get();
         const int cardId = effectTargetId[effect].Get();
+        // Compare against Pick3/TARGET_TRACE for Unearth/return-from-discard
+        // issues. The native effect must receive the chosen physical Entity.Id;
+        // a Card.Guid cannot be looked up as a discarded live entity.
+        LOG_INFO("CustomComponents/DiscardPile/TARGET_TRACE: route=%d effectTargetEntityId=%d "
+                 "effectGroupEntityId=%d",
+                 route, cardId, effectEffectEntityId.IsValid()
+                    ? effectEffectEntityId[effect].Get() : -1);
 
         if (!model || !discardModifier || cardId < 0) {
             LOG_ERR(
