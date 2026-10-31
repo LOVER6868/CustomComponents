@@ -295,6 +295,36 @@
         return nullptr;
     }
 
+    // A caller with an authoritative EntityModel must not guess the producer
+    // from reused EffectEntity / card ids. In particular, discard-to-lane
+    // already has the stock lane system's exact live model. Prediction clones
+    // can contain every one of those ids while targeting a different queue.
+    inline StockTriggerContext* FindStockTriggerContextForModel(
+        Obj* expectedModel,
+        Obj* preferredInstances = nullptr
+    ) {
+        if (!expectedModel)
+            return nullptr;
+
+        for (std::size_t i = stockTriggerContextCount; i-- > 0;) {
+            StockTriggerContext& candidate = stockTriggerContexts[i];
+            if (!RefreshStockTriggerContext(candidate) ||
+                candidate.model != expectedModel)
+                continue;
+            if (preferredInstances && candidate.instances != preferredInstances)
+                continue;
+            return &candidate;
+        }
+
+        LOG_ERR(
+            "CustomComponents/CustomTrigger: exact-model producer missing model=%p activeInstances=%p contexts=%zu",
+            expectedModel,
+            preferredInstances,
+            stockTriggerContextCount
+        );
+        return nullptr;
+    }
+
     inline bool ModelContainsEntityId(Obj* model, int id) {
         if (!model || id < 0)
             return false;

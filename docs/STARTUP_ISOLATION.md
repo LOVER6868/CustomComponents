@@ -2,7 +2,8 @@
 
 This patch retains the baseline source and normal behavior when no cutoff file exists. It adds a monotonic startup cutoff to `main.cpp` (NOT a collection of independent feature toggles; those would violate startup dependencies).
 
-Place a decimal number `0` through `9` or `-1` in:
+The packaged `[StartupDiagnostics] StartupCutoff=-1` is the normal default.
+To override without rebuilding, place a decimal number `0` through `9` or `-1` in:
 
 `/sdcard/Android/data/com.ea.gp.pvzheroes/files/customcomponents_startup_stage.txt`
 
@@ -42,3 +43,19 @@ adb logcat -d -v threadtime -s Sprig:* | Select-String 'STARTUP_DIAG'
 If `adb push` fails with permission denied, this path is not usable on that device. Do not assume settings took effect unless `STARTUP_DIAG: using ... cutoff=N` appears in Logcat. Use a permitted game-owned file installation route instead.
 
 Suggested sequence: test 0, 4, 7, 9 to find the failing half, then bisect between the last stable and first unstable stage. Capture multiple launches per stage because startup failure is intermittent. If **stage 0** still crashes frequently, CustomComponents' module initializer functions are not the crash cause on that attempt; it does **not** exclude static constructors or other native code that executes when the library loads.
+
+## Charge/Thrash and Pick3 Stage-8 isolation
+
+Stage selection is separate from these diagnostic selectors. Configure them in
+`[StartupDiagnostics]` (and rebuild) or put a one-line decimal value in a
+matching game-external file in the same directory as the startup cutoff.
+
+| Config setting | External override file | Valid values |
+| --- | --- | --- |
+| `CombatHookMode=3` | `customcomponents_combat_hooks_mode.txt` | `0` none, `1` Charge only, `2` Thrash only, `3` both |
+| `Pick3HookMode=-1` | `customcomponents_pick3_hooks_mode.txt` | `-1` honor `Pick3Stage8Isolation`, `0` none, `1` candidates, `2` unsupported, `3` both |
+
+External values override packaged values; invalid or missing external values
+leave the packaged setting unchanged. Stage-8 submission initialization now
+requires the candidate bridge's actual successful initialization. Diagnostic
+isolation modes are NOT supported regular-match configurations.

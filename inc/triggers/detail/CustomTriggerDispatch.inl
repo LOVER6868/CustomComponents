@@ -3,9 +3,34 @@
     // managed component; this routine only replaces the closed TriggerSystem<T>
     // lookup step. Once TriggerData is added, EA's normal
     // TriggeredEffectQueuingSystem owns the rest of execution.
+    // Captured while the blocking effect is still owned by stock Process().
+    // Plain integers, not a GC root: pooling cannot rewrite this snapshot.
+    struct Pick3EffectIdentitySnapshot {
+        int sourceId = -1;
+        int targetId = -1;
+        int springboardId = -1;
+        int effectEntityId = -1;
+        int effectGroupId = -1;
+        bool valid = false;
+    };
+
+    inline Pick3EffectIdentitySnapshot ReadPick3EffectIdentity(Obj* effect) {
+        Pick3EffectIdentitySnapshot result;
+        if (!effect) return result;
+        const auto* b = reinterpret_cast<const std::uint8_t*>(effect);
+        result.sourceId = *reinterpret_cast<const int*>(b + 0x24);
+        result.targetId = *reinterpret_cast<const int*>(b + 0x28);
+        result.springboardId = *reinterpret_cast<const int*>(b + 0x2C);
+        result.effectEntityId = *reinterpret_cast<const int*>(b + 0x30);
+        result.effectGroupId = *reinterpret_cast<const int*>(b + 0x3C);
+        result.valid = true;
+        return result;
+    }
+
     inline Obj* BuildEntityQueryContextStockEquivalent(
         Obj* effect,
-        Obj* instances
+        Obj* instances,
+        const Pick3EffectIdentitySnapshot* identitySnapshot = nullptr
     ) {
         if (!effect || !instances || !entityQueryContextType)
             return nullptr;
@@ -44,10 +69,13 @@
         const int effectEntityId =
             *reinterpret_cast<int*>(effectBytes + 0x30);
 
-        *reinterpret_cast<int*>(contextBytes + 0x14) = sourceId;
-        *reinterpret_cast<int*>(contextBytes + 0x10) = targetId;
-        *reinterpret_cast<int*>(contextBytes + 0x18) = effectEntityId;
-        *reinterpret_cast<int*>(contextBytes + 0x1C) = springboardId;
+        // Stock still owns the effect data and validator. Only restore the
+        // pre-Process identity when the caller has an exact scoped snapshot.
+        const bool restore = identitySnapshot && identitySnapshot->valid;
+        *reinterpret_cast<int*>(contextBytes + 0x14) = restore ? identitySnapshot->sourceId : sourceId;
+        *reinterpret_cast<int*>(contextBytes + 0x10) = restore ? identitySnapshot->targetId : targetId;
+        *reinterpret_cast<int*>(contextBytes + 0x18) = restore ? identitySnapshot->effectEntityId : effectEntityId;
+        *reinterpret_cast<int*>(contextBytes + 0x1C) = restore ? identitySnapshot->springboardId : springboardId;
 
         Obj* destinationData =
             *reinterpret_cast<Obj**>(contextBytes + 0x20);
@@ -63,12 +91,25 @@
         return queryContext;
     }
 
+    // Diagnostic only: preserve every stock validation decision and field.
+    struct Pick3ValidationObservation {
+        int listenerSourceId = -1;
+        int previousSelfId = -1;
+        int validationSelfId = -1;
+        bool validatorAvailable = false;
+        bool sourceExists = false;
+        bool validatorCalled = false;
+        bool validatorResult = false;
+    };
+
     inline bool ValidateWithStockTriggerValidator(
         Obj* stockFinder,
         Obj* model,
         Obj* effectEntity,
-        Obj* queryContext
+        Obj* queryContext,
+        Pick3ValidationObservation* observation = nullptr
     ) {
+        if (observation) *observation = {};
         if (!stockFinder || !model || !effectEntity || !queryContext ||
             !triggerValidatorShouldTrigger.IsValid()) {
             return false;
@@ -87,6 +128,7 @@
         );
         if (!validator)
             return false;
+        if (observation) observation->validatorAvailable = true;
 
         const int listenerSourceId =
             effectEntityGetSource[static_cast<Obj*>(nullptr)](effectEntity);
@@ -99,13 +141,22 @@
         *reinterpret_cast<int*>(contextBytes + 0x20) =
             listenerSourceId;
 
+        const bool sourceExists = listenerSourceId >= 0 &&
+            ModelContainsEntityId(model, listenerSourceId);
+        if (observation) {
+            observation->listenerSourceId = listenerSourceId;
+            observation->previousSelfId = previousSelfId;
+            observation->validationSelfId = listenerSourceId;
+            observation->sourceExists = sourceExists;
+        }
         bool result = false;
-        if (listenerSourceId >= 0 &&
-            ModelContainsEntityId(model, listenerSourceId)) {
+        if (sourceExists) {
+            if (observation) observation->validatorCalled = true;
             result = triggerValidatorShouldTrigger[validator](
                 effectEntity,
                 queryContext
             );
+            if (observation) observation->validatorResult = result;
         }
 
         *reinterpret_cast<int*>(contextBytes + 0x20) =
@@ -117,16 +168,22 @@
     inline bool FireEvent(
         const char* markerComponentName,
         const char* eventName,
-        Obj* firingEffect
+        Obj* firingEffect,
+        Obj* expectedModel = nullptr,
+        const Pick3EffectIdentitySnapshot* identitySnapshot = nullptr
     ) {
         if (!eventName || !*eventName || !firingEffect)
             return false;
 
-        StockTriggerContext* stockContext =
-            FindStockTriggerContextForEffect(
+        StockTriggerContext* stockContext = expectedModel
+            ? FindStockTriggerContextForModel(
+                expectedModel,
+                activeStateCheckInstances
+              )
+            : FindStockTriggerContextForEffect(
                 firingEffect,
                 activeStateCheckInstances
-            );
+              );
         if (!stockContext) {
             LOG_ERR(
                 "CustomComponents/CustomTrigger: FIRE '%s' failed: no coherent stock TriggerSystem context",
@@ -139,6 +196,8 @@
         Obj* instances = stockContext->instances;
         Obj* triggeredEffects = stockContext->triggeredEffects;
         Obj* stockFinder = stockContext->finder;
+        if (std::strcmp(eventName, "PickFromThreeTrigger") == 0)
+            LogPick3QueueGate("BEFORE_CUSTOM_FIRE", triggeredEffects);
 
         if (!model || !instances || !triggeredEffects || !stockFinder) {
             LOG_ERR(
@@ -157,7 +216,7 @@
             instances
         );
 
-        Obj* queryContext = BuildEntityQueryContextStockEquivalent(firingEffect, instances);
+        Obj* queryContext = BuildEntityQueryContextStockEquivalent(firingEffect, instances, identitySnapshot);
 
         if constexpr (CustomComponents::Diagnostics::kVerbose) CC_DIAG(
             "CustomComponents/CustomTrigger: FIRE queryContext=%p",
@@ -170,6 +229,38 @@
                 eventName
             );
             return false;
+        }
+
+        const bool tracePick3Event =
+            std::strcmp(eventName, "PickFromThreeTrigger") == 0;
+        if (tracePick3Event) {
+            // EntityQueryContext.Model is injected at +0x10, not copied from
+            // Effect. Read only after successful pooled acquisition.
+            auto* qb = reinterpret_cast<std::uint8_t*>(queryContext);
+            Obj* injectedModel = *reinterpret_cast<Obj**>(qb + 0x10);
+            Obj* effectCtx = *reinterpret_cast<Obj**>(qb + 0x18);
+            const auto* eb = reinterpret_cast<const std::uint8_t*>(firingEffect);
+            const auto* cb = reinterpret_cast<const std::uint8_t*>(effectCtx);
+            LOG_INFO(
+                "CustomComponents/Pick3/PICK3_CONTEXT: firingEffect=%p firingEffectEntity=%d firingSource=%d firingTarget=%d firingSpringboard=%d query=%p queryModel=%p expectedModel=%p producerModel=%p modelMatches=%d querySelf=%d copiedSource=%d copiedTarget=%d copiedEffectEntity=%d",
+                firingEffect,
+                *reinterpret_cast<const int*>(eb + 0x30),
+                *reinterpret_cast<const int*>(eb + 0x24),
+                *reinterpret_cast<const int*>(eb + 0x28),
+                *reinterpret_cast<const int*>(eb + 0x2C),
+                queryContext, injectedModel, expectedModel, model,
+                int(injectedModel == model),
+                *reinterpret_cast<const int*>(qb + 0x20),
+                cb ? *reinterpret_cast<const int*>(cb + 0x14) : -1,
+                cb ? *reinterpret_cast<const int*>(cb + 0x10) : -1,
+                cb ? *reinterpret_cast<const int*>(cb + 0x18) : -1
+            );
+        }
+
+        if (tracePick3Event && identitySnapshot) {
+            LOG_INFO("CustomComponents/Pick3/PICK3_SNAPSHOT_USED: valid=%d source=%d target=%d springboard=%d effectEntity=%d group=%d",
+                int(identitySnapshot->valid), identitySnapshot->sourceId, identitySnapshot->targetId,
+                identitySnapshot->springboardId, identitySnapshot->effectEntityId, identitySnapshot->effectGroupId);
         }
 
         auto triggerDataClass = BNM::Class("PvZCards.Engine", "TriggerData");
@@ -200,19 +291,44 @@
                 }
 
                 ++candidates;
+                // The custom PlayTrigger dispatcher is NOT the stock PlayTrigger
+                // producer. Log per-listener verdicts only when this custom
+                // dispatcher is explicitly invoked, without changing eligibility.
+                const bool tracePlayListener = std::strcmp(eventName, "PlayTrigger") == 0;
+                const bool tracePick3Listener = std::strcmp(eventName, "PickFromThreeTrigger") == 0;
+                const int traceEffectId = tracePlayListener ? entityId[effectEntity].Get() : -1;
+                const int traceSourceId = tracePlayListener
+                    ? effectEntityGetSource[static_cast<Obj*>(nullptr)](effectEntity) : -1;
 
                 // This is the stock GenericEffectEntityFinder<T>::WillTrigger
                 // path.  It sets/restores EntityQueryContext.SelfId and runs
                 // TriggerValidator over every Condition component attached to
                 // the effect entity.  Do not special-case TriggerTargetFilter,
                 // SelfEntityFilter, lane filters, once-per-turn conditions, etc.
-                if (!ValidateWithStockTriggerValidator(
-                        stockFinder,
-                        model,
-                        effectEntity,
-                        queryContext
-                    )) {
+                Pick3ValidationObservation validation;
+                const bool eligible = ValidateWithStockTriggerValidator(
+                    stockFinder,
+                    model,
+                    effectEntity,
+                    queryContext,
+                    tracePick3Listener ? &validation : nullptr
+                );
+                if (tracePick3Listener) LOG_INFO(
+                    "CustomComponents/Pick3/PICK3_VALIDATE: listenerEffect=%d listenerSource=%d priorSelf=%d validationSelf=%d sourceExists=%d validatorAvailable=%d validatorCalled=%d validatorResult=%d eligible=%d",
+                    entityId[effectEntity].Get(), validation.listenerSourceId,
+                    validation.previousSelfId, validation.validationSelfId,
+                    int(validation.sourceExists), int(validation.validatorAvailable),
+                    int(validation.validatorCalled), int(validation.validatorResult), int(eligible)
+                );
+                if (!eligible) {
                     ++rejected;
+                    if (tracePick3Listener) LOG_INFO(
+                        "CustomComponents/Pick3/PICK3_LISTENER: verdict=rejected listenerEffect=%d listenerSource=%d model=%p",
+                        entityId[effectEntity].Get(),
+                        effectEntityGetSource[static_cast<Obj*>(nullptr)](effectEntity), model);
+                    if (tracePlayListener) LOG_INFO(
+                        "CustomComponents/UnearthTrace: CUSTOM_PLAY_LISTENER effect=%d listenerEffect=%d listenerSource=%d verdict=rejected model=%p",
+                        effectSourceId[firingEffect].Get(), traceEffectId, traceSourceId, (void*)model);
                     if constexpr (CustomComponents::Diagnostics::kVerbose) CC_DIAG(
                         "CustomComponents/CustomTrigger: REJECT '%s' EffectEntityId=%d SourceId=%d",
                         eventName,
@@ -266,6 +382,12 @@
                 );
 
                 ++queued;
+                if (tracePick3Listener) LOG_INFO(
+                    "CustomComponents/Pick3/PICK3_LISTENER: verdict=queued listenerEffect=%d listenerSource=%d model=%p",
+                    listenerEffectEntityId, listenerSourceId, model);
+                if (tracePlayListener) LOG_INFO(
+                    "CustomComponents/UnearthTrace: CUSTOM_PLAY_LISTENER effect=%d listenerEffect=%d listenerSource=%d verdict=queued model=%p",
+                    effectSourceId[firingEffect].Get(), traceEffectId, traceSourceId, (void*)model);
             }
         }
 
@@ -273,6 +395,31 @@
         if (returnedEvent)
             DiscardedSystem::FinishReturn(model, returnedCardId);
 
+        // A completed scan is not proof that any PlayTrigger was queued.
+        // Keep the ordinary Fire() return contract intact, but make this
+        // event's result unambiguous in normal (non-verbose) device logs.
+        if (std::strcmp(eventName, "PlayTrigger") == 0) {
+            LOG_INFO(
+                "CustomComponents/CustomTrigger: PLAY_RESULT model=%p expectedModel=%p exactModel=%d candidates=%d rejected=%d queued=%d EventSourceId=%d EventTargetId=%d",
+                model,
+                expectedModel,
+                int(!expectedModel || expectedModel == model),
+                candidates,
+                rejected,
+                queued,
+                effectSourceId[firingEffect].Get(),
+                effectTargetId[firingEffect].Get()
+            );
+        }
+
+        if (std::strcmp(eventName, "PickFromThreeTrigger") == 0) {
+            // Captures the same TriggeredEffectCollection that received Add().
+            // Never invokes ProcessEffect or alters pending trigger order.
+            ObservePick3QueueGate(triggeredEffects);
+            LOG_INFO("CustomComponents/Pick3/PICK3_LISTENERS: model=%p expectedModel=%p candidates=%d rejected=%d queued=%d eventSource=%d eventTarget=%d",
+                model, expectedModel, candidates, rejected, queued,
+                effectSourceId[firingEffect].Get(), effectTargetId[firingEffect].Get());
+        }
         CC_DIAG(
             "CustomComponents/CustomTrigger: FIRE '%s' candidates=%d rejected=%d queued=%d EventSourceId=%d EventTargetId=%d",
             eventName,
@@ -496,11 +643,35 @@
         );
     }
 
+    // Used only where the stock hook provides an exact, authoritative model.
+    // Never fall back to matching recycled ids in prediction snapshots.
+    inline bool FireInModel(
+        const char* triggerName,
+        Obj* firingEffect,
+        Obj* expectedModel,
+        const Pick3EffectIdentitySnapshot* identitySnapshot = nullptr
+    ) {
+        if (!expectedModel)
+            return false;
+        return FireEvent(
+            triggerName,
+            triggerName,
+            firingEffect,
+            expectedModel,
+            identitySnapshot
+        );
+    }
+
     inline bool FireCustom(
         const char* triggerName,
         Obj* firingEffect
     ) {
         return FireEvent(nullptr, triggerName, firingEffect);
+    }
+
+    // Global listener broadcast; caller must provide a verified completion effect.
+    inline bool FirePickFromThreeSelection(Obj* firingEffect) {
+        return Fire("PickFromThreeTrigger", firingEffect);
     }
 
     inline bool FireReturnedFromDiscardPile(Obj* firingEffect) {

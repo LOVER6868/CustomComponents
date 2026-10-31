@@ -23,4 +23,5 @@
 // Discard and return trigger components
 #include "triggers/ReturnedFromDiscardPileTrigger.hpp"
 #include "triggers/DiscardOutsidePlayTrigger.hpp"
+#include "triggers/PickFromThreeTrigger.hpp"
 

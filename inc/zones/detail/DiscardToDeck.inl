@@ -7,7 +7,17 @@
         if (!effect ||
             createDeckRuntimeCardGuid[effect].Get() !=
                 Components::ReturnFromDiscardPileToDeckEffectDescriptor::kExistingEntityDeckSentinel) {
+            // One hook owner: preserve stock GUID-entry creation and the
+            // existing custom discard-return routing. The materializer only
+            // observes/repairs new entries AFTER the stock call completes.
+            Obj* model = self && createDeckSystemModel.IsValid()
+                ? createDeckSystemModel[static_cast<Obj*>(self)].Get() : nullptr;
+            const auto observation = Utilities::DeckMaterializer::BeforeStockCreateCardInDeck(model);
+            const int guid = createDeckRuntimeCardGuid[effect].Get();
+            const int amount = createDeckRuntimeAmountToCreate.IsValid()
+                ? createDeckRuntimeAmountToCreate[effect].Get() : -1;
             originalCreateDeckProcessEffect(self, effect, method);
+            Utilities::DeckMaterializer::AfterStockCreateCardInDeck(model, observation, guid, amount);
             return;
         }
 

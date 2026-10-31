@@ -39,6 +39,17 @@
         );
         if constexpr (false) CC_DIAG("CustomComponents/LANE-DIAG: PROCESS FindComponent EXIT descriptor=%p", customLaneDescriptor);
 
+        if (customLaneDescriptor) {
+            const int observedPrimary = effectTargetId.IsValid() ? effectTargetId[effect].Get() : -1;
+            const int observedSecondary = effectSecondaryTargetId.IsValid() ? effectSecondaryTargetId[effect].Get() : -1;
+            Obj* primaryEntity = observedPrimary >= 0 ? FindEntity(model, observedPrimary) : nullptr;
+            Obj* secondaryEntity = observedSecondary >= 0 ? FindEntity(model, observedSecondary) : nullptr;
+            LOG_INFO("CustomComponents/Pick3/UNEARCH_EFFECT_HANDOFF: phase=PROCESS_ENTER effect=%d primary=%d secondary=%d primaryExists=%d primaryDiscard=%d secondaryExists=%d secondaryLane=%d",
+                sourceEffectEntityId, observedPrimary, observedSecondary, int(primaryEntity != nullptr),
+                int(primaryEntity && FindComponent(primaryEntity, "DiscardPileElement")),
+                int(secondaryEntity != nullptr), int(secondaryEntity && FindComponent(secondaryEntity, "Lane")));
+        }
+
         if (!customLaneDescriptor) {
             if constexpr (false) CC_DIAG("CustomComponents/LANE-DIAG: PROCESS stock delegate ENTER");
             originalMoveLaneProcessEffect(self, effect, method);
@@ -264,7 +275,37 @@
                 break;
             }
         }
-        if (!candidate || alreadyActive) {
+        LOG_INFO("CustomComponents/LANE_FLOW: PREFLIGHT card=%d lane=%d ready=%d candidate=%d active=%d mappedView=%d discard=%d laneBefore=%d", preflightCardId, preflightLaneId, int(preflightReady), int(candidate), int(alreadyActive), int(i10PriorView != nullptr), int(inPileBefore), int(laneBefore));
+        // Never remove a card if the destination cannot accept it. The lane
+        // occupancy is re-read for EVERY runtime effect, so successive returns
+        // cannot blindly stack beyond the available side's slots.
+        // Team-up is a plant mechanic: at one friendly occupant, permit a
+        // second fighter only if the incoming or resident plant has Teamup.
+        bool legalLaneSlot = candidate;
+        if (legalLaneSlot && i3OwnerFighters >= 2)
+            legalLaneSlot = false;
+        if (legalLaneSlot && i3OwnerFighters == 1) {
+            const bool incomingPlant = FindComponent(preflightCtx.card, "Plants") != nullptr;
+            const bool incomingTeamup = incomingPlant &&
+                FindComponent(preflightCtx.card, "Teamup") != nullptr;
+            bool residentTeamup = false;
+            auto getResidents = BNM::Class("PvZCards.Engine.Components", "Lane")
+                .GetMethod("GetFightersForPlayer", 1).cast<MonoList<int>*>();
+            if (getResidents.IsValid()) {
+                auto* residents = getResidents[preflightLaneComponent](preflightCtx.playerId);
+                if (residents && residents->items && residents->size == 1) {
+                    const int residentId = residents->items->m_Items[0];
+                    Obj* resident = FindEntity(model, residentId);
+                    residentTeamup = resident && incomingPlant &&
+                        FindComponent(resident, "Plants") != nullptr &&
+                        FindComponent(resident, "Teamup") != nullptr;
+                }
+            }
+            legalLaneSlot = incomingPlant && (incomingTeamup || residentTeamup);
+            LOG_INFO("CustomComponents/LANE_FLOW: TEAMUP_CHECK card=%d lane=%d incomingTeamup=%d residentTeamup=%d allowed=%d", preflightCardId, preflightLaneId, int(incomingTeamup), int(residentTeamup), int(legalLaneSlot));
+        }
+        LOG_INFO("CustomComponents/LANE_FLOW: CAPACITY card=%d lane=%d ownerOccupants=%d totalOccupants=%d candidate=%d slotAllowed=%d", preflightCardId, preflightLaneId, i3OwnerFighters, i3TotalFighters, int(candidate), int(legalLaneSlot));
+        if (!legalLaneSlot || alreadyActive) {
             if constexpr (false) if constexpr (false) CC_DIAG("CustomComponents/LANE-I10D: BYPASS card=%d candidate=%d alreadyActive=%d (no mutation)",
                      preflightCardId, candidate ? 1 : 0, alreadyActive ? 1 : 0);
             return;
@@ -301,7 +342,9 @@
 
         if constexpr (false) CC_DIAG("CustomComponents/LANE-I9: REMOVE-ENTER card=%d pile=%d",
                  preflightCardId, preflightCtx.discardPileId);
+        LOG_INFO("CustomComponents/LANE_FLOW: REMOVE_ENTER card=%d pile=%d", preflightCardId, preflightCtx.discardPileId);
         discardRemoveCard[discardModifier](preflightCardId, preflightCtx.discardPileId);
+        LOG_INFO("CustomComponents/LANE_FLOW: REMOVE_RETURN card=%d", preflightCardId);
         if constexpr (false) CC_DIAG("CustomComponents/LANE-I9: REMOVE-RETURN card=%d", preflightCardId);
 
         Obj* cardAfterRemove = FindEntity(model, preflightCardId);
@@ -324,7 +367,9 @@
                  preflightCardId, preflightLaneId, preflightCtx.playerId);
         // Mark before stock lane placement can enqueue asynchronous view creation.
         Core::CardViewLifecycleCoordinator::NoteReturn(preflightCardId, preflightLaneId, preflightCtx.discardPileId);
+        LOG_INFO("CustomComponents/LANE_FLOW: PLACE_ENTER card=%d lane=%d owner=%d", preflightCardId, preflightLaneId, preflightCtx.playerId);
         lanePlayCard[preflightLaneModifier](preflightCardId, preflightLaneId, preflightCtx.playerId);
+        LOG_INFO("CustomComponents/LANE_FLOW: PLACE_RETURN card=%d", preflightCardId);
         if constexpr (false) CC_DIAG("CustomComponents/LANE-I9: PLACE-RETURN card=%d", preflightCardId);
 
         Obj* cardAfterPlace = FindEntity(model, preflightCardId);
@@ -350,6 +395,7 @@
         const bool transitionOkay = cardAfterPlace && !pileAfterPlace &&
             !discardAfterPlace && targetLanePresent;
         if constexpr (false) CC_DIAG("CustomComponents/LANE-I10: MODEL-TRANSITION success=%d", int(transitionOkay));
+        LOG_INFO("CustomComponents/LANE_FLOW: ZONE_VERIFY card=%d valid=%d cardExists=%d pile=%d discardElement=%d targetLane=%d", preflightCardId, int(transitionOkay), int(cardAfterPlace != nullptr), int(pileAfterPlace), int(discardAfterPlace), int(targetLanePresent));
         if (!transitionOkay) return;
 
         // Record pre-trigger stats/traits from the *live* entity, after the
@@ -373,6 +419,7 @@
         Obj* record = historyAddRecordByType[preflightHistory](
             reinterpret_cast<Obj*>(recordClass.GetMonoType()));
         if constexpr (false) CC_DIAG("CustomComponents/LANE-I10: CREATE-RECORD-RETURN card=%d record=%p", preflightCardId, record);
+        LOG_INFO("CustomComponents/LANE_FLOW: HISTORY_RECORD card=%d record=%p", preflightCardId, (void*)record);
         if (!record) return;
         createLaneRecordSetCard[record](cardData);
         createLaneRecordSetOrder[record](0); // three-int stock overload inserts at front
@@ -391,8 +438,25 @@
         // condition evaluation.  Never rewrite effectTargetId to the lane.
         if constexpr (false) CC_DIAG("CustomComponents/LANE-I11: TRIGGER-ENTER card=%d lane=%d effect=%p effectEntity=%d (snapshot already saved)",
                  preflightCardId, preflightLaneId, effect, sourceEffectEntityId);
+        LOG_INFO("CustomComponents/LANE_FLOW: RETURN_TRIGGER_ENTER card=%d effect=%d", preflightCardId, sourceEffectEntityId);
+        // Broadcast PlayTrigger using the existing global trigger producer.
+        // The effect already targets the original card entity, so all stock
+        // PlayTrigger listeners receive that card as EventTargetId. This does
+        // NOT replay placement or charge resource costs.
+        LOG_INFO("CustomComponents/LANE_FLOW: GLOBAL_PLAY_ENTER card=%d effect=%d", preflightCardId, sourceEffectEntityId);
+        // Scope this broadcast to the live model from MoveCardToLanesSystem.
+        // Effect/card ids are also present on prediction clones; the legacy
+        // unscoped selection could queue to a clone while reporting success.
+        const bool globalPlayDispatched =
+            CustomTriggerSystem::FireInModel("PlayTrigger", effect, model);
+        LOG_INFO("CustomComponents/LANE_FLOW: GLOBAL_PLAY_EXIT card=%d dispatched=%d", preflightCardId, int(globalPlayDispatched));
         const bool returnTriggerDispatched =
             CustomTriggerSystem::FireReturnedFromDiscardPile(effect);
+        LOG_INFO("CustomComponents/LANE_FLOW: RETURN_TRIGGER_EXIT card=%d dispatched=%d regularPlayEffectQueued=0 globalPlayTriggerDispatched=%d", preflightCardId, int(returnTriggerDispatched), int(globalPlayDispatched));
+        Obj* postTriggerCard=FindEntity(model, preflightCardId);
+        bool postTriggerPile=DiscardContains(preflightCtx.discardPile, preflightCardId);
+        Obj* postTriggerLane=postTriggerCard ? FindComponent(postTriggerCard,"LaneElement") : nullptr;
+        LOG_INFO("CustomComponents/LANE_FLOW: POST_TRIGGER_ZONE card=%d exists=%d discardPile=%d laneElement=%d sourceEffect=%d",preflightCardId,int(postTriggerCard!=nullptr),int(postTriggerPile),int(postTriggerLane!=nullptr),sourceEffectEntityId);
         if constexpr (false) CC_DIAG("CustomComponents/LANE-I11: TRIGGER-EXIT card=%d dispatched=%d (queued effects remain stock-owned)",
                  preflightCardId, int(returnTriggerDispatched));
 

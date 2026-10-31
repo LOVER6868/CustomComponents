@@ -2,10 +2,15 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cerrno>
+#include <cstring>
 
 #include "log.h"
 #include "CustomComponents.hpp"
+#include "diagnostics/Pick3PredictionIsolationAudit.hpp"
+#include "diagnostics/PvpInitialModelAudit.hpp"
+#include "diagnostics/PvpDeckPrepopulatePrototype.hpp"
 #include "pick3/Pick3ReleaseSafety.hpp"
+#include "pick3/Pick3CreationProvenanceTrace.hpp"
 #include "DrawCardFromSubsetInDeck.hpp"
 #include "DiscardPileZoneEffects.hpp"
 
@@ -14,20 +19,75 @@ namespace {
     // Module startup
     // ----------------------------------------------------------------------------
 
-    // Startup isolation reads a decimal cutoff on EVERY process launch.
-    // File is game-external so testing another cutoff does not require an APK rebuild.
-    // -1 / missing file means the complete original startup sequence.
-    static int ReadStartupCutoff() { return -1; }
-
-    // Read once before hooks are installed. Modes: 0 neither, 1 Charge,
-    // 2 Thrash, 3 both. Missing file retains original behavior (both).
-    static int ReadCombatHookMode() { return 3; }
-
-    // Pick3 stage-8 hook selector. -1/missing = existing config.ini behavior.
-    // 0 = neither; 1 = candidate only; 2 = submission requested without
-    // candidate (unsupported: fail closed); 3 = both.
-    // Read once per process launch, prior to installing Stage-8 hooks.
-    static int ReadPick3HookMode() { return 3; }
+    // Diagnostic overrides are optional. Packaged config.ini controls the
+    // normal startup; game-external files let a tester isolate a crash without
+    // rebuilding. A missing or invalid file preserves the packaged value.
+    // Diagnostic stage cutoffs are NOT supported playable configurations.
+    static int ReadControlFile(const char* filename, int fallback, int minimum,
+                               int maximum, const char* logName) {
+        constexpr const char* locations[] = {
+            "/sdcard/Android/data/com.ea.gp.pvzheroes/files/",
+            "/data/user/0/com.ea.gp.pvzheroes/files/"
+        };
+        for (const char* directory : locations) {
+            char path[256];
+            const int len = std::snprintf(path, sizeof(path), "%s%s", directory, filename);
+            if (len <= 0 || static_cast<size_t>(len) >= sizeof(path))
+                continue;
+            FILE* file = std::fopen(path, "r");
+            if (!file)
+                continue;
+            char buffer[48]{};
+            const size_t size = std::fread(buffer, 1, sizeof(buffer) - 1, file);
+            const bool oversized = size == sizeof(buffer) - 1 && std::fgetc(file) != EOF;
+            std::fclose(file);
+            if (!size || oversized || std::memchr(buffer, '\0', size)) {
+                LOG_ERR("CustomComponents/CONFIG_DIAG: invalid %s at %s (empty or oversized)", logName, path);
+                continue;
+            }
+            errno = 0;
+            char* end = nullptr;
+            const long parsed = std::strtol(buffer, &end, 10);
+            while (end && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n'))
+                ++end;
+            if (errno == ERANGE || end == buffer || !end || *end ||
+                parsed < minimum || parsed > maximum) {
+                LOG_ERR("CustomComponents/CONFIG_DIAG: invalid %s at %s (expected %d..%d)",
+                        logName, path, minimum, maximum);
+                continue;
+            }
+            LOG_INFO("CustomComponents/CONFIG_DIAG: using %s=%ld from %s", logName, parsed, path);
+            if (!std::strcmp(logName, "cutoff"))
+                LOG_INFO("CustomComponents/STARTUP_DIAG: using %s cutoff=%ld", path, parsed);
+            return static_cast<int>(parsed);
+        }
+        return fallback;
+    }
+    static int ReadPackagedControl(const char* name, int configured, int fallback,
+                                   int minimum, int maximum) {
+        if (configured >= minimum && configured <= maximum)
+            return configured;
+        LOG_ERR("CustomComponents/CONFIG_DIAG: %s=%d out of range (%d..%d); using %d",
+                name, configured, minimum, maximum, fallback);
+        return fallback;
+    }
+    static int ReadStartupCutoff() {
+        const int fallback = ReadPackagedControl("StartupCutoff",
+            BLOOM_CONFIG_INT("StartupDiagnostics", "StartupCutoff", -1), -1, -1, 9);
+        return ReadControlFile("customcomponents_startup_stage.txt", fallback, -1, 9, "cutoff");
+    }
+    static int ReadCombatHookMode() {
+        const int fallback = ReadPackagedControl("CombatHookMode",
+            BLOOM_CONFIG_INT("StartupDiagnostics", "CombatHookMode", 3), 3, 0, 3);
+        return ReadControlFile("customcomponents_combat_hooks_mode.txt", fallback, 0, 3, "combatHooks");
+    }
+    static int ReadPick3HookMode() {
+        // -1 honors the separately configurable Stage 8 candidate/submission
+        // switches. 0/1/2/3 are explicit diagnostic override modes.
+        const int fallback = ReadPackagedControl("Pick3HookMode",
+            BLOOM_CONFIG_INT("StartupDiagnostics", "Pick3HookMode", -1), -1, -1, 3);
+        return ReadControlFile("customcomponents_pick3_hooks_mode.txt", fallback, -1, 3, "pick3Hooks");
+    }
 
     static void Init() {
         if (!BLOOM_CONFIG_BOOL("General", "Enabled", true)) {
@@ -101,11 +161,44 @@ namespace {
             return;
         }
 
+        // Off by default. Opt in via config.ini to observe stock prediction copying.
+        // This hook only logs; it never spawns, moves or materializes cards.
+        if (BLOOM_CONFIG_BOOL("Pick3Diagnostics", "PredictionCloneAudit", false)) {
+            if (!CustomComponents::Diagnostics::PredictionIsolationAudit::Install()) {
+                LOG_ERR("CustomComponents/Pick3/CLONE_AUDIT: installation failed, leaving stock copy unchanged");
+            }
+        }
+
         STARTUP_BOUNDARY(3, "deck-and-discard-utilities");
         // Keep main-deck entries backed by persistent card entities.
         if (!CustomComponents::Utilities::DeckMaterializer::Initialize()) {
             LOG_ERR("CustomComponents: DeckMaterializer initialization failed");
             return;
+        }
+
+        // Optional single checkpoint at the exact PvP InitialGameState handoff.
+        // NEVER materializes or modifies cards. Disabled by default.
+        if (BLOOM_CONFIG_BOOL("PvpDeckDiagnostics", "InitSnapshot", false)) {
+            if (!CustomComponents::Diagnostics::PvpInitialModelAudit::Install()) {
+                LOG_ERR("CustomComponents/PVP_INIT_AUDIT: install failed; continuing without diagnostic");
+            }
+        }
+
+        // PvP experimental materialization: 0 off; 1 read-only preflight;
+        // 2 stock PrepopulateCardPoolSystem lab trial, only with explicit consent.
+        // No FirstPickFromThree or PvE hooks are changed.
+        if (!CustomComponents::Diagnostics::PvpDeckPrepopulatePrototype::Install(
+                BLOOM_CONFIG_INT("PvpDeckPrepopulation", "Mode", 0),
+                BLOOM_CONFIG_BOOL("PvpDeckPrepopulation", "BothModdedClientsLab", false),
+                BLOOM_CONFIG_BOOL("PvpDeckPrepopulation", "ConstructStockSystemLab", false),
+                BLOOM_CONFIG_BOOL("PvpDeckPrepopulation", "ConstructStockEffectLab", false),
+                BLOOM_CONFIG_BOOL("PvpDeckPrepopulation", "ExecuteOneCardLab", false),
+                BLOOM_CONFIG_BOOL("PvpDeckPrepopulation", "ExecuteTwoCardLab", false),
+                BLOOM_CONFIG_INT("PvpDeckPrepopulation", "TwoCardTargetPoolId", 1),
+                BLOOM_CONFIG_BOOL("PvpDeckPrepopulation", "ExecuteFullDeckLab", false),
+                BLOOM_CONFIG("PvpDeckPrepopulation", "ExpectedDeckFingerprint"),
+                BLOOM_CONFIG_BOOL("PvpDeckPrepopulation", "MaterializeInsertedCardsPvp", false))) {
+            LOG_ERR("CustomComponents/PVP_PREPOP: installation failed; stock PvP remains in effect");
         }
 
         if (!CustomComponents::Utilities::DiscardPileViewer::InitializeDiscardPileViewer()) {
@@ -283,16 +376,21 @@ namespace {
         LOG_INFO("CustomComponents/Pick3/STAGE8_SPLIT: requestedCandidates=%d requestedSubmission=%d candidate=%d submission=%d",
             liveCandidateProbe ? 1 : 0, submitPick3Gameplay ? 1 : 0,
             installCandidate ? 1 : 0, installSubmission ? 1 : 0);
-        if (installCandidate && !CustomComponents::Pick3::TargetBridge::Initialize(
-            true, installSubmission)) {
-            LOG_ERR("CustomComponents/Pick3/STEP2: live candidate diagnostic unavailable");
-        }
+        // A requested submission is not safe until its candidate hooks have
+        // actually initialized. Requested flags alone are not a dependency.
+        const bool candidateReady = installCandidate &&
+            CustomComponents::Pick3::TargetBridge::Initialize(true, installSubmission) &&
+            CustomComponents::Pick3::TargetBridge::enabled;
+        if (installCandidate && !candidateReady)
+            LOG_ERR("CustomComponents/Pick3/STEP2: candidate bridge unavailable; submission disabled");
+        if (installSubmission && !candidateReady)
+            LOG_ERR("CustomComponents/Pick3/SUBMIT: dependency missing; submission hooks not installed");
         // Honor the actual user switch. A second, hidden experimental opt-in
         // previously disabled remote submission even with SubmitInPVP=true.
         // Do not equate an enabled transport with network-side capability:
         // remote CardDatabase still requires GUID replication.
         const bool pvpRequested = BLOOM_CONFIG_BOOL("PickFromThree", "SubmitInPVP", true);
-        if (installSubmission && !CustomComponents::Pick3::Submission::Initialize(
+        if (installSubmission && candidateReady && !CustomComponents::Pick3::Submission::Initialize(
             true,
             BLOOM_CONFIG_BOOL("PickFromThree", "SubmitInPVE", true),
             pvpRequested,
@@ -301,8 +399,27 @@ namespace {
             BLOOM_CONFIG_BOOL("PickFromThree", "SyncLocalCompletionSignal", true))) {
             LOG_ERR("CustomComponents/Pick3/SUBMIT: preflight failed; preserving probe-only behavior");
         }
+        // Independently reversible lifecycle fixes. These switches permit
+        // field testing without rewriting the source or touching the FSM.
+        CustomComponents::Pick3::TargetButtonTrace::enableGuardedReconcile =
+            BLOOM_CONFIG_BOOL("Pick3LifecycleRepair", "GuardedStockButtonRecovery", true);
+        CustomComponents::Presentation::PickFromThreePreviewSystem::enableInterruptionSuspend =
+            BLOOM_CONFIG_BOOL("Pick3LifecycleRepair", "SuspendInterruptedPick3", true);
+        CustomComponents::Presentation::PickFromThreePreviewSystem::enableHolderFallback =
+            BLOOM_CONFIG_BOOL("Pick3LifecycleRepair", "DriveFirstPickerFromHolder", true);
+        // Cold-start rebind was ineffective and could disturb stock command
+        // binding. Keep only the independently verified button repair.
+        LOG_INFO("CustomComponents/Pick3/LIFECYCLE_REPAIR: coldFirst=0 retiredRebind=1 buttonStock=%d suspend=%d",
+            CustomComponents::Pick3::TargetButtonTrace::enableGuardedReconcile?1:0,
+            CustomComponents::Presentation::PickFromThreePreviewSystem::enableInterruptionSuspend?1:0);
+        // Optional read-only CardDatabase GUID-to-entity diagnostic.
+        // Disabled unless explicitly requested; never alters stock effect execution.
+        if (BLOOM_CONFIG_BOOL("Pick3CreationTrace", "Enabled", false)) {
+            if (!CustomComponents::Pick3::CreationTrace::Initialize())
+                LOG_ERR("CustomComponents/Pick3/CREATION_TRACE: requested but unavailable");
+        }
         STARTUP_BOUNDARY(9, "pick3-assets-ui-and-avatar-hooks");
-        if (liveCandidateProbe || BLOOM_CONFIG_BOOL("PickFromThreePreview", "Enabled", false)) {
+        if (candidateReady || BLOOM_CONFIG_BOOL("PickFromThreePreview", "Enabled", false)) {
             using namespace CustomComponents::Presentation;
             Pick3LocalAssetBundles::SetProbeMode(
                 BLOOM_CONFIG_INT("Pick3OwnedUnityFS", "ProbeMode", 1));
@@ -347,46 +464,46 @@ namespace {
                 BLOOM_CONFIG_INT("Pick3Screen", "ReferenceWidth", 720),
                 BLOOM_CONFIG_INT("Pick3Screen", "ReferenceHeight", 1280));
             PickFromThreePreviewSystem::ConfigureLayout(
-                BLOOM_CONFIG_INT("Pick3Layout", "TopYPercent", 21),
-                BLOOM_CONFIG_INT("Pick3Layout", "LowerYPercent", -24),
-                BLOOM_CONFIG_INT("Pick3Layout", "SideGapPercent", 24),
-                BLOOM_CONFIG_INT("Pick3Layout", "PortraitYPercent", 28),
-                BLOOM_CONFIG_INT("Pick3Layout", "PortraitSizePercent", 104),
-                BLOOM_CONFIG_INT("Pick3Layout", "NameBelowStatsPercent", 80),
-                BLOOM_CONFIG_INT("Pick3Layout", "PlateBelowNamePercent", 28),
-                BLOOM_CONFIG_INT("Pick3Layout", "ButtonBelowPlatePercent", 31),
-                BLOOM_CONFIG_INT("Pick3Layout", "PlateWidthPercent", 136),
-                BLOOM_CONFIG_INT("Pick3Layout", "PlateHeightPercent", 39),
-                BLOOM_CONFIG_INT("Pick3Layout", "ButtonWidthPercent", 98),
-                BLOOM_CONFIG_INT("Pick3Layout", "ButtonHeightPercent", 120),
-                BLOOM_CONFIG_INT("Pick3Text", "NameSizePercent", 140),
-                BLOOM_CONFIG_INT("Pick3Layout", "StatSizePercent", 126),
-                BLOOM_CONFIG_INT("Pick3Text", "ButtonTextSizePercent", 108),
-                BLOOM_CONFIG_INT("Pick3Layout", "ButtonTextYOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3Layout", "BadgeSizePercent", 24),
-                BLOOM_CONFIG_INT("Pick3Layout", "StatSpacingPercent", 13),
-                BLOOM_CONFIG_INT("Pick3Layout", "StatsBelowPortraitPercent", 40));
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "TopYPercent", 21),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "LowerYPercent", -24),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "SideGapPercent", 24),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "PortraitYPercent", 28),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "PortraitSizePercent", 104),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "NameBelowStatsPercent", 80),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "PlateBelowNamePercent", 28),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "ButtonBelowPlatePercent", 31),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "PlateWidthPercent", 136),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "PlateHeightPercent", 39),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "ButtonWidthPercent", 98),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "ButtonHeightPercent", 120),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "NameSizePercent", 140),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "StatSizePercent", 126),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "ButtonTextSizePercent", 108),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "ButtonTextYOffsetPercent", 0),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "BadgeSizePercent", 24),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "StatSpacingPercent", 13),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "StatsBelowPortraitPercent", 40));
             PickFromThreePreviewSystem::ConfigureBadgeYOffsets(
-                BLOOM_CONFIG_INT("Pick3Layout", "AttackBadgeYOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3Layout", "HealthBadgeYOffsetPercent", 0));
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "AttackBadgeYOffsetPercent", 0),
+                BLOOM_CONFIG_INT("Pick3RewardLayout", "HealthBadgeYOffsetPercent", 0));
             PickFromThreePreviewSystem::ConfigureStatText(
-                BLOOM_CONFIG_INT("Pick3Text", "AttackSizePercent", 110),
-                BLOOM_CONFIG_INT("Pick3Text", "HealthSizePercent", 110),
-                BLOOM_CONFIG_INT("Pick3Text", "CostSizePercent", 110),
-                BLOOM_CONFIG_INT("Pick3Description", "FontSizePercent", 120),
-                BLOOM_CONFIG_INT("Pick3Text", "AttackXOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3Text", "AttackYOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3Text", "HealthXOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3Text", "HealthYOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3Text", "CostXOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3Text", "CostYOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3Text", "DescriptionXOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3Text", "DescriptionYOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3Text", "AttackWidthPercent", 90),
-                BLOOM_CONFIG_INT("Pick3Text", "HealthWidthPercent", 90),
-                BLOOM_CONFIG_INT("Pick3Text", "CostWidthPercent", 90),
-                BLOOM_CONFIG_INT("Pick3Text", "DescriptionWidthPercent", 93),
-                BLOOM_CONFIG_INT("Pick3Text", "DescriptionHeightPercent", 87));
+                BLOOM_CONFIG_INT("Pick3StatText", "AttackSizePercent", 110),
+                BLOOM_CONFIG_INT("Pick3StatText", "HealthSizePercent", 110),
+                BLOOM_CONFIG_INT("Pick3StatText", "CostSizePercent", 110),
+                BLOOM_CONFIG_INT("Pick3StatText", "DescriptionSizePercent", 160),
+                BLOOM_CONFIG_INT("Pick3StatText", "AttackXOffsetPercent", 0),
+                BLOOM_CONFIG_INT("Pick3StatText", "AttackYOffsetPercent", 0),
+                BLOOM_CONFIG_INT("Pick3StatText", "HealthXOffsetPercent", 0),
+                BLOOM_CONFIG_INT("Pick3StatText", "HealthYOffsetPercent", 0),
+                BLOOM_CONFIG_INT("Pick3StatText", "CostXOffsetPercent", 0),
+                BLOOM_CONFIG_INT("Pick3StatText", "CostYOffsetPercent", 0),
+                BLOOM_CONFIG_INT("Pick3StatText", "DescriptionXOffsetPercent", 0),
+                BLOOM_CONFIG_INT("Pick3StatText", "DescriptionYOffsetPercent", 0),
+                BLOOM_CONFIG_INT("Pick3StatText", "AttackWidthPercent", 90),
+                BLOOM_CONFIG_INT("Pick3StatText", "HealthWidthPercent", 90),
+                BLOOM_CONFIG_INT("Pick3StatText", "CostWidthPercent", 90),
+                BLOOM_CONFIG_INT("Pick3StatText", "DescriptionWidthPercent", 93),
+                BLOOM_CONFIG_INT("Pick3StatText", "DescriptionHeightPercent", 87));
             PickFromThreePreviewSystem::ConfigureNativeArtwork(
                 BLOOM_CONFIG_INT("Pick3NativeArtwork", "ViewSizePercent", 250),
                 BLOOM_CONFIG_INT("Pick3NativeArtwork", "EnvironmentViewSizePercent", 250),
@@ -471,8 +588,8 @@ namespace {
                 true, // capture game-owned services for real portraits
                 BLOOM_CONFIG_BOOL("PickFromThreePreview", "NativeSpriteCacheTest", false),
                 BLOOM_CONFIG_BOOL("PickFromThreePreview", "NativeSpriteCacheRequestArt", false),
-                liveCandidateProbe,
-                submitPick3Gameplay && CustomComponents::Pick3::Submission::enabled,
+                candidateReady,
+                installSubmission && candidateReady && CustomComponents::Pick3::Submission::enabled,
                 BLOOM_CONFIG_INT("PickFromThreePreview", "PreloadMilliseconds", 700),
                 BLOOM_CONFIG_INT("PickFromThreePreview", "EntranceMilliseconds", 300),
                 BLOOM_CONFIG_BOOL("PickFromThreePreview", "MaskStockTargetUI", true),

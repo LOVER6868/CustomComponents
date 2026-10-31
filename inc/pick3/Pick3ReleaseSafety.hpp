@@ -13,7 +13,10 @@ inline constexpr bool AllowNativeCardViews(int stage, bool experimentalOptIn,
     return stage >= 2 && experimentalOptIn && isolationDisabled && requested;
 }
 inline constexpr bool CanUseDatabaseSelection(bool remote, int requiredTargets) {
-    // The stock Play.Targets serialization is entity-ID based, not GUID-based.
-    return !remote && requiredTargets == 1;
+    // DB5 uses one real stock recipient in Targets and carries the chosen
+    // definition GUID in the unused SelectTarget Play.CardId field.
+    // The caller independently requires a live validated receive hook.
+    (void)remote;
+    return requiredTargets == 1;
 }
 }

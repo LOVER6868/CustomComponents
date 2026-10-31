@@ -1,0 +1,11 @@
+Unearth effect-entity ownership diagnostics (2026-10-28)
+Baseline: CustomComponents_UnearthStripPrimaryGuardDiagnostics_20261028_FULL.zip
+Changed file: CustomComponents/inc/pick3/PickFromThreeSubmission.hpp
+
+Metadata: PvZCards.Engine.Components.EffectEntity.SourceId, offset 0x10.
+The incoming PlayCardEffect.SourceId has repeatedly been -1; no longer used to scope effect entities.
+For every revive effect candidate, read its EffectEntity.SourceId, find the owner entity, resolve Card.Guid, and log EFFECT_OWNER. Only GUIDs 712/713 pass the per-effect guard. Existing PlayTrigger, single PrimaryTargets == casting location, absent SecondaryTargets and descriptor/filter guards remain.
+
+The existing kUnearthStripCastingPrimaryTrialEnabled flag remains false by default. To test removal, set it true manually and rebuild. This test has not been compiled or run on Android here.
+Expected: UNEARCH_STRIP_PRIMARY: SETUP ... effectOwnerField=1; EFFECT_OWNER ... ownerSourceId=... ownerGuid=712 scoped=1; GUARD / SUMMARY or removal events.
+If ownerGuid is -1, no removal happens. Do not bypass this check.

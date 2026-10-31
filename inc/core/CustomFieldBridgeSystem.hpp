@@ -613,17 +613,33 @@ namespace CustomComponents::Systems::CustomFieldBridgeSystem {
             LOG_ERR("CustomComponents/CustomFieldBridge: scoped Source preconversion metadata unavailable");
             return false;
         }
+        // Resolve all required metadata before the first hook. A missing
+        // late dependency must not leave three deserializer hooks installed.
+        auto deserializeNew = referenceDeserializer.GetMethod("Deserialize", 1);
+        if (!deserializeNew.IsValid()) {
+            LOG_ERR("CustomComponents/CustomFieldBridge: new-object Deserialize overload missing");
+            return false;
+        }
+        auto entityClass = BNM::Class("PvZCards.Engine", "Entity");
+        if (!entityClass.IsValid()) {
+            LOG_ERR("CustomComponents/CustomFieldBridge: Entity class missing");
+            return false;
+        }
+        entityComponents = entityClass.GetField("Components");
+        auto entityDeepCopy = entityClass.GetMethod("DeepCopyFrom", 2);
+        if (!entityComponents.IsValid() || !entityDeepCopy.IsValid()) {
+            LOG_ERR("CustomComponents/CustomFieldBridge: Entity copy metadata missing components=%d deepCopy=%d",
+                    entityComponents.IsValid() ? 1 : 0,
+                    entityDeepCopy.IsValid() ? 1 : 0);
+            return false;
+        }
+
         BNM::BasicHook(setProperties, SetObjectPropertiesHook, originalSetObjectProperties);
         if (!originalSetObjectProperties) {
             LOG_ERR("CustomComponents/CustomFieldBridge: SetObjectProperties hook failed");
             return false;
         }
 
-        auto deserializeNew = referenceDeserializer.GetMethod("Deserialize", 1);
-        if (!deserializeNew.IsValid()) {
-            LOG_ERR("CustomComponents/CustomFieldBridge: new-object Deserialize overload missing");
-            return false;
-        }
         BNM::BasicHook(deserializeNew, RefDeserializeNewHook, originalRefDeserializeNew);
         if (!originalRefDeserializeNew) {
             LOG_ERR("CustomComponents/CustomFieldBridge: new-object Deserialize hook failed");
@@ -633,24 +649,6 @@ namespace CustomComponents::Systems::CustomFieldBridgeSystem {
         BNM::BasicHook(deserialize, RefDeserializeIntoHook, originalRefDeserializeInto);
         if (!originalRefDeserializeInto) {
             LOG_ERR("CustomComponents/CustomFieldBridge: Deserialize hook failed");
-            return false;
-        }
-
-        auto entityClass = BNM::Class("PvZCards.Engine", "Entity");
-        if (!entityClass.IsValid()) {
-            LOG_ERR("CustomComponents/CustomFieldBridge: Entity class missing");
-            return false;
-        }
-
-        entityComponents = entityClass.GetField("Components");
-        auto entityDeepCopy = entityClass.GetMethod("DeepCopyFrom", 2);
-
-        if (!entityComponents.IsValid() || !entityDeepCopy.IsValid()) {
-            LOG_ERR(
-                "CustomComponents/CustomFieldBridge: Entity copy metadata missing components=%d deepCopy=%d",
-                entityComponents.IsValid() ? 1 : 0,
-                entityDeepCopy.IsValid() ? 1 : 0
-            );
             return false;
         }
 

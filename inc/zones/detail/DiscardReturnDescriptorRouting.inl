@@ -43,7 +43,16 @@
         }
         if constexpr (false) CC_DIAG("CustomComponents/LANE-DIAG: DTE custom CreateRuntime ENTER");
 
+        LOG_INFO("CustomComponents/Pick3/UNEARCH_EFFECT_HANDOFF: phase=DESCRIPTOR_TO_EFFECT descriptor=%p effectEntity=%p instances=%p",
+                 (void*)descriptor, (void*)effectEntity, (void*)instances);
         Obj* runtime = Components::ReturnFromDiscardPileToLaneEffectDescriptor::CreateRuntime(instances);
+        // Show whether the effect was instantiated with a real discarded-card
+        // target or still carries the temporary trick-play lane. This is
+        // intentionally observational; the actual engine owns both fields.
+        const int primary = runtime && effectTargetId.IsValid() ? effectTargetId[runtime].Get() : -1;
+        const int secondary = runtime && effectSecondaryTargetId.IsValid() ? effectSecondaryTargetId[runtime].Get() : -1;
+        LOG_INFO("CustomComponents/Pick3/UNEARCH_EFFECT_HANDOFF: phase=RUNTIME_CREATED runtime=%p primary=%d secondary=%d",
+                 (void*)runtime, primary, secondary);
         if constexpr (false) CC_DIAG("CustomComponents/LANE-DIAG: DTE custom CreateRuntime EXIT runtime=%p", runtime);
         CC_DIAG(
             "CustomComponents/ReturnFromDiscardPileToLane: descriptor -> runtime=%p (lane supplied by SecondaryTargetId)",

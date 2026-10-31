@@ -21,7 +21,7 @@ inline constexpr int kNoCardGuid = -1;
 
 enum class SelectionMode : std::uint8_t {
     RandomTargets = 0,     // Distinct eligible LIVE entities; repeated card GUIDs allowed.
-    UniqueGuidTargets = 1, // Weight by eligible live copies; at most one option per GUID.
+    UniqueGuidTargets = 1, // Uniform physical-copy tickets; exclude chosen GUID within one offer only.
     CardDatabase = 2       // Distinct card definitions; no live entity is required.
 };
 
@@ -46,8 +46,9 @@ inline bool IsUsable(const Candidate& candidate, SelectionMode mode) {
 
 // The input MUST already be restricted by stock query/faction/zone/condition
 // rules. Do not treat this sampler as a substitute for target eligibility.
-// UniqueGuidTargets weights GUIDs by eligible live copies and removes the
-// entire GUID after each draw. Other modes sample their normalized set uniformly.
+// UniqueGuidTargets draws uniform physical copies. After each draw, exclude
+// that GUID for the remainder of this offer ONLY. Nothing persists to the next
+// activation; fewer than three distinct GUIDs yields fewer than three choices.
 // `rng` must be synchronized/authoritative in multiplayer; avoid wall-clock seeds.
 template<class UniformRandomBitGenerator>
 std::vector<Candidate> SelectOptions(
@@ -66,37 +67,30 @@ std::vector<Candidate> SelectOptions(
             normalized.push_back({kNoEntity, candidate.cardGuid});
         }
     } else if (mode == SelectionMode::UniqueGuidTargets) {
-        // Aggregate eligible live copies by GUID. Each distinct entity is
-        // counted once; its stack size is the sampling weight. Once selected,
-        // remove the whole stack, so a GUID cannot appear twice in one offer.
-        struct Stack { int guid; std::vector<Candidate> copies; };
-        std::vector<Stack> stacks;
-        std::unordered_map<int, std::size_t> byGuid;
+        // Every eligible physical card is exactly one ticket. Duplicate GUIDs
+        // therefore have their natural probability (no explicit weights).
+        // The exclusion set belongs to this invocation ONLY; it is never
+        // stored on the effect, deck, target finder, or next activation.
         std::unordered_set<int> seenEntities;
-        for (const auto& candidate : eligible) {
-            if (!IsUsable(candidate, mode) || !seenEntities.insert(candidate.entityId).second)
-                continue;
-            auto found = byGuid.find(candidate.cardGuid);
-            if (found == byGuid.end()) {
-                byGuid.emplace(candidate.cardGuid, stacks.size());
-                stacks.push_back({candidate.cardGuid, {}});
-                found = byGuid.find(candidate.cardGuid);
-            }
-            stacks[found->second].copies.push_back(candidate);
-        }
+        std::vector<Candidate> tickets;
+        tickets.reserve(eligible.size());
+        for (const auto& candidate : eligible)
+            if (IsUsable(candidate, mode) && seenEntities.insert(candidate.entityId).second)
+                tickets.push_back(candidate);
+
         std::vector<Candidate> chosen;
         chosen.reserve(kMaximumChoices);
-        while (!stacks.empty() && chosen.size() < kMaximumChoices) {
-            std::vector<double> weights;
-            weights.reserve(stacks.size());
-            for (const auto& stack : stacks)
-                weights.push_back(static_cast<double>(stack.copies.size()));
-            std::discrete_distribution<std::size_t> stackDraw(weights.begin(), weights.end());
-            const std::size_t stackIndex = stackDraw(rng);
-            const auto& copies = stacks[stackIndex].copies;
-            std::uniform_int_distribution<std::size_t> copyDraw(0, copies.size() - 1);
-            chosen.push_back(copies[copyDraw(rng)]);
-            stacks.erase(stacks.begin() + static_cast<std::ptrdiff_t>(stackIndex));
+        while (!tickets.empty() && chosen.size() < kMaximumChoices) {
+            std::uniform_int_distribution<std::size_t> draw(0, tickets.size() - 1);
+            const std::size_t index = draw(rng);
+            const Candidate selected = tickets[index];
+            chosen.push_back(selected);
+            // Remove this GUID only from the current THREE-choice offer.
+            // The actual deck and subsequent effects remain untouched.
+            tickets.erase(std::remove_if(tickets.begin(), tickets.end(),
+                [&](const Candidate& candidate) {
+                    return candidate.cardGuid == selected.cardGuid;
+                }), tickets.end());
         }
         return chosen;
     } else if (mode == SelectionMode::RandomTargets) {

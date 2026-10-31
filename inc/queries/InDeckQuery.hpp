@@ -24,12 +24,36 @@ inline BNM::Field<int> inDeckCardGuid;
 inline BNM::Field<Obj*> inDeckContextModel;
 inline BNM::IL2CPP::Il2CppClass* inDeckOrderedPoolClass = nullptr;
 inline BNM::IL2CPP::Il2CppClass* inDeckCardClass = nullptr;
+// The game has separate pool entities for the normal 40-card Deck and the
+// 4-card SuperpowerPool. OrderedCardPool is present on both, so it cannot by
+// itself establish membership of the *regular* deck.
+inline BNM::IL2CPP::Il2CppClass* inDeckMainDeckClass = nullptr;
+inline BNM::IL2CPP::Il2CppClass* inDeckSuperpowerPoolClass = nullptr;
 
 template <typename T>
 inline T* InDeckListAt(BNM::Structures::Mono::List<T*>* list, int index) {
     if (!list || !list->items || index < 0 || index >= list->size)
         return nullptr;
     return list->items->m_Items[index];
+}
+
+// Fail closed: an OrderedCardPool belongs to the normal deck only if its
+// owning entity contains Deck and does NOT contain SuperpowerPool.
+// This keeps all regular deck copies (and self-selection) eligible, while
+// excluding the superpower deck even after its entries are materialized.
+inline bool InDeckIsRegularPool(MonoObjList* ownerComponents) {
+    if (!ownerComponents || !ownerComponents->items ||
+        !inDeckMainDeckClass || !inDeckSuperpowerPoolClass)
+        return false;
+
+    bool hasDeck = false;
+    for (int i = 0; i < ownerComponents->size; ++i) {
+        Obj* c = InDeckListAt(ownerComponents, i);
+        if (!c) continue;
+        if (c->klass == inDeckSuperpowerPoolClass) return false;
+        if (c->klass == inDeckMainDeckClass) hasDeck = true;
+    }
+    return hasDeck;
 }
 
 inline int InDeckCardGuidOf(Obj* entity) {
@@ -56,11 +80,14 @@ inline bool InitializeInDeckMembershipMetadata() {
     auto model = BNM::Class("PvZCards.Engine", "EntityModel");
     auto context = BNM::Class("PvZCards.Engine", "EntityQueryContext");
     auto orderedPool = BNM::Class("PvZCards.Engine.Components", "OrderedCardPool");
+    auto deck = BNM::Class("PvZCards.Engine.Components", "Deck");
+    auto superpowerPool = BNM::Class("PvZCards.Engine.Components", "SuperpowerPool");
     auto poolEntry = BNM::Class("PvZCards.Engine.Components.Data", "CardPoolEntry");
     auto card = BNM::Class("PvZCards.Engine.Components", "Card");
 
     if (!entity.IsValid() || !model.IsValid() || !context.IsValid() ||
-        !orderedPool.IsValid() || !poolEntry.IsValid() || !card.IsValid()) {
+        !orderedPool.IsValid() || !deck.IsValid() ||
+        !superpowerPool.IsValid() || !poolEntry.IsValid() || !card.IsValid()) {
         LOG_ERR("CustomComponents/InDeckQuery: membership classes missing");
         return false;
     }
@@ -75,6 +102,8 @@ inline bool InitializeInDeckMembershipMetadata() {
     inDeckContextModel = context.GetField("<Model>k__BackingField").cast<Obj*>();
     inDeckOrderedPoolClass = orderedPool.GetClass();
     inDeckCardClass = card.GetClass();
+    inDeckMainDeckClass = deck.GetClass();
+    inDeckSuperpowerPoolClass = superpowerPool.GetClass();
 
     if (!inDeckEntityId.IsValid() ||
         !inDeckModelEntities.IsValid() ||
@@ -85,9 +114,11 @@ inline bool InitializeInDeckMembershipMetadata() {
         !inDeckCardGuid.IsValid() ||
         !inDeckContextModel.IsValid() ||
         !inDeckOrderedPoolClass ||
-        !inDeckCardClass) {
+        !inDeckCardClass ||
+        !inDeckMainDeckClass ||
+        !inDeckSuperpowerPoolClass) {
         LOG_ERR(
-            "CustomComponents/InDeckQuery: membership API missing id=%d entities=%d components=%d entries=%d entryId=%d entryGuid=%d cardGuid=%d contextModel=%d poolClass=%p cardClass=%p",
+            "CustomComponents/InDeckQuery: membership API missing id=%d entities=%d components=%d entries=%d entryId=%d entryGuid=%d cardGuid=%d contextModel=%d poolClass=%p cardClass=%p deckClass=%p superPoolClass=%p",
             inDeckEntityId.IsValid(),
             inDeckModelEntities.IsValid(),
             inDeckEntityComponents.IsValid(),
@@ -97,7 +128,9 @@ inline bool InitializeInDeckMembershipMetadata() {
             inDeckCardGuid.IsValid(),
             inDeckContextModel.IsValid(),
             inDeckOrderedPoolClass,
-            inDeckCardClass
+            inDeckCardClass,
+            inDeckMainDeckClass,
+            inDeckSuperpowerPoolClass
         );
         return false;
     }
@@ -148,16 +181,16 @@ struct InDeckQuery final : BNM::IL2CPP::Il2CppObject {
         if (!entities || !entities->items)
             return false;
 
-        // A card is in deck iff its live Entity.Id occurs in an OrderedCardPool
-        // CardPoolEntry.EntityId. Deck materialization ensures main-deck entries remain
-        // materialized through mulligan and normal gameplay.
+        // A card is in the regular deck only when its live Entity.Id occurs in
+        // an OrderedCardPool on a Deck entity (never a SuperpowerPool entity).
+        // Full deck materialization keeps those card IDs valid through gameplay.
         for (int e = 0; e < entities->size; ++e) {
             Obj* poolOwner = InDeckListAt(entities, e);
             if (!poolOwner)
                 continue;
 
             MonoObjList* components = inDeckEntityComponents[poolOwner].Get();
-            if (!components || !components->items)
+            if (!InDeckIsRegularPool(components))
                 continue;
 
             for (int c = 0; c < components->size; ++c) {
@@ -226,7 +259,8 @@ struct InDeckQuery final : BNM::IL2CPP::Il2CppObject {
 
 // CardDatabase-facing variant.
 // Tests whether the candidate card definition's Card.Guid is represented in
-// any current OrderedCardPool entry. This intentionally does NOT use Entity.Id.
+// a *regular Deck* OrderedCardPool entry, excluding SuperpowerPool entries.
+// This intentionally does NOT use Entity.Id.
 struct InDeckGuidQuery final : BNM::IL2CPP::Il2CppObject {
     void Constructor() {
         auto baseClass = BNM::Class(
@@ -262,7 +296,7 @@ struct InDeckGuidQuery final : BNM::IL2CPP::Il2CppObject {
                 continue;
 
             MonoObjList* components = inDeckEntityComponents[poolOwner].Get();
-            if (!components || !components->items)
+            if (!InDeckIsRegularPool(components))
                 continue;
 
             for (int c = 0; c < components->size; ++c) {
@@ -412,6 +446,8 @@ inline bool InitializeInDeckQuery() {
         LOG_ERR("CustomComponents/InDeckQuery: membership metadata initialization failed");
         return false;
     }
+
+    LOG_INFO("CustomComponents/InDeckQuery: scope=REGULAR_DECK_ONLY requires=Deck excludes=SuperpowerPool variants=EntityId,Guid");
 
     // EntityFinder::RunQuery invokes EntityQuery.Matches through the interface
     // vtable. Explicitly repair both the inherited concrete slot and the

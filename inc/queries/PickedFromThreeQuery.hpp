@@ -39,6 +39,8 @@ struct PickedFromThreeQuery final : BNM::IL2CPP::Il2CppObject {
         const int effectId = PickedEffectId(context);
         const int guid = InDeckCardGuidOf(entity);
         const bool match = CustomComponents::Pick3::Picked::Matches(effectId, guid, true);
+        if (match && CustomComponents::Pick3::Picked::finderObserving)
+            CustomComponents::Pick3::Picked::ObserveGuidMatch(effectId, guid);
         const unsigned int n = ++pickedFromThreeQueryCalls;
         if (n <= 36) CC_DIAG("CustomComponents/Pick3/PICKED_QUERY: domain=GUID effect=%d candidateGuid=%d match=%d",
                               effectId, guid, match ? 1 : 0);
@@ -69,6 +71,7 @@ struct PickedFromThreeEntityQuery final : BNM::IL2CPP::Il2CppObject {
         const int cardGuid = InDeckCardGuidOf(entity);
         const bool match = CustomComponents::Pick3::Picked::MatchesLatestLiveCard(entityId, cardGuid);
         const unsigned int n = ++pickedFromThreeQueryCalls;
+        if (n <= 120) LOG_INFO("CustomComponents/Pick3/PICK3_ENTITY_QUERY: contextEffect=%d candidateEntity=%d candidateGuid=%d matched=%d", effectId, entityId, cardGuid, match ? 1 : 0);
         if (n <= 36) CC_DIAG("CustomComponents/Pick3/PICKED_QUERY: domain=LATEST_ENTITY effect=%d candidateId=%d cardGuid=%d match=%d",
                               effectId, entityId, cardGuid, match ? 1 : 0);
         return match;

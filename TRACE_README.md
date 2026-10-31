@@ -1,0 +1,1 @@
+Read-only targeting and surprise-button transition trace. Search for CustomComponents/STATE_TRACE. No visual-state or gameplay mutations. Capture using: adb logcat -v threadtime -s Sprig:V AndroidRuntime:E DEBUG:E *:S > "$HOME\Downloads\TargetButtonTrace.txt"

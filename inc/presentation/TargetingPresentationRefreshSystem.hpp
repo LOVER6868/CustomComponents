@@ -37,6 +37,9 @@ namespace CustomComponents::Systems::TargetingPresentationRefreshSystem {
     };
 
     inline TargetingIdentity lastTargetingIdentity{};
+    // Updated on every stock Update, including invalid/no-effect frames;
+    // unlike lastTargetingIdentity this never retains a stale holder owner.
+    inline TargetingIdentity observedTargetingIdentity{};
 
     inline BNM::Field<int> gameInputState;
     inline BNM::Field<Obj*> gameInputStateChangedSignal;
@@ -51,6 +54,14 @@ namespace CustomComponents::Systems::TargetingPresentationRefreshSystem {
     // Another module may observe the already-owned Update hook. One native
     // trampoline per IL2CPP method: avoid stacking BNM::BasicHook on this RVA.
     inline void (*afterUpdateObserver)(Obj*) = nullptr;
+    // A separate UI observer runs after the submission binder has captured the
+    // current live EntityModel. Do not add another detour to stock Update.
+    inline void (*afterSubmissionPresentationObserver)(Obj*) = nullptr;
+    inline bool RegisterAfterSubmissionPresentationObserver(void (*observer)(Obj*)) {
+        if (!observer || !originalUpdate || afterSubmissionPresentationObserver) return false;
+        afterSubmissionPresentationObserver = observer;
+        return true;
+    }
     inline bool RegisterAfterUpdateObserver(void (*observer)(Obj*)) {
         if (!observer || !originalUpdate || afterUpdateObserver) return false;
         afterUpdateObserver = observer;
@@ -166,6 +177,7 @@ namespace CustomComponents::Systems::TargetingPresentationRefreshSystem {
         Obj* currentEffect = getFirstEffectInQueue[holder]();
         TargetingIdentity current =
             ReadIdentity(holder, stateAfter, currentEffect);
+        observedTargetingIdentity=current;
 
         const bool sameTargetState =
             stateBefore == stateAfter &&
@@ -205,6 +217,8 @@ namespace CustomComponents::Systems::TargetingPresentationRefreshSystem {
             lastTargetingIdentity = {};
         }
         if (afterUpdateObserver) afterUpdateObserver(holder);
+        if (afterSubmissionPresentationObserver)
+            afterSubmissionPresentationObserver(holder);
     }
 
     inline bool Initialize() {

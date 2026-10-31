@@ -15,6 +15,7 @@ namespace CustomComponents::Pick3::Picked {
 struct SelectedCard {
     int entityId = -1;
     int cardGuid = -1;
+    int boundEntityId = -1; // Verified stock-produced card for a database selection.
 };
 struct Selection {
     int effectEntityId = -1;
@@ -66,7 +67,83 @@ inline bool MatchesLatestLiveCard(int entityId, int cardGuid) {
     const Selection& latest = selections.back();
     for (const auto& card : latest.cards) {
         if (card.entityId > 0 && entityId > 0 && card.entityId == entityId) return true;
-        if (card.entityId == -1 && cardGuid > 0 && card.cardGuid == cardGuid) return true;
+        if (card.entityId == -1 && card.boundEntityId > 0 &&
+            entityId > 0 && card.boundEntityId == entityId) return true;
+    }
+    return false;
+}
+
+// During stock GUID lookup, the query supplies the originating effect ID.
+// This must be observed inside the finder's call stack, not inferred from
+// a matching GUID or the newest selection.
+inline thread_local int finderSelectionEffect = -1;
+inline thread_local int finderSelectionGuid = -1;
+inline thread_local unsigned finderSelectionMatches = 0;
+inline thread_local bool finderObserving = false;
+
+inline void ObserveGuidMatch(int effectId, int guid) {
+    if (!finderObserving || effectId <= 0 || guid <= 0) return;
+    ++finderSelectionMatches;
+    if (finderSelectionMatches == 1) {
+        finderSelectionEffect = effectId;
+        finderSelectionGuid = guid;
+    } else if (finderSelectionEffect != effectId || finderSelectionGuid != guid) {
+        finderSelectionEffect = -1; // Ambiguous provenance, fail closed.
+    }
+}
+
+inline bool BindCreated(int sourceEffect, int guid, int createdId) {
+    if (sourceEffect <= 0 || guid <= 0 || createdId <= 0) return false;
+    std::lock_guard<std::mutex> guard(mutex);
+    for (auto& entry : selections) {
+        if (entry.effectEntityId != sourceEffect) continue;
+        for (auto& card : entry.cards) {
+            if (card.cardGuid == guid && card.entityId == -1) {
+                if (card.boundEntityId > 0 && card.boundEntityId != createdId)
+                    return false; // Do not overwrite a distinct produced instance.
+                card.boundEntityId = createdId;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Resolve the single, actual live entity from this exact transaction.
+// This never returns a CardDatabase definition GUID or synthesized entity.
+inline bool TryGetSingleLiveEntity(int effectId, int groupId, int& entityId, int& cardGuid) {
+    entityId = -1;
+    cardGuid = -1;
+    if (effectId <= 0 || groupId < 0) return false;
+    std::lock_guard<std::mutex> guard(mutex);
+    for (const auto& entry : selections) {
+        if (entry.effectEntityId != effectId || entry.effectGroupId != groupId) continue;
+        if (entry.cards.size() != 1) return false;
+        const auto& card = entry.cards.front();
+        if (card.entityId <= 0 || card.cardGuid <= 0 || card.boundEntityId != -1)
+            return false;
+        entityId = card.entityId;
+        cardGuid = card.cardGuid;
+        return true;
+    }
+    return false;
+}
+
+// Resolve a single database-created entity for this exact completed selection.
+// Never substitute a regular PickFromThree target or a CardDatabase GUID.
+// Multiple cards, missing binding, or mismatched effect/group fail closed.
+inline bool TryGetSingleBoundDatabaseEntity(int effectId, int groupId, int& entityId) {
+    entityId = -1;
+    if (effectId <= 0 || groupId < 0) return false;
+    std::lock_guard<std::mutex> guard(mutex);
+    for (const auto& entry : selections) {
+        if (entry.effectEntityId != effectId || entry.effectGroupId != groupId) continue;
+        if (entry.cards.size() != 1) return false;
+        const SelectedCard& card = entry.cards.front();
+        if (card.entityId != -1 || card.cardGuid <= 0 || card.boundEntityId <= 0)
+            return false;
+        entityId = card.boundEntityId;
+        return true;
     }
     return false;
 }

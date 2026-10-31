@@ -22,6 +22,7 @@
 #include "presentation/ZoneTriggeredAbilityPresentationSystem.hpp"
 #include "core/CardViewLifecycleCoordinator.hpp"
 #include "core/SceneViewContext.hpp"
+#include "zones/DeckMaterializer.hpp"
 #include "diagnostics/DiagnosticLogging.hpp"
 #include "log.h"
 
@@ -77,6 +78,7 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
     // ---------------------------------------------------------------------
     inline BNM::Field<int> createDeckDescriptorPosition;
     inline BNM::Field<int> createDeckRuntimeCardGuid;
+    inline BNM::Field<int> createDeckRuntimeAmountToCreate;
     inline BNM::Field<int> createDeckRuntimePosition;
     inline BNM::Field<Obj*> createDeckSystemModel;
     inline BNM::Field<Obj*> createDeckSystemModifier;
@@ -409,6 +411,7 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
 
         createDeckDescriptorPosition = createDeckDescriptor.GetField("DeckPosition");
         createDeckRuntimeCardGuid = createDeckRuntime.GetField("CardGuid");
+        createDeckRuntimeAmountToCreate = createDeckRuntime.GetField("AmountToCreate");
         createDeckRuntimePosition = createDeckRuntime.GetField("DeckPosition");
         createDeckSystemModel = createDeckSystem.GetField("<Model>k__BackingField");
         createDeckSystemModifier = createDeckSystem.GetField("<DeckModifier>k__BackingField");

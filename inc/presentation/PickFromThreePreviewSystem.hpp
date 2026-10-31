@@ -67,6 +67,9 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
     inline int activeChoiceCount = 3;
     inline Pick3::PreviewRequest activeRequest{};
     inline bool requestActive = false;
+    inline bool autoSoleChoicePending = false;
+    inline bool autoSoleChoiceEnteredService = false;
+    inline int autoSoleWaitTicks = 0;
     inline bool submissionServiceError = false;
     inline bool gameplaySubmissionEnabled = false;
     inline bool pvpTimeoutAttempted = false;
@@ -82,6 +85,7 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
     inline std::uint32_t popupRootHandle = 0;
     inline bool verifyClosedNextTick = false;
     inline unsigned int frameCounter = 0;
+    inline bool enableHolderFallback = false; // Legacy switch, always OFF: unsafe callback removed.
     inline HitRect choiceRects[3]{};
     inline HitRect closeRect{};
     inline Obj* sceneFont = nullptr; // legacy fallback only; never substitutes for Cafeteria
@@ -278,6 +282,8 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
     inline float chosenArcHeight=.055f;
     inline float chosenPuffScale=.31f;
     inline float pressFeedbackSeconds = .70f;
+    // Retired: stock command rebinding did not generate missing offers and
+    // caused unrelated input-command lifecycles to run again.
     inline void ConfigureChoiceMotion(int glideMs, int glideExpoHundredths,
                                       int holdMs, int fadeMs, int dismissMs,
                                       int lowerArcPercent, int puffPercent) {
@@ -345,6 +351,8 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
     inline constexpr const char* kFactoryProbeSelector =
         "/sdcard/Android/data/com.ea.gp.pvzheroes/files/pick3_factory_probe.txt";
     inline int factoryProbeModeForPopup = 0;
+    inline int stalePopupObservations = 0;
+    inline bool enableInterruptionSuspend = true;
 
     inline int ReadArtTraceMode() {
         int mode=0;
@@ -506,8 +514,8 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
         }
     }
 
-    inline constexpr float cardEntranceStaggerSeconds = .075f;
-    inline constexpr float cardEntranceDurationSeconds = .34f;
+    inline constexpr float cardEntranceStaggerSeconds = .050f;
+    inline constexpr float cardEntranceDurationSeconds = .26f;
     inline float cardOriginX[3]{}, cardOriginY[3]{}, portraitOriginY[3]{};
     struct RewardLayout {
         float topY=.205f,lowerY=-.245f,sideGap=.242f;
@@ -916,6 +924,7 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
         exitAnimating=false;
         Pick3::Submission::SetPopupInputCapture(false);
         pvpTimeoutAttempted = false;
+        stalePopupObservations=0;
         ++asyncGeneration; // invalidate callbacks from the closed overlay
         ReleaseAsyncAssets();
         Pick3NativeAvatarLoad::EndSession();
@@ -3254,12 +3263,105 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
             }
         }
         if (nativeCacheTest) Pick3SpriteCache::Tick(isOpen, previewCardIds);
+        // A single DISTINCT GUID in UniqueGuidTargets is one choice, even
+        // if the stock deck query found many physical copies of that GUID.
+        // Submit option index 0 only; NEVER submit the whole physical stack.
+        // Run through the same service/completion path as the popup.
+        if (externalOnly && autoSoleChoicePending && requestActive && !isOpen) {
+            if (!IsInMatch() || ++autoSoleWaitTicks > 1800 ||
+                (!autoSoleChoiceEnteredService && Pick3::Submission::DeadlineExpired())) {
+                LOG_ERR("CustomComponents/Pick3/AUTO_SOLE: CANCEL effect=%d group=%d match=%d ticks=%d entered=%d",
+                        activeRequest.effectEntityId,activeRequest.effectGroupId,
+                        IsInMatch()?1:0,autoSoleWaitTicks,autoSoleChoiceEnteredService?1:0);
+                Pick3::Submission::FinishTransaction(activeRequest,false);
+                if (!IsInMatch()) {
+                    Pick3::TargetBridge::Clear();
+                    Pick3::Submission::ResetMatch();
+                }
+                requestActive=false;
+                autoSoleChoicePending=autoSoleChoiceEnteredService=false;
+                autoSoleWaitTicks=0;
+                return;
+            }
+            Pick3::Submission::PumpDependencies();
+            if (autoSoleChoiceEnteredService) {
+                const auto outcome = Pick3::Submission::PollResult();
+                const bool accepted = outcome == SelectionCompletion::Result::Success;
+                const bool failed = outcome == SelectionCompletion::Result::Failure ||
+                                    outcome == SelectionCompletion::Result::Uncertain;
+                const bool expired = Pick3::Submission::DeadlineExpired();
+                if (accepted || failed || expired) {
+                    LOG_INFO("CustomComponents/Pick3/AUTO_SOLE: COMPLETE effect=%d group=%d accepted=%d outcome=%d expired=%d",
+                             activeRequest.effectEntityId,activeRequest.effectGroupId,accepted?1:0,
+                             static_cast<int>(outcome),expired?1:0);
+                    Pick3::Submission::FinishTransaction(activeRequest,accepted);
+                    autoSoleChoicePending=false;
+                    autoSoleChoiceEnteredService=false;
+                    autoSoleWaitTicks=0;
+                    requestActive=false;
+                }
+            } else if (Pick3::Submission::Ready()) {
+                // One index => one exact entity id in the outgoing Play DTO.
+                const bool entered=Pick3::Submission::Submit(activeRequest,{0},false);
+                if (entered) {
+                    autoSoleChoiceEnteredService=true;
+                    LOG_INFO("CustomComponents/Pick3/AUTO_SOLE: SUBMITTED effect=%d group=%d guid=%d entity=%d targets=1",
+                             activeRequest.effectEntityId,activeRequest.effectGroupId,
+                             activeRequest.options[0].cardGuid,activeRequest.options[0].entityId);
+                } else if (!Pick3::Submission::CanRetryLastSubmission()) {
+                    Pick3::Submission::FinishTransaction(activeRequest,false);
+                    autoSoleChoicePending=false;
+                    requestActive=false;
+                }
+            }
+            return;
+        }
         if (isOpen && postOpenIsolation>=1) {
             // Mode 1/2 suppress UI Tick and all its managed calls. With mode 1,
             // async asset servicing above still runs; mode 2 suppresses both.
             return;
         }
         if (isOpen) {
+            // A picker is owned by precisely one blocking effect/group.  The
+            // logs show it remaining onscreen after that effect retired, then
+            // repeatedly accepting input and opening a stock inspection view.
+            // Require three separated failures to avoid a transient predictor
+            // rebuild closing a valid selection.
+            if (externalOnly && requestActive && !submitPending &&
+                !picked.Sealed() && !Pick3::Submission::AwaitingResult() &&
+                frameCounter % 10 == 0 && Pick3::Submission::Local()) {
+                Obj* service = Pick3::Submission::Target(Pick3::Submission::serviceRoot);
+                if (service) {
+                    const auto& holder = Systems::TargetingPresentationRefreshSystem::observedTargetingIdentity;
+                    if (holder.valid && holder.effectEntityId==activeRequest.effectEntityId &&
+                        holder.effectGroupId==activeRequest.effectGroupId)
+                        stalePopupObservations=0;
+                    else if (++stalePopupObservations >= 3) {
+                        // A non-targeting animation may interrupt the same
+                        // unresolved blocking effect for several seconds. Do
+                        // not mark an unsubmitted popup permanently consumed.
+                        // Preserve the exact card offer for holder re-entry;
+                        // Close() must not call FinishTransaction(false) here.
+                        auto* liveModel=Pick3::Submission::Target(
+                            Pick3::Submission::boundEntityModelRoot);
+                        const bool suspended=enableInterruptionSuspend &&
+                            Pick3::TargetBridge::SuspendUnsubmittedOffer(activeRequest,liveModel);
+                        LOG_INFO("CustomComponents/Pick3/STABILITY: HOLD_INTERRUPTED effect=%d group=%d saved=%d holder=%d/%d state=%d",
+                            activeRequest.effectEntityId,activeRequest.effectGroupId,
+                            suspended?1:0,holder.effectEntityId,holder.effectGroupId,holder.state);
+                        if(suspended) {
+                            // No transaction was submitted, so this is visual
+                            // teardown, not a service failure/retirement.
+                            requestActive=false;
+                        } else {
+                            LOG_ERR("CustomComponents/Pick3/HANDOFF_REPAIR: SUSPEND_REJECTED effect=%d group=%d; original cleanup retained",
+                                    activeRequest.effectEntityId,activeRequest.effectGroupId);
+                        }
+                        Close();
+                        return;
+                    }
+                }
+            }
             AvatarExperimentPreflight();
             AnimateInlineTooltip();
             // Never postpone the popup to look up optional native avatar metadata.
@@ -3556,14 +3658,27 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
         }
         // Recover any active orphan left by a scene or input transition.
         // Keep this on the bounded 30-frame path, never on every Update.
+        const auto& localTimingHolder =
+            Systems::TargetingPresentationRefreshSystem::observedTargetingIdentity;
+        const bool currentHolderTargets = localTimingHolder.valid &&
+            (localTimingHolder.state == 6 || localTimingHolder.state == 7);
+        const bool candidateStockResume = externalOnly &&
+            Pick3::TargetButtonTrace::enableGuardedReconcile &&
+            Pick3::TargetButtonTrace::chooseSerial!=Pick3::TargetButtonTrace::recoveredSerial &&
+            Pick3::TargetButtonTrace::chooseSerial!=0 &&
+            Pick3::PhaseRecordTrace::endCount.load()>
+                Pick3::TargetButtonTrace::endsAtChoose;
         if (frameCounter % 30 != 0 &&
-            !(externalOnly && Pick3::TargetBridge::HasQueuedChoice())) return;
+            !(externalOnly && (Pick3::TargetBridge::HasQueuedChoice() ||
+                                Pick3::TargetBridge::HasPendingOffer() ||
+                                currentHolderTargets || candidateStockResume))) return;
         if (Root() || popupRootHandle) {
             LOG_ERR("CustomComponents/Pick3Preview: inactive-state orphan; cleaning before match check");
             DestroyPopupRoot("idle-watchdog");
         }
         const bool match = IsInMatch();
         if (!match) {
+            Pick3::TargetButtonTrace::ClearRecovery();
             if (externalOnly) { Pick3::TargetBridge::Clear(); requestActive = false; }
             if (matchWasPresent) {
                 Pick3::Submission::ResetMatch();
@@ -3577,7 +3692,166 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
             return;
         }
         matchWasPresent = true;
+        const auto& coldHolder=Systems::TargetingPresentationRefreshSystem::observedTargetingIdentity;
+        // FIRST PICK: The stock finder can cache exact options before any
+        // SelectTargetCommand has executed. At this moment serviceRoot is often
+        // still unset (Local()==Remote()==false), so the old activation gate
+        // cannot publish the already-valid offer until an unrelated tap runs
+        // a stock target command and happens to capture its service.
+        //
+        // Resolve the EXISTING DI-bound service here in EventSystem.Update,
+        // not from GameInputStateHolder.Update. No new game command, finder,
+        // target selection, Unity callback, or remote action is invoked.
+        // Preserve stock ownership validation immediately below.
+        if (externalOnly && gameplaySubmissionEnabled &&
+            (coldHolder.valid && (coldHolder.state==6 || coldHolder.state==7)) &&
+            Pick3::TargetBridge::HasPendingOffer() &&
+            !Pick3::Submission::Local() && !Pick3::Submission::Remote()) {
+            const bool hadBinder=Pick3::Submission::Target(Pick3::Submission::binderRoot)!=nullptr;
+            Pick3::Submission::PumpDependencies();
+            static int lastDiagId=-1,lastDiagGroup=-1;
+            static bool lastResolved=false;
+            const bool nowLocal=Pick3::Submission::Local();
+            const bool nowRemote=Pick3::Submission::Remote();
+            const bool resolved=nowLocal||nowRemote;
+            if (lastDiagId!=coldHolder.effectEntityId ||
+                lastDiagGroup!=coldHolder.effectGroupId || lastResolved!=resolved) {
+                lastDiagId=coldHolder.effectEntityId;
+                lastDiagGroup=coldHolder.effectGroupId;
+                lastResolved=resolved;
+                LOG_INFO("CustomComponents/Pick3/FIRST_SERVICE_BIND: effect=%d group=%d state=%d binder=%d resolved=%d local=%d remote=%d noCommand=1",
+                    coldHolder.effectEntityId,coldHolder.effectGroupId,coldHolder.state,
+                    hadBinder?1:0,resolved?1:0,nowLocal?1:0,nowRemote?1:0);
+            }
+        }
+        // Keep the holder identity for stock button recovery, but do not
+        // synthesize BindCommandsForState or native finder calls. Interrupted
+        // offers re-enter only via the live, validated stock holder identity.
+        // Stock holder, not speculative target evaluation, authorizes popup
+        // activation in BOTH local PvE and locally-owned remote PvP turns.
+        const bool pickerLocalSession=Pick3::Submission::Local() && Pick3::Submission::allowPve;
+        const bool pickerRemoteSession=Pick3::Submission::Remote() && Pick3::Submission::allowPvp;
+        if (externalOnly && (pickerLocalSession || pickerRemoteSession)) {
+            const auto& current = Systems::TargetingPresentationRefreshSystem::observedTargetingIdentity;
+            if(current.valid && current.holder && (current.state==6 || current.state==7)) {
+                auto* liveModel=Pick3::Submission::Target(Pick3::Submission::boundEntityModelRoot);
+                // On the remote session, only a cached effect explicitly owned by
+                // the local player can be published. Never present opponent picks.
+                const int localOwner=Pick3::TargetBridge::LocalPlayerId();
+                if(pickerLocalSession || localOwner>=0) {
+                    const int mode=Pick3::TargetBridge::ReadActiveSelectionMode(
+                        current.effectEntityId,liveModel);
+                    if(mode>=0 && !Pick3::EnumModes::IsPickFromThree(mode)) {
+                        // A stock manual-target effect can legitimately enter
+                        // state 6 without ever creating a Pick3 request.
+                        static int lastStockId=-1,lastStockGroup=-1;
+                        if(lastStockId!=current.effectEntityId || lastStockGroup!=current.effectGroupId) {
+                            lastStockId=current.effectEntityId;lastStockGroup=current.effectGroupId;
+                            LOG_INFO("CustomComponents/Pick3/CLASSIFY_HOLDER: STOCK_TARGET effect=%d group=%d mode=%d notPick3=1 noCacheExpected=1",
+                                current.effectEntityId,current.effectGroupId,mode);
+                        }
+                    } else {
+                        // Unknown modes keep the existing harmless cache
+                        // lookup, preserving diagnostics if IL2CPP metadata
+                        // has not yet been injected for this model.
+                        static int lastCustomId=-1,lastCustomGroup=-1;
+                        if(lastCustomId!=current.effectEntityId || lastCustomGroup!=current.effectGroupId) {
+                            lastCustomId=current.effectEntityId;lastCustomGroup=current.effectGroupId;
+                            LOG_INFO("CustomComponents/Pick3/CLASSIFY_HOLDER: CUSTOM_OR_UNKNOWN effect=%d group=%d mode=%d remote=%d hasMatchingCache=%d",
+                                current.effectEntityId,current.effectGroupId,mode,pickerRemoteSession?1:0,
+                                Pick3::TargetBridge::HasCurrentModelOffer(current.effectEntityId,current.effectGroupId,liveModel,pickerRemoteSession?localOwner:-1)?1:0);
+                        }
+                        Pick3::TargetBridge::PublishForActiveEffect(
+                            current.effectEntityId,current.effectGroupId,liveModel,
+                            pickerRemoteSession?localOwner:-1);
+                    }
+                }
+            }
+        }
+        if(externalOnly) {
+            const bool noPendingPicker =
+                !Pick3::TargetBridge::HasQueuedChoice() && !requestActive && !isOpen &&
+                !submitPending && !coldHolder.valid;
+            Pick3::TargetButtonTrace::TryRecoverAfterCompletedLocalPhase(
+                noPendingPicker, Pick3::Submission::Local() || Pick3::Submission::Remote());
+        }
         if (externalOnly) {
+            // A blocking effect with no produced picker request cannot be
+            // recovered by the queued-request watchdog. Report it explicitly.
+            if (!Pick3::TargetBridge::HasQueuedChoice() && frameCounter % 120 == 0 &&
+                (pickerLocalSession || pickerRemoteSession) && Pick3::TargetButtonTrace::lastId >= 0 &&
+                (Pick3::TargetButtonTrace::currentState == 6 || Pick3::TargetButtonTrace::currentState == 7)) {
+                auto* activeModel=Pick3::Submission::Target(Pick3::Submission::boundEntityModelRoot);
+                const int mode=Pick3::TargetBridge::ReadActiveSelectionMode(
+                    Pick3::TargetButtonTrace::lastId,activeModel);
+                if(mode<0 || Pick3::EnumModes::IsPickFromThree(mode))
+                    LOG_ERR("CustomComponents/Pick3/NO_POPUP: HOLDER_TARGET_WITHOUT_REQUEST effect=%d group=%d mode=%d input=%d submitPending=0 action=observe_only",
+                        Pick3::TargetButtonTrace::lastId,Pick3::TargetButtonTrace::lastGroup,
+                        mode,Pick3::TargetButtonTrace::currentState);
+            }
+            // Do not retire the queued request before checking that a local
+            // SelectTargetService is actually processing this exact effect.
+            // The finder may offer targets while a blocking effect is being
+            // assembled, which is too early to display its popup.
+            if (Pick3::TargetBridge::HasQueuedChoice() &&
+                Pick3::Submission::Local()) {
+                Pick3::PreviewRequest queued;
+                {
+                    std::lock_guard<std::mutex> lock(Pick3::TargetBridge::snapshotMutex);
+                    if (!Pick3::TargetBridge::requestReady) return;
+                    queued = Pick3::TargetBridge::nextRequest;
+                }
+                auto* localSvc = Pick3::Submission::Target(Pick3::Submission::serviceRoot);
+                const bool atFront = localSvc &&
+                    Pick3::Submission::LocalBlockingEffectMatches(queued, localSvc);
+                const auto& owned=Systems::TargetingPresentationRefreshSystem::observedTargetingIdentity;
+                const bool holderOwns=owned.valid && (owned.state==6 || owned.state==7) &&
+                    owned.effectEntityId==queued.effectEntityId &&
+                    owned.effectGroupId==queued.effectGroupId;
+                const bool queuedBehindPlaceholder = !atFront && localSvc &&
+                    Pick3::Submission::QueuedBehindPlaceholder(queued, localSvc);
+                if (queuedBehindPlaceholder) {
+                    static int lastReadyEffect = -1, lastReadyGroup = -1;
+                    if (lastReadyEffect != queued.effectEntityId || lastReadyGroup != queued.effectGroupId) {
+                        lastReadyEffect = queued.effectEntityId;
+                        lastReadyGroup = queued.effectGroupId;
+                        LOG_INFO("CustomComponents/Pick3/TIMING: READY_QUEUED_PLACEHOLDER effect=%d group=%d",
+                                 queued.effectEntityId, queued.effectGroupId);
+                    }
+                }
+                if (!holderOwns) {
+                    // Never retire an effect based on how many frames it was
+                    // absent from an effect-list snapshot. Prediction can lead
+                    // the holder by many seconds; stock ownership decides.
+                    static int pendingWaitFrames=0;
+                    static int pendingEffect=-1,pendingGroup=-1;
+                    if (pendingEffect!=queued.effectEntityId || pendingGroup!=queued.effectGroupId) {
+                        pendingEffect=queued.effectEntityId; pendingGroup=queued.effectGroupId; pendingWaitFrames=0;
+                    }
+                    ++pendingWaitFrames;
+                    if (pendingWaitFrames==120 || pendingWaitFrames==600 || pendingWaitFrames%1800==0) {
+                        LOG_ERR("CustomComponents/Pick3/TIMING: PENDING_STALLED effect=%d group=%d frames=%d queueState=%d requestRetained=1 noSyntheticAck=1",
+                          queued.effectEntityId,queued.effectGroupId,pendingWaitFrames,
+                          static_cast<int>(localSvc ? Pick3::Submission::InspectBlockingQueue(queued,localSvc) : Pick3::Submission::BlockingQueueState::Unknown));
+                    }
+                    static int lastWaitEffect = -1, lastWaitGroup = -1;
+                    if (lastWaitEffect != queued.effectEntityId || lastWaitGroup != queued.effectGroupId) {
+                        lastWaitEffect = queued.effectEntityId;
+                        lastWaitGroup = queued.effectGroupId;
+                        LOG_INFO("CustomComponents/Pick3/TIMING: WAIT_STOCK_BLOCKING effect=%d group=%d",
+                                 queued.effectEntityId, queued.effectGroupId);
+                    }
+                    return;
+                }
+            }
+            const auto& holder = Systems::TargetingPresentationRefreshSystem::observedTargetingIdentity;
+            {
+                std::lock_guard<std::mutex> lock(Pick3::TargetBridge::snapshotMutex);
+                if(Pick3::TargetBridge::requestReady &&
+                   (!holder.valid ||
+                    Pick3::TargetBridge::nextRequest.effectEntityId!=holder.effectEntityId ||
+                    Pick3::TargetBridge::nextRequest.effectGroupId!=holder.effectGroupId)) return;
+            }
             Pick3::PreviewRequest request;
             if (!Pick3::TargetBridge::Consume(request)) return;
             if (request.options.empty()) return;
@@ -3588,10 +3862,37 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
                          request.effectEntityId, request.effectGroupId, request.ownerPlayerId, presentingPlayer);
                 // The incoming opponent action is not our UI transaction.
                 Pick3::TargetBridge::CompleteLocalSelection(request.effectEntityId,
-                                                             request.effectGroupId);
+                                                             request.effectGroupId, false);
                 return;
             }
             activeRequest = std::move(request);
+            // Preserve the source mode: only UniqueGuidTargets has the
+            // physical-copy / distinct-GUID auto-choice contract.
+            // Only this precise first-PlayTrigger revive signature bypasses
+            // our UI auto-submit. Let the normal one-option picker submit and
+            // allow the engine's stock secondary target filter to decide lanes.
+            const bool stockLaneTrial =
+                Pick3::Submission::IsGenericPick3ReviveEffect(activeRequest.effectEntityId);
+            if (stockLaneTrial && activeRequest.mode == Pick3::SelectionMode::UniqueGuidTargets &&
+                activeRequest.requiredTargets == 1 && activeRequest.options.size() == 1) {
+                LOG_INFO("CustomComponents/Pick3/REVIVE_STOCK_LANE_TRIAL: SKIP_AUTO_SOLE effect=%d group=%d oneOption=1 preserveSecondaryFilter=1",
+                         activeRequest.effectEntityId, activeRequest.effectGroupId);
+            }
+            if (!stockLaneTrial && activeRequest.mode == Pick3::SelectionMode::UniqueGuidTargets &&
+                activeRequest.requiredTargets == 1 && activeRequest.options.size() == 1 &&
+                activeRequest.options[0].entityId > 0 &&
+                activeRequest.options[0].cardGuid > 0) {
+                requestActive=true;
+                autoSoleChoicePending=true;
+                autoSoleChoiceEnteredService=false;
+                autoSoleWaitTicks=0;
+                Pick3::Submission::BeginDeadline();
+                LOG_INFO("CustomComponents/Pick3/AUTO_SOLE: DECISION effect=%d group=%d guid=%d entity=%d distinctOptions=1 submitCopies=1 popup=0",
+                         activeRequest.effectEntityId,activeRequest.effectGroupId,
+                         activeRequest.options[0].cardGuid,activeRequest.options[0].entityId);
+                return;
+            }
+            stalePopupObservations=0;
             requestActive = true;
             Pick3::Submission::BeginDeadline();
             pvpTimeoutAttempted = false;
@@ -3649,6 +3950,10 @@ namespace CustomComponents::Presentation::PickFromThreePreviewSystem {
         // Always 0. The historical preload setting is ignored for this test.
         preloadSeconds = 0.f;
         enterSeconds = static_cast<float>(std::clamp(entranceMs, 100, 1500)) / 1000.f;
+        // PvP local presentation only: do not add a long reveal after stock
+        // targeting has already become actionable. Keep the animation itself.
+        if (externalRequestsOnly && submitGameplay && enterSeconds > .16f)
+            enterSeconds = .16f;
         battlefieldDimAlpha = suppressStockVisuals ? .55f : .42f; // legacy dim setting; never hides target icons
         pressFeedbackSeconds=static_cast<float>(std::clamp(pressDelayMs,100,900))/1000.f;
         exitSeconds=static_cast<float>(std::clamp(dismissalMs,80,500))/1000.f;

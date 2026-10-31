@@ -11,6 +11,8 @@ namespace CustomComponents::SelectionCompletion {
 using Obj = BNM::IL2CPP::Il2CppObject;
 inline CompletionState completion;
 inline std::uint64_t activeTicket = 0;
+// Optional read-only diagnostics observer; does not alter completion status.
+inline void (*networkObserver)(bool, int) = nullptr;
 struct Receiver : Obj {
     std::uint64_t ticket = 0;
     BNM_CustomClass(Receiver,
@@ -21,10 +23,14 @@ struct Receiver : Obj {
     // metadata/ABI consistency, not a proven out-of-bounds crash fix.
     BNM_CustomField(ticket, BNM::Defaults::Get<std::uint64_t>(), "ticket");
     void Finish(Result value, int reason) {
-        completion.Complete(ticket, value, reason);
+        const auto before = completion.Status();
+        const bool accepted = completion.Complete(ticket, value, reason);
+        LOG_INFO("CustomComponents/Pick3/HANDOFF_TRACE: phase=SERVICE_CALLBACK ticket=%llu activeTicket=%llu callbackResult=%d reason=%d statusBefore=%d accepted=%d statusAfter=%d",
+            (unsigned long long)ticket, (unsigned long long)activeTicket,
+            int(value), reason, int(before), int(accepted), int(completion.Status()));
     }
-    void OnSuccess() { Finish(Result::Success, 0); }
-    void OnFailure(int reason) { Finish(Result::Failure, reason); }
+    void OnSuccess() { if (networkObserver) networkObserver(true,0); Finish(Result::Success, 0); }
+    void OnFailure(int reason) { if (networkObserver) networkObserver(false,reason); Finish(Result::Failure, reason); }
     BNM_CustomMethod(OnSuccess, false, BNM::Defaults::Get<void>(), "OnSuccess");
     BNM_CustomMethod(OnFailure, false, BNM::Defaults::Get<void>(), "OnFailure",
         BNM::CompileTimeClassBuilder("PvZCards.Engine", "ServiceFailure", "Assembly-CSharp.dll").Build());
@@ -99,6 +105,9 @@ inline bool Begin(Obj* target) {
     failureDelegate = make(failureActionClass, "OnFailure", 1);
     if (!successDelegate || !failureDelegate) { Detach(); return false; }
     hadSuccessHandler = successField[target].Get() != nullptr;
+    LOG_INFO("CustomComponents/Pick3/HANDOFF_TRACE: phase=DELEGATES_BEFORE service=%p existingSuccess=%d existingFailure=%d ticket=%llu",
+        (void*)target, int(hadSuccessHandler), int(failureField[target].Get()!=nullptr),
+        (unsigned long long)activeTicket);
 
     bool attached = false;
     const auto ex = BNM::TryInvoke([&] {
@@ -108,8 +117,13 @@ inline bool Begin(Obj* target) {
         successField[target].Set(success); failureField[target].Set(failed); attached = true;
     });
     if (ex.IsValid() || !attached) {
+        LOG_INFO("CustomComponents/Pick3/HANDOFF_TRACE: phase=DELEGATES_FAILED service=%p exception=%d attached=%d",
+            (void*)target, int(ex.IsValid()), int(attached));
         Detach(); return false;
     }
+    LOG_INFO("CustomComponents/Pick3/HANDOFF_TRACE: phase=DELEGATES_ATTACHED service=%p success=%d failure=%d ticket=%llu",
+        (void*)target, int(successField[target].Get()!=nullptr),
+        int(failureField[target].Get()!=nullptr), (unsigned long long)activeTicket);
     return true;
 }
 inline void MarkUncertain() {
