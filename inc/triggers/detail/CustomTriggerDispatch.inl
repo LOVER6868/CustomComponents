@@ -12,6 +12,7 @@
         int effectEntityId = -1;
         int effectGroupId = -1;
         bool valid = false;
+        std::uint64_t selectionSequence = 0;
     };
 
     inline Pick3EffectIdentitySnapshot ReadPick3EffectIdentity(Obj* effect) {
@@ -231,6 +232,25 @@
             return false;
         }
 
+        namespace TX=CustomComponents::Pick3::Transaction;
+        namespace RT=CustomComponents::Pick3::TransactionRuntime;
+        // Use the pre-pooling identity supplied by the selection producer.
+        // Reading firingEffect again can yield cleared SourceId/TargetId.
+        const auto eventIdentity=identitySnapshot && identitySnapshot->valid
+            ? *identitySnapshot : ReadPick3EffectIdentity(firingEffect);
+        auto eventSelection=TX::active.value;
+        if(!TX::Current(eventSelection) || eventSelection->model!=RT::ModelOf(model)) eventSelection={};
+        if(RT::pipelineReady && std::strcmp(eventName,"PickFromThreeTrigger")==0) {
+            eventSelection=RT::Capture(model,eventIdentity.effectEntityId,
+                eventIdentity.effectGroupId,eventIdentity.sourceId,eventIdentity.selectionSequence);
+            if(eventSelection && !TX::ClaimEvent(eventSelection)) {
+                returnToPool[instances](queryContext);
+                return true; // already delivered this exact model/generation
+            }
+        }
+        TX::Scoped eventSelectionScope(eventSelection,eventIdentity.effectEntityId);
+        if(eventSelection) LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=SELECTION_EVENT_BOUND event=%s effect=%d group=%d seq=%llu",eventName,eventSelection->effect,eventSelection->group,(unsigned long long)eventSelection->sequence);
+
         const bool tracePick3Event =
             std::strcmp(eventName, "PickFromThreeTrigger") == 0;
         if (tracePick3Event) {
@@ -277,6 +297,28 @@
         int candidates = 0;
         int rejected = 0;
         int queued = 0;
+        // 2.10: The firing effect and its accepted event target are constant
+        // throughout this dispatch. Resolve the in-flight proof once, not for
+        // every candidate listener. Keep the proof available for all event
+        // kinds: a non-PlayTrigger dependent filter may use the same scope.
+        const bool mayBindInFlight = inFlightSelectionProof != nullptr;
+        const auto firingIdentityForProof = mayBindInFlight
+            ? eventIdentity : Pick3EffectIdentitySnapshot{};
+        const int proofSource = firingIdentityForProof.valid
+            ? firingIdentityForProof.sourceId : -1;
+        const int proofEffect = firingIdentityForProof.valid
+            ? firingIdentityForProof.effectEntityId : -1;
+        const int proofTarget = firingIdentityForProof.valid
+            ? firingIdentityForProof.targetId : -1;
+        const bool proofAccepted = mayBindInFlight &&
+            firingIdentityForProof.valid &&
+            inFlightSelectionProof(model, proofSource, proofEffect, proofTarget);
+        Obj* proofEntity = proofAccepted
+            ? FindEntityById(model, proofTarget) : nullptr;
+        const int proofGuid = proofEntity
+            ? CustomComponents::Queries::InDeckCardGuidOf(proofEntity) : -1;
+        const bool hasProof = proofAccepted && proofGuid > 0;
+
         auto* entities = modelEntities[model].Get();
         if (entities && entities->items) {
             for (int i = 0; i < entities->size; ++i) {
@@ -306,13 +348,40 @@
                 // the effect entity.  Do not special-case TriggerTargetFilter,
                 // SelfEntityFilter, lane filters, once-per-turn conditions, etc.
                 Pick3ValidationObservation validation;
-                const bool eligible = ValidateWithStockTriggerValidator(
-                    stockFinder,
-                    model,
-                    effectEntity,
-                    queryContext,
-                    tracePick3Listener ? &validation : nullptr
-                );
+                // A listener may observe the accepted selection only when it
+                // belongs to the firing source. Never widen this to a global
+                // recent selection or to listeners of other cards.
+                const int listenerSourceForProof = hasProof
+                    ? (tracePlayListener ? traceSourceId
+                       : effectEntityGetSource[static_cast<Obj*>(nullptr)](effectEntity))
+                    : -1;
+                const bool sameSource = listenerSourceForProof > 0 &&
+                    listenerSourceForProof == proofSource;
+                const bool bound = hasProof && sameSource;
+                if (tracePlayListener && traceSourceId == proofSource && !bound &&
+                    proofEffect > 0 && proofTarget > 0) {
+                    static thread_local unsigned proofMisses = 0;
+                    if (++proofMisses <= 32)
+                        LOG_INFO("CustomComponents/Pick3/PATCH2_INFLIGHT: phase=INFLIGHT_PROOF_MISS effect=%d source=%d target=%d listener=%d proven=%d sourceMatches=%d selectedGuid=%d legacyPreserved=1",
+                            proofEffect,proofSource,proofTarget,traceEffectId,int(proofAccepted),int(sameSource),proofGuid);
+                }
+                if (bound && tracePlayListener)
+                    LOG_INFO("CustomComponents/Pick3/PATCH2_INFLIGHT: phase=INFLIGHT_SELECTION_BOUND effect=%d source=%d target=%d guid=%d listener=%d proof=STOCK_ACCEPTED_EVENT_TARGET",
+                        proofEffect,proofSource,proofTarget,proofGuid,traceEffectId);
+                const CustomComponents::Pick3::Picked::InFlight::Identity selection{
+                    model, queryContext, proofEffect, proofSource, proofTarget,
+                    proofGuid, bound
+                };
+                bool eligible = false;
+                {
+                    CustomComponents::Pick3::Picked::InFlight::Scoped selectionScope(selection);
+                    eligible = ValidateWithStockTriggerValidator(
+                        stockFinder, model, effectEntity, queryContext,
+                        tracePick3Listener ? &validation : nullptr);
+                }
+                if(bound && tracePlayListener)
+                    LOG_INFO("CustomComponents/Pick3/PATCH2_INFLIGHT: phase=INFLIGHT_SELECTION_EXPIRED effect=%d listener=%d eligible=%d",
+                        proofEffect,traceEffectId,int(eligible));
                 if (tracePick3Listener) LOG_INFO(
                     "CustomComponents/Pick3/PICK3_VALIDATE: listenerEffect=%d listenerSource=%d priorSelf=%d validationSelf=%d sourceExists=%d validatorAvailable=%d validatorCalled=%d validatorResult=%d eligible=%d",
                     entityId[effectEntity].Get(), validation.listenerSourceId,
@@ -326,9 +395,14 @@
                         "CustomComponents/Pick3/PICK3_LISTENER: verdict=rejected listenerEffect=%d listenerSource=%d model=%p",
                         entityId[effectEntity].Get(),
                         effectEntityGetSource[static_cast<Obj*>(nullptr)](effectEntity), model);
-                    if (tracePlayListener) LOG_INFO(
-                        "CustomComponents/UnearthTrace: CUSTOM_PLAY_LISTENER effect=%d listenerEffect=%d listenerSource=%d verdict=rejected model=%p",
-                        effectSourceId[firingEffect].Get(), traceEffectId, traceSourceId, (void*)model);
+                    if (tracePlayListener) {
+                        LOG_INFO(
+                            "CustomComponents/UnearthTrace: CUSTOM_PLAY_LISTENER effect=%d listenerEffect=%d listenerSource=%d verdict=rejected model=%p",
+                            effectSourceId[firingEffect].Get(), traceEffectId, traceSourceId, (void*)model);
+                        LOG_INFO(
+                            "CustomComponents/Pick3/PATCH2_TRIGGER: phase=PLAY_LISTENER_REJECTED listenerEffect=%d listenerSource=%d reason=STOCK_TRIGGER_VALIDATOR_FALSE group=UNKNOWN model=%p",
+                            traceEffectId, traceSourceId, (void*)model);
+                    }
                     if constexpr (CustomComponents::Diagnostics::kVerbose) CC_DIAG(
                         "CustomComponents/CustomTrigger: REJECT '%s' EffectEntityId=%d SourceId=%d",
                         eventName,
@@ -342,11 +416,16 @@
                     reinterpret_cast<Obj*>(triggerDataClass.GetMonoType()),
                     false
                 );
-                if (!triggerData)
+                if (!triggerData) {
+                    if (tracePlayListener)
+                        LOG_ERR("CustomComponents/Pick3/PATCH2_TRIGGER: phase=PLAY_LISTENER_FAILURE listenerEffect=%d reason=TRIGGER_DATA_ACQUIRE_NULL",entityId[effectEntity].Get());
                     continue;
+                }
 
                 Obj* context = triggerDataContext[triggerData].Get();
                 if (!context) {
+                    if (tracePlayListener)
+                        LOG_ERR("CustomComponents/Pick3/PATCH2_TRIGGER: phase=PLAY_LISTENER_FAILURE listenerEffect=%d reason=TRIGGER_DATA_CONTEXT_NULL",entityId[effectEntity].Get());
                     returnToPool[instances](triggerData);
                     continue;
                 }
@@ -359,6 +438,14 @@
                 triggerDataSourceId[triggerData] = listenerSourceId;
                 effectContextCopyFromQuery[context](queryContext);
                 triggeredEffectsAdd[triggeredEffects](triggerData);
+                // Preserve verified event-to-listener lineage across the stock
+                // queued-effect boundary. No global GUID or latest-pick guess.
+#if CUSTOMCOMPONENTS_PF3_ENTITY_LINK_ROUTING
+                if(bound && std::strcmp(eventName,"PickFromThreeTrigger")==0)
+                    CustomComponents::Pick3::Picked::DeferredLink::Enqueue(
+                        listenerEffectEntityId,listenerSourceId,proofTarget,proofGuid,
+                        proofEffect,firingIdentityForProof.effectGroupId);
+#endif
                 if (returnedEvent)
                     DiscardedSystem::ReturnListenerQueued(
                         model, returnedCardId, listenerEffectEntityId, listenerSourceId
@@ -385,9 +472,18 @@
                 if (tracePick3Listener) LOG_INFO(
                     "CustomComponents/Pick3/PICK3_LISTENER: verdict=queued listenerEffect=%d listenerSource=%d model=%p",
                     listenerEffectEntityId, listenerSourceId, model);
-                if (tracePlayListener) LOG_INFO(
-                    "CustomComponents/UnearthTrace: CUSTOM_PLAY_LISTENER effect=%d listenerEffect=%d listenerSource=%d verdict=queued model=%p",
-                    effectSourceId[firingEffect].Get(), traceEffectId, traceSourceId, (void*)model);
+                if (tracePlayListener) {
+                    LOG_INFO(
+                        "CustomComponents/UnearthTrace: CUSTOM_PLAY_LISTENER effect=%d listenerEffect=%d listenerSource=%d verdict=queued model=%p",
+                        effectSourceId[firingEffect].Get(), traceEffectId, traceSourceId, (void*)model);
+                    // 2.8: immutable integers only; no new managed getters.
+                    // Queued means accepted by TriggeredEffectCollection.Add,
+                    // NOT processed, PF3-selected, or applied to the model.
+                    LOG_INFO(
+                        "CustomComponents/Pick3/PATCH2_TRIGGER: phase=PLAY_LISTENER_QUEUED listenerEffect=%d listenerSource=%d dispatchSource=%d model=%p followupApplied=UNKNOWN originGroup=UNAVAILABLE boundary=TRIGGER_COLLECTION_ADD",
+                        listenerEffectEntityId, listenerSourceId,
+                        effectSourceId[firingEffect].Get(), (void*)model);
+                }
             }
         }
 
@@ -603,6 +699,7 @@
                 triggerDataSourceId[triggerData] = listenerSourceId;
                 effectContextCopyFromQuery[context](queryContext);
                 triggeredEffectsAdd[triggeredEffects](triggerData);
+
 
                 ZoneTriggeredAbilityPresentationSystem::RegisterOffBoardTriggerPresentation(
                     model,

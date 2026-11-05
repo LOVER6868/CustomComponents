@@ -4,9 +4,11 @@
 #include <BNM/Method.hpp>
 #include <BNM/Field.hpp>
 #include "pick3/PhaseRecordTrace.hpp"
+#include "pick3/PrePlayLifecycleTrace.hpp"
 #include "core/SceneViewContext.hpp"
 #include "log.h"
 #include "diagnostics/TraceVerbosity.hpp"
+#include "diagnostics/Pf3RepairTrace.hpp"
 namespace CustomComponents::Pick3::TargetButtonTrace {
 using Obj=BNM::IL2CPP::Il2CppObject;
 using VoidFn=void(*)(Obj*,const void*);
@@ -62,6 +64,10 @@ inline const void* lastCareMethod=nullptr;
 inline const void* lastResumeMethod=nullptr;
 inline unsigned chooseSerial=0;
 inline unsigned recoveredSerial=0;
+// Evidence from the actual stock mediator input callbacks. All manual
+// targeting (ordinary and PF3) must be eligible, not just popup completion.
+inline bool sawTargetingInput=false, returnedFromTargeting=false;
+inline unsigned recoveryDebugBudget=0;
 inline unsigned long long endsAtChoose=0,recordsAtChoose=0;
 inline int readyRecoveryFrames=0;
 inline void ClearRecovery() {
@@ -70,11 +76,15 @@ inline void ClearRecovery() {
     recoveryMediatorRoot=0;
     readyRecoveryFrames=0;
     chooseSerial=recoveredSerial=0;
+    sawTargetingInput=returnedFromTargeting=false;
     endsAtChoose=recordsAtChoose=0;
 }
 inline void RememberChoose(Obj* mediator) {
     ++chooseSerial;
     readyRecoveryFrames=0;
+    sawTargetingInput=returnedFromTargeting=false;
+    PF3_REPAIR_TRACE("CustomComponents/BUTTON179: CHOOSE_START serial=%u mediator=%p endRecords=%llu resumeRecords=%llu",
+        chooseSerial,(void*)mediator,PhaseRecordTrace::endCount.load(),PhaseRecordTrace::resumeRecordCount.load());
     endsAtChoose=PhaseRecordTrace::endCount.load();
     recordsAtChoose=PhaseRecordTrace::resumeRecordCount.load();
     if(!mediator || !Core::SceneViewContext::newGCHandle) return;
@@ -116,20 +126,28 @@ inline void Snapshot(const char* tag,Obj* self){
  CC_HOOK_TRACE("CustomComponents/STATE_TRACE: seq=%u tag=%s mediator=%p subturn=%d machine=%p machineState=%d machineName=%s view=%p animator=%p lastInput=%d lastEffect=%d/%d",++seq,tag,(void*)self,Phase(self),(void*)machine,state,StateName(state),(void*)view,(void*)animator,currentState,lastId,lastGroup);
 }
 inline void TryRecoverAfterCompletedLocalPhase(bool noPickerTransaction, bool matchLocalService) {
-    if(!enableGuardedReconcile || !noPickerTransaction || !matchLocalService || !oldResume || !oldCare ||
-       !recoveryMediatorRoot || chooseSerial==recoveredSerial || chooseSerial==0 ||
-       PhaseRecordTrace::endCount.load()<=endsAtChoose) {
+    if (!enableGuardedReconcile || !noPickerTransaction || !matchLocalService || !oldResume || !oldCare ||
+        !recoveryMediatorRoot || chooseSerial==recoveredSerial || chooseSerial==0) {
         readyRecoveryFrames=0;
         return;
     }
-    if(PhaseRecordTrace::resumeRecordCount.load()>recordsAtChoose) {
-        // Stock already scheduled resume; do not race or duplicate its queue.
+    // A stock phase-resume record supersedes us. Never schedule another.
+    if (PhaseRecordTrace::resumeRecordCount.load()>recordsAtChoose) {
         recoveredSerial=chooseSerial;
         readyRecoveryFrames=0;
+        PF3_REPAIR_TRACE("CustomComponents/BUTTON179: STOCK_RESUME_ALREADY_QUEUED serial=%u",chooseSerial);
         return;
     }
-    // State 5 is SelectPlayCardTarget and can still own live targeting.
-    if(currentState!=3 && currentState!=4) {
+    const bool observedEndRecord=PhaseRecordTrace::endCount.load()>endsAtChoose;
+    // Some stock manual target phases never emit a phase-end record. Only
+    // recognize those via an actual target-state -> normal-state callback,
+    // not from a timer or a PF3 popup closing.
+    if (!observedEndRecord && !returnedFromTargeting) {
+        readyRecoveryFrames=0;
+        return;
+    }
+    // Never resume while phase-0/phase-1 targeting or another blocker is live.
+    if (currentState!=3 && currentState!=4) {
         readyRecoveryFrames=0;
         return;
     }
@@ -140,16 +158,28 @@ inline void TryRecoverAfterCompletedLocalPhase(bool noPickerTransaction, bool ma
         return;
     }
     Obj* machine=medMachine.IsValid()?medMachine[mediator].Get():nullptr;
-    if(!machine || ReadMachineState(machine)!=3 || !oldCare(mediator,lastCareMethod)) {
+    const int machineState=ReadMachineState(machine);
+    // Only restore stock's Interrupted state; never force activation of a
+    // disabled/done/optional button, nor alter the state-machine directly.
+    const bool phaseCare=machineState==3 && oldCare(mediator,lastCareMethod);
+    if (!machine || machineState!=3 || !phaseCare) {
+        if (++recoveryDebugBudget<=72)
+            PF3_REPAIR_TRACE("CustomComponents/BUTTON179: RESTORE_GUARD serial=%u state=%d fsm=%d care=%d subturn=%d",
+                 chooseSerial,currentState,machineState,int(phaseCare),Phase(mediator));
         readyRecoveryFrames=0;
         return;
     }
-    if(++readyRecoveryFrames<10) return; // stable non-target state over several frames
-    recoveredSerial=chooseSerial; // set BEFORE invoking stock to prevent reentry
+    if (++readyRecoveryFrames<10) {
+        if(readyRecoveryFrames==1)
+            PF3_REPAIR_TRACE("CustomComponents/BUTTON179: RECOVERY_ELIGIBLE serial=%u endRecord=%d inputExit=%d fsm=%d holder=%d",
+                chooseSerial,int(observedEndRecord),int(returnedFromTargeting),machineState,currentState);
+        return;
+    }
+    recoveredSerial=chooseSerial; // mark before stock invocation to prevent reentry
     readyRecoveryFrames=0;
-    LOG_INFO("CustomComponents/BUTTON_RECOVERY: STOCK_MEDIATOR_RECONCILE choose=%u endCount=%llu noResumeRecord=1 holderState=%d subturn=%d once=1",
-        chooseSerial,PhaseRecordTrace::endCount.load(),currentState,Phase(mediator));
-    oldResume(mediator,lastResumeMethod); // stock code schedules its own button animation
+    PF3_REPAIR_TRACE("CustomComponents/BUTTON179: STOCK_MEDIATOR_RESTORE serial=%u endRecord=%d inputExit=%d resumeRecord=0 fsm=%d holder=%d",
+        chooseSerial,int(observedEndRecord),int(returnedFromTargeting),machineState,currentState);
+    oldResume(mediator,lastResumeMethod); // stock schedules its own animation
 }
 
 // Stock observer detours still forward each native invocation once.
@@ -160,6 +190,7 @@ inline void TryRecoverAfterCompletedLocalPhase(bool noPickerTransaction, bool ma
 inline int Determine(Obj* s,const void* m){
  int before=s&&holderState.IsValid()?holderState[s].Get():-99;
  int decided=oldDetermine?oldDetermine(s,m):-99;
+ PrePlayLifecycleTrace::OnDetermine(s,before,decided);
  if(decided!=before || decided==6 || decided==7)
    CC_HOOK_TRACE("CustomComponents/LIFECYCLE: seq=%u step=DETERMINE holder=%p prior=%d decided=%d front=%d/%d",++seq,(void*)s,before,decided,lastId,lastGroup);
  return decided;
@@ -193,8 +224,20 @@ inline void Resume(Obj* s,const void* m){
     CC_HOOK_TRACE("CustomComponents/RESUME_TRACE: seq=%u step=EXIT effect=%d group=%d holderState=%d awaitingFinder=%d subturn=%d",++seq,lastId,lastGroup,currentState,handoffAwaitingDiscovery?1:0,Phase(s));
 }
 inline void Surprise(Obj* s,const void* m){Snapshot("BUTTON_SURPRISE_ENTER",s);if(oldSurprise)oldSurprise(s,m);Snapshot("BUTTON_SURPRISE_EXIT",s);}
-inline void Input(Obj* s,int v,const void* m){currentState=v;CC_HOOK_TRACE("CustomComponents/STATE_TRACE: seq=%u tag=BUTTON_INPUT_ENTER state=%d",++seq,v);Snapshot("BUTTON_INPUT_SNAPSHOT",s);if(oldInput)oldInput(s,v,m);Snapshot("BUTTON_INPUT_EXIT",s);}
-inline void Bind(Obj* s,int v,const void* m){int previous=s&&holderState.IsValid()?holderState[s].Get():-99;CC_HOOK_TRACE("CustomComponents/LIFECYCLE: seq=%u step=BIND_ENTER holder=%p newState=%d oldState=%d front=%d/%d",++seq,(void*)s,v,s&&holderState.IsValid()?holderState[s].Get():-99,lastId,lastGroup);if(oldBind)oldBind(s,v,m);
+inline void Input(Obj* s,int v,const void* m){
+    if (chooseSerial!=recoveredSerial && chooseSerial!=0) {
+        if (v==6 || v==7) {
+            sawTargetingInput=true;
+            returnedFromTargeting=false;
+        } else if ((v==3 || v==4) && (sawTargetingInput || currentState==6 || currentState==7)) {
+            returnedFromTargeting=true;
+            PF3_REPAIR_TRACE("CustomComponents/BUTTON179: TARGET_INPUT_EXIT serial=%u previous=%d next=%d targetingObserved=%d",
+                chooseSerial,currentState,v,int(sawTargetingInput));
+        }
+    }
+    currentState=v;CC_HOOK_TRACE("CustomComponents/STATE_TRACE: seq=%u tag=BUTTON_INPUT_ENTER state=%d",++seq,v);Snapshot("BUTTON_INPUT_SNAPSHOT",s);if(oldInput)oldInput(s,v,m);Snapshot("BUTTON_INPUT_EXIT",s);}
+inline void Bind(Obj* s,int v,const void* m){int previous=s&&holderState.IsValid()?holderState[s].Get():-99;PrePlayLifecycleTrace::OnBind(s,previous,v,false);CC_HOOK_TRACE("CustomComponents/LIFECYCLE: seq=%u step=BIND_ENTER holder=%p newState=%d oldState=%d front=%d/%d",++seq,(void*)s,v,s&&holderState.IsValid()?holderState[s].Get():-99,lastId,lastGroup);if(oldBind)oldBind(s,v,m);
+ PrePlayLifecycleTrace::OnBind(s,previous,v,true);
  if ((v==6||v==7) && previous==v && lastId>=0 &&
      (lastId!=handoffId || lastGroup!=handoffGroup)) {
    handoffId=lastId;handoffGroup=lastGroup;handoffSeq=++seq;

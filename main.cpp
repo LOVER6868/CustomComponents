@@ -390,226 +390,61 @@ namespace {
         // Do not equate an enabled transport with network-side capability:
         // remote CardDatabase still requires GUID replication.
         const bool pvpRequested = BLOOM_CONFIG_BOOL("PickFromThree", "SubmitInPVP", true);
+        CustomComponents::Pick3::Submission::RegisterPick3PhysicalPairCheck(
+            &CustomComponents::Systems::DiscardPileZoneEffectsSystem::Pick3CanRevivePhysicalPair);
         if (installSubmission && candidateReady && !CustomComponents::Pick3::Submission::Initialize(
             true,
             BLOOM_CONFIG_BOOL("PickFromThree", "SubmitInPVE", true),
             pvpRequested,
             BLOOM_CONFIG_INT("PickFromThree", "PvpTimeoutMarginMs", 600),
             BLOOM_CONFIG_BOOL("PickFromThree", "ResolveServiceFromInjectionBinder", true),
-            BLOOM_CONFIG_BOOL("PickFromThree", "SyncLocalCompletionSignal", true))) {
+            BLOOM_CONFIG_BOOL("PickFromThree", "SyncLocalCompletionSignal", true),
+            BLOOM_CONFIG_BOOL("Pick3PrePlayTrace", "Enabled", false))) {
             LOG_ERR("CustomComponents/Pick3/SUBMIT: preflight failed; preserving probe-only behavior");
         }
         // Independently reversible lifecycle fixes. These switches permit
         // field testing without rewriting the source or touching the FSM.
         CustomComponents::Pick3::TargetButtonTrace::enableGuardedReconcile =
             BLOOM_CONFIG_BOOL("Pick3LifecycleRepair", "GuardedStockButtonRecovery", true);
-        CustomComponents::Presentation::PickFromThreePreviewSystem::enableInterruptionSuspend =
-            BLOOM_CONFIG_BOOL("Pick3LifecycleRepair", "SuspendInterruptedPick3", true);
-        CustomComponents::Presentation::PickFromThreePreviewSystem::enableHolderFallback =
-            BLOOM_CONFIG_BOOL("Pick3LifecycleRepair", "DriveFirstPickerFromHolder", true);
-        // Cold-start rebind was ineffective and could disturb stock command
-        // binding. Keep only the independently verified button repair.
-        LOG_INFO("CustomComponents/Pick3/LIFECYCLE_REPAIR: coldFirst=0 retiredRebind=1 buttonStock=%d suspend=%d",
-            CustomComponents::Pick3::TargetButtonTrace::enableGuardedReconcile?1:0,
-            CustomComponents::Presentation::PickFromThreePreviewSystem::enableInterruptionSuspend?1:0);
+        // Preserve stock targeting/button recovery; the legacy popup and its
+        // interruption/holder fallback settings no longer exist.
+        CustomComponents::Pick3::TargetButtonTrace::enableGuardedReconcile =
+            BLOOM_CONFIG_BOOL("Pick3LifecycleRepair", "GuardedStockButtonRecovery", true);
         // Optional read-only CardDatabase GUID-to-entity diagnostic.
         // Disabled unless explicitly requested; never alters stock effect execution.
-        if (BLOOM_CONFIG_BOOL("Pick3CreationTrace", "Enabled", false)) {
+        const bool creationTraceRequested = BLOOM_CONFIG_BOOL("Pick3CreationTrace", "Enabled", false);
+        if (creationTraceRequested) {
             if (!CustomComponents::Pick3::CreationTrace::Initialize())
                 LOG_ERR("CustomComponents/Pick3/CREATION_TRACE: requested but unavailable");
         }
-        STARTUP_BOUNDARY(9, "pick3-assets-ui-and-avatar-hooks");
-        if (candidateReady || BLOOM_CONFIG_BOOL("PickFromThreePreview", "Enabled", false)) {
+        // The optional CreationTrace already owns FindCard when enabled;
+        // never install 2 detours on the same IL2CPP method. With it disabled,
+        // this observer uses the same previously known stock FindCard boundary.
+        if (installSubmission && candidateReady) {
+            if (!CustomComponents::Pick3::ExactRouting::Initialize(!creationTraceRequested))
+                LOG_ERR("CustomComponents/Pick3/PATCH2_ROUTING: phase=HOOK_FAILURE finder unavailable; existing queries continue");
+        } else {
+            LOG_INFO("CustomComponents/Pick3/PATCH2_ROUTING: phase=DISABLED reason=NO_SUBMISSION_HOOKS legacyQuery=1");
+        }
+        STARTUP_BOUNDARY(9, "pick3-discover-ui");
+        if (candidateReady && BLOOM_CONFIG_BOOL("PickFromThreePresentation", "Enabled", true)) {
             using namespace CustomComponents::Presentation;
-            Pick3LocalAssetBundles::SetProbeMode(
-                BLOOM_CONFIG_INT("Pick3OwnedUnityFS", "ProbeMode", 1));
-            Pick3LocalAssetBundles::SetAssetIndexLimit(
-                BLOOM_CONFIG_INT("Pick3OwnedUnityFS", "MaxAssetIndex", 6));
-            Pick3LocalAssetBundles::SetTextureFallbackEnabled(
-                BLOOM_CONFIG_BOOL("Pick3OwnedUnityFS", "AllowTextureToSprite", false));
-            Pick3LocalAssetBundles::SetLoadNativeColorScheme(
-                BLOOM_CONFIG_BOOL("Pick3OwnedUnityFS", "LoadNativeColorScheme", false));
-            Pick3LocalAssetBundles::SetEnableSplitRim(
-                BLOOM_CONFIG_BOOL("Pick3OwnedUnityFS", "EnableSplitRim", true));
-            Pick3LocalAssetBundles::SetEnableButtonSlicing(
-                BLOOM_CONFIG_BOOL("Pick3OwnedUnityFS", "EnableButtonSlicing", false));
-            Pick3LocalAssetBundles::SetEnabled(
-                BLOOM_CONFIG_BOOL("Pick3OwnedUnityFS", "Enabled", false));
-            // Game-owned stock Sprite references. No LoadFromFile and no new
-            // Unity Sprite creation; disable the separate Pick3AssetTracer
-            // during this test because it hooks these same stock methods.
-            // Bloom may still contain the previous temporary standalone
-            // tracer. Never install two native hooks on the same stock methods.
-            const bool tracerActive = ::Bloom::FindModule("Pick3AssetTracer") &&
-                ::Bloom::ConfigBool("Pick3AssetTracer", "module", "enabled", true);
-            if (tracerActive)
-                LOG_ERR("CustomComponents/Pick3/STOCK_REGISTRY: TRACER_CONFLICT; disable Pick3AssetTracer to enable registry hooks");
-            Pick3GameOwnedAssetRegistry::Initialize(
-                !tracerActive && BLOOM_CONFIG_BOOL("Pick3GameOwnedAssets", "Enabled", true),
-                BLOOM_CONFIG_BOOL("Pick3GameOwnedAssets", "UseInPicker", true),
-                false);
-            Pick3CardMetadata::useTraitIcons = BLOOM_CONFIG_BOOL("Pick3GameOwnedAssets", "UseTraitIcons", true);
-            PickFromThreePreviewSystem::useStockClassRimTint = BLOOM_CONFIG_BOOL("Pick3GameOwnedAssets", "UseClassRims", true);
-            PickFromThreePreviewSystem::ConfigureStartupPrewarm(
-                false /* prewarm disabled: never create managed Unity assets at match start */,
-                BLOOM_CONFIG_INT("Pick3OwnedUnityFS", "PrewarmStartFrames", 180),
-                BLOOM_CONFIG_INT("Pick3OwnedUnityFS", "PrewarmStepFrames", 12),
-                BLOOM_CONFIG_INT("Pick3OwnedUnityFS", "PrewarmMatchFrames", 180),
-                false /* no match-start sprite creation */);
-            // Native art uses the same user setting as the factory pipeline.
-            // Callback receiver fields are declared in BNM metadata to match
-            // their native layout; keep the artwork factory functional.
-            constexpr int animationRequestedStage = 4;
-            PickFromThreePreviewSystem::ConfigureReferenceResolution(
-                BLOOM_CONFIG_INT("Pick3Screen", "ReferenceWidth", 720),
-                BLOOM_CONFIG_INT("Pick3Screen", "ReferenceHeight", 1280));
-            PickFromThreePreviewSystem::ConfigureLayout(
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "TopYPercent", 21),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "LowerYPercent", -24),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "SideGapPercent", 24),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "PortraitYPercent", 28),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "PortraitSizePercent", 104),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "NameBelowStatsPercent", 80),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "PlateBelowNamePercent", 28),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "ButtonBelowPlatePercent", 31),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "PlateWidthPercent", 136),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "PlateHeightPercent", 39),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "ButtonWidthPercent", 98),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "ButtonHeightPercent", 120),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "NameSizePercent", 140),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "StatSizePercent", 126),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "ButtonTextSizePercent", 108),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "ButtonTextYOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "BadgeSizePercent", 24),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "StatSpacingPercent", 13),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "StatsBelowPortraitPercent", 40));
-            PickFromThreePreviewSystem::ConfigureBadgeYOffsets(
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "AttackBadgeYOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3RewardLayout", "HealthBadgeYOffsetPercent", 0));
-            PickFromThreePreviewSystem::ConfigureStatText(
-                BLOOM_CONFIG_INT("Pick3StatText", "AttackSizePercent", 110),
-                BLOOM_CONFIG_INT("Pick3StatText", "HealthSizePercent", 110),
-                BLOOM_CONFIG_INT("Pick3StatText", "CostSizePercent", 110),
-                BLOOM_CONFIG_INT("Pick3StatText", "DescriptionSizePercent", 160),
-                BLOOM_CONFIG_INT("Pick3StatText", "AttackXOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3StatText", "AttackYOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3StatText", "HealthXOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3StatText", "HealthYOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3StatText", "CostXOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3StatText", "CostYOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3StatText", "DescriptionXOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3StatText", "DescriptionYOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3StatText", "AttackWidthPercent", 90),
-                BLOOM_CONFIG_INT("Pick3StatText", "HealthWidthPercent", 90),
-                BLOOM_CONFIG_INT("Pick3StatText", "CostWidthPercent", 90),
-                BLOOM_CONFIG_INT("Pick3StatText", "DescriptionWidthPercent", 93),
-                BLOOM_CONFIG_INT("Pick3StatText", "DescriptionHeightPercent", 87));
-            PickFromThreePreviewSystem::ConfigureNativeArtwork(
-                BLOOM_CONFIG_INT("Pick3NativeArtwork", "ViewSizePercent", 250),
-                BLOOM_CONFIG_INT("Pick3NativeArtwork", "EnvironmentViewSizePercent", 250),
-                BLOOM_CONFIG_INT("Pick3NativeArtwork", "EnvironmentYOffsetPercent", 0),
-                BLOOM_CONFIG_INT("Pick3NativeArtwork", "ViewHeightPercent", 100));
-            PickFromThreePreviewSystem::ConfigureDescription(
-                BLOOM_CONFIG_BOOL("Pick3Description", "AutoSizePlate", true),
-                BLOOM_CONFIG_INT("Pick3Description", "MinWidthPercent", 75),
-                BLOOM_CONFIG_INT("Pick3Description", "MaxWidthPercent", 155),
-                BLOOM_CONFIG_INT("Pick3Description", "MinHeightPercent", 25),
-                BLOOM_CONFIG_INT("Pick3Description", "MaxHeightPercent", 65),
-                BLOOM_CONFIG_INT("Pick3Description", "PaddingPercent", 8),
-                BLOOM_CONFIG_BOOL("Pick3Description", "AutoFitText", true));
-            PickFromThreePreviewSystem::ConfigureInspectionCircle(
-                BLOOM_CONFIG_BOOL("Pick3NativeClassArt", "CropTallSprites", true),
-                BLOOM_CONFIG_INT("Pick3NativeClassArt", "CircleCenterXPercent", 50),
-                BLOOM_CONFIG_INT("Pick3NativeClassArt", "CircleCenterYPercent", 68),
-                BLOOM_CONFIG_INT("Pick3NativeClassArt", "CircleWidthPercent", 33),
-                BLOOM_CONFIG_BOOL("Pick3NativeClassArt", "ShowReferenceFallback", true),
-                BLOOM_CONFIG_INT("Pick3NativeClassArt", "GrassSizePercent", 94));
-            PickFromThreePreviewSystem::ConfigureInspectionPrefabLoading(
-                BLOOM_CONFIG_BOOL("Pick3NativeClassArt", "RequestNativePrefabExperimental", false));
-            PickFromThreePreviewSystem::ConfigureTooltipStyle(
-                BLOOM_CONFIG_INT("Pick3InlineTooltip", "FontSizePercent", 100),
-                BLOOM_CONFIG_INT("Pick3InlineTooltip", "MaxWidthPercent", 64),
-                BLOOM_CONFIG_INT("Pick3InlineTooltip", "MaxHeightPercent", 17),
-                BLOOM_CONFIG_INT("Pick3InlineTooltip", "PopupMilliseconds", 120),
-                BLOOM_CONFIG_INT("Pick3InlineTooltip", "PopoutMilliseconds", 90));
-            PickFromThreePreviewSystem::ConfigureTargetingText(
+            PickFromThreeDiscoverPresentation::ConfigureTargetingText(
                 BLOOM_CONFIG_BOOL("Pick3TargetingText", "BehindCards", false),
                 BLOOM_CONFIG_INT("Pick3TargetingText", "PositionX", 0),
                 BLOOM_CONFIG_INT("Pick3TargetingText", "PositionY", 520),
-                BLOOM_CONFIG_INT("Pick3TargetingText", "FontSizePercent", 125));
-            Pick3NativeAvatarRender::ConfigureFraming(
-                BLOOM_CONFIG_INT("Pick3CardViewCamera", "ZoomPercent", 100),
-                BLOOM_CONFIG_INT("Pick3CardViewCamera", "PaddingPercent", 122),
-                BLOOM_CONFIG_INT("Pick3CardViewCamera", "MinOrthoHundredths", 20),
-                BLOOM_CONFIG_INT("Pick3CardViewCamera", "MaxOrthoHundredths", 1200),
-                BLOOM_CONFIG_INT("Pick3CardViewCamera", "OffsetXPercent", 0),
-                BLOOM_CONFIG_INT("Pick3CardViewCamera", "OffsetYPercent", 0),
-                BLOOM_CONFIG_BOOL("Pick3CardViewCamera", "UseDominantRenderer", true),
-                BLOOM_CONFIG_INT("Pick3CardViewCamera", "EnvironmentZoomPercent", 100),
-                BLOOM_CONFIG_INT("Pick3CardViewCamera", "EnvironmentCameraYOffsetPercent", 0),
-                BLOOM_CONFIG_BOOL("Pick3CardViewCamera", "UseStableInspectionFraming", true),
-                BLOOM_CONFIG_INT("Pick3CardViewCamera", "FighterBaselineOrthoHundredths", 700),
-                BLOOM_CONFIG_INT("Pick3CardViewCamera", "EnvironmentBaselineOrthoHundredths", 900),
-                BLOOM_CONFIG_INT("Pick3CardViewCamera", "OtherBaselineOrthoHundredths", 750),
-                BLOOM_CONFIG_INT("Pick3CardViewCamera", "SafetyOverscanPercent", 120));
-            // Experimental renderer only. Keep the budget conservative when
-            // explicitly enabled during isolated device verification.
-            Pick3NativeAvatarRender::ConfigureRenderCadence(
-                BLOOM_CONFIG_INT("Pick3Performance", "RenderEveryNTicks", 1));
-            Pick3NativeAvatarRender::ConfigureRenderBudgetFps(
-                BLOOM_CONFIG_INT("Pick3Performance", "GlobalRenderFpsCap", 75));
-            Pick3NativeAvatarRender::ConfigurePerCardFps(
-                BLOOM_CONFIG_INT("Pick3Performance", "FighterFps", 30),
-                BLOOM_CONFIG_INT("Pick3Performance", "EnvironmentFps", 24),
-                BLOOM_CONFIG_INT("Pick3Performance", "OtherFps", 24));
-            // Recovery baseline: use stock-tested native renderer framing.
-            // Camera placement tuning is temporarily disabled until stable.
-            constexpr bool isolateNativeAvatars = false;
-            // Keep the native APIs initialized, but the runtime diagnostic mode
-            // controls whether they are ever exercised when a popup opens.
-            const bool nativeAnimationAllowed = !isolateNativeAvatars &&
-                BLOOM_CONFIG_BOOL("Pick3Performance", "EnableNativeArtwork", true);
-            const int animationEffectiveStage = nativeAnimationAllowed ? animationRequestedStage : 1;
-            PickFromThreePreviewSystem::ConfigureAvatarExperiment(animationEffectiveStage, 1,
-                BLOOM_CONFIG_INT("Pick3Performance", "LoadSpacingFrames", 2));
-            LOG_INFO("CustomComponents/Pick3/AVATAR: native=%d stage=%d fpsCap=%d", nativeAnimationAllowed ? 1 : 0, animationEffectiveStage,
-                Pick3NativeAvatarRender::renderBudgetFps);
-            if (!CustomComponents::Presentation::PickFromThreePreviewSystem::Initialize(
-                true, BLOOM_CONFIG_BOOL("PickFromThreePreview", "ShowCloseButton", false),
-                BLOOM_CONFIG_INT("PickFromThreePreview", "CardId1", 114),
-                BLOOM_CONFIG_INT("PickFromThreePreview", "CardId2", 628),
-                BLOOM_CONFIG_INT("PickFromThreePreview", "CardId3", 684),
-                BLOOM_CONFIG_BOOL("PickFromThreePreview", "AsyncGameArt", true),
-                BLOOM_CONFIG_INT("PickFromThreePreview", "CardColor1", 4),
-                BLOOM_CONFIG_INT("PickFromThreePreview", "CardColor2", 32),
-                BLOOM_CONFIG_INT("PickFromThreePreview", "CardColor3", 128),
-                false,
-                BLOOM_CONFIG_BOOL("PickFromThreePreview", "ResolveInstances", false),
-                true, // capture game-owned services for real portraits
-                BLOOM_CONFIG_BOOL("PickFromThreePreview", "NativeSpriteCacheTest", false),
-                BLOOM_CONFIG_BOOL("PickFromThreePreview", "NativeSpriteCacheRequestArt", false),
-                candidateReady,
-                installSubmission && candidateReady && CustomComponents::Pick3::Submission::enabled,
-                BLOOM_CONFIG_INT("PickFromThreePreview", "PreloadMilliseconds", 700),
-                BLOOM_CONFIG_INT("PickFromThreePreview", "EntranceMilliseconds", 300),
-                BLOOM_CONFIG_BOOL("PickFromThreePreview", "MaskStockTargetUI", true),
-                BLOOM_CONFIG_INT("PickFromThreePreview", "PressFeedbackMilliseconds", 500),
-                BLOOM_CONFIG_INT("PickFromThreePreview", "ExitAnimationMilliseconds", 180),
-                false, // never resurrect legacy factory probe from stale config
-                nativeAnimationAllowed,
-                nativeAnimationAllowed && animationEffectiveStage >= 3)) {
-                LOG_ERR("CustomComponents: optional PickFromThree UI test unavailable");
+                BLOOM_CONFIG_INT("Pick3TargetingText", "FontSizePercent", 80),
+                BLOOM_CONFIG_INT("Pick3TargetingText", "MaxCharactersPerLine", 32));
+            CustomComponents::Pick3::Submission::preferStockCommandHandoff =
+                BLOOM_CONFIG_BOOL("PickFromThreePresentation", "StockCommandHandoff", true);
+            const bool presentationReady=PickFromThreeDiscoverPresentation::Initialize(
+                true,
+                BLOOM_CONFIG_BOOL("PickFromThreePresentation", "UseStockTargeting", false),
+                BLOOM_CONFIG_BOOL("PickFromThreePresentation", "MaskStockTargetUI", true));
+            LOG_INFO("CustomComponents/Pick3/RECEIVER1727: original board-drop and state-6 menu enabled; pre-Play return UI removed");
+            if(!presentationReady) {
+                LOG_ERR("CustomComponents/Pick3: Discover-style presentation unavailable; gameplay bridge preserved");
             }
-            PickFromThreePreviewSystem::ConfigureBattlefieldDimming(
-                BLOOM_CONFIG_INT("Pick3Overlay", "BattlefieldDarkeningPercent", 42));
-            PickFromThreePreviewSystem::ConfigureChoiceMotion(
-                BLOOM_CONFIG_INT("Pick3ChoiceMotion", "GlideMilliseconds", 400),
-                BLOOM_CONFIG_INT("Pick3ChoiceMotion", "GlideExponentHundredths", 350),
-                BLOOM_CONFIG_INT("Pick3ChoiceMotion", "CenterHoldMilliseconds", 70),
-                BLOOM_CONFIG_INT("Pick3ChoiceMotion", "FadeMilliseconds", 180),
-                BLOOM_CONFIG_INT("Pick3ChoiceMotion", "OtherCardsDismissMilliseconds", 240),
-                BLOOM_CONFIG_INT("Pick3ChoiceMotion", "LowerCardArcPercent", 5),
-                BLOOM_CONFIG_INT("Pick3ChoiceMotion", "PuffPercent", 31));
         }
 
         LOG_INFO("CustomComponents/STARTUP_DIAG: COMPLETED full startup");

@@ -227,7 +227,15 @@
         const QueueSnapshot before =
             (hasPendingReturn.load(std::memory_order_acquire) && cardId >= 0)
                 ? CaptureQueue(queue) : QueueSnapshot{};
-        originalResolver(self, effect, method);
+        {
+            namespace TX=CustomComponents::Pick3::Transaction;
+            namespace RT=CustomComponents::Pick3::TransactionRuntime;
+            const auto modelToken=RT::ModelOf(model);
+            auto selection=RT::TakeTriggerData(modelToken,data,effectEntity,sourceId,RT::ReadContext(context));
+            TX::Scoped selectionScope(selection,effectEntity,RT::IntAt(context,0x18));
+            if(selection) LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=LISTENER_EXECUTION_BOUND listener=%d seq=%llu",effectEntity,(unsigned long long)selection->sequence);
+            originalResolver(self, effect, method);
+        }
 
         if (!model || !queue || cardId < 0) return;
         std::lock_guard<std::mutex> lock(pendingMutex);

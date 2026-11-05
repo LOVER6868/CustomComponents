@@ -1,5 +1,6 @@
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
+#include "diagnostics/Pf3RepairTrace.hpp"
 // Step 2: opt-in READ-ONLY capture of stock eligibility for a ChooseTarget
 // blocking phase. No Play, SelectTargetEffect, TargetId or queue is modified.
 // The popup reports the chosen entity; it DOES NOT submit that choice to the
@@ -40,7 +41,7 @@ inline BNM::Field<int> blockingPlayerId; // Effect.PlayerId is the choosing play
 // real card entity IDs, not the board-lane recipients returned by stock finder.
 // This changes the PICKER OFFER only; the stock blocking effect and its legal
 // recipient list are never modified.
-inline std::vector<int> (*resolveValidatedInitialCardTargets)(int sourceCard) = nullptr;
+inline std::vector<int> (*resolveValidatedInitialCardTargets)(Obj* model, int sourceCard, int effectId) = nullptr;
 // Only active inside the synchronous stock SelectTargetService.Process of a
 // verified 712/713 live-card choice. Never used for initial Play generation,
 // popup offers, other PickFromThree cards, or foreign owner simulations.
@@ -243,6 +244,95 @@ inline bool HasCurrentModelOffer(int effectId,int groupId,Obj* model,int expecte
                (expectedOwner<0 || item.request.ownerPlayerId==expectedOwner);
     });
 }
+// The finder itself observed this model when it built the cached offer.
+// It is NOT a general live-model resolver: only return the model for the
+// exact effect/group currently shown by the stock targeting holder.
+// This fallback is for presentation only and must never be used to bypass
+// the stock service checks in Submit() or to edit revive effect targets.
+inline Obj* CachedModelForHolderChoice(int effectId, int groupId, int expectedOwner=-1) {
+    std::lock_guard<std::mutex> lock(snapshotMutex);
+    PruneExpiredPendingOffersLocked();
+    Obj* found=nullptr;
+    for (auto it=pendingOffers.rbegin(); it!=pendingOffers.rend(); ++it) {
+        if(it->request.effectEntityId!=effectId || it->request.effectGroupId!=groupId ||
+           (expectedOwner>=0 && it->request.ownerPlayerId!=expectedOwner) || !it->model)
+            continue;
+        if(found && found!=it->model) {
+#if CUSTOMCOMPONENTS_PF3_REPAIR_TRACE
+            static unsigned ambiguousSamples=0;
+            if (++ambiguousSamples<=48) {
+                PF3_REPAIR_TRACE("CustomComponents/Pick3/REPAIR175: MODEL_AMBIGUOUS sample=%u effect=%d group=%d owner=%d modelA=%p modelB=%p modeB=%d optionsB=%zu proxyB=%d sourceB=%d",
+                    ambiguousSamples,effectId,groupId,expectedOwner,(void*)found,(void*)it->model,
+                    int(it->request.mode),it->request.options.size(),it->databaseProxy,it->request.sourceCardGuid);
+                for (const auto& candidate : pendingOffers) if(candidate.request.effectEntityId==effectId && candidate.request.effectGroupId==groupId &&
+                    (expectedOwner<0 || candidate.request.ownerPlayerId==expectedOwner))
+                    PF3_REPAIR_TRACE("CustomComponents/Pick3/REPAIR175: MODEL_CANDIDATE model=%p owner=%d mode=%d options=%zu required=%d suspended=%d sourceGuid=%d",
+                        (void*)candidate.model,candidate.request.ownerPlayerId,int(candidate.request.mode),candidate.request.options.size(),candidate.request.requiredTargets,
+                        int(candidate.suspended),candidate.request.sourceCardGuid);
+            }
+#endif
+            LOG_INFO("CustomComponents/Pick3/DiscoverUI: OFFER_MODEL_AMBIGUOUS effect=%d group=%d owner=%d presentationDeferred=1",effectId,groupId,expectedOwner);
+            return nullptr;
+        }
+        found=it->model;
+    }
+    return found;
+}
+// PvE-only presentation recovery for a phase-transitioning stock holder.
+// The SelectTargetService finder can still reference an earlier prediction
+// while the real holder has advanced to the next blocking choice. Never
+// synthesize an offer, skip owner matching, or reuse an unvalidated model.
+// This returns a model only when there is exactly one live, self-consistent
+// cached offer for the holder's exact effect/group and local player.
+inline Obj* VerifiedCachedModelForActivePve(int effectId,int groupId,int owner) {
+    if(effectId<0 || groupId<0 || owner<0 || !getEntityById.IsValid() ||
+       !cardGuid.IsValid() || !entityModelClass.IsValid()) return nullptr;
+    std::lock_guard<std::mutex> lock(snapshotMutex);
+    PruneExpiredPendingOffersLocked();
+    Obj* found=nullptr;
+    auto newest=std::chrono::steady_clock::time_point::min();
+    const auto now=std::chrono::steady_clock::now();
+    for(const auto& offer:pendingOffers) {
+        if(offer.request.effectEntityId!=effectId ||
+           offer.request.effectGroupId!=groupId ||
+           offer.request.ownerPlayerId!=owner || !offer.model ||
+           !BNM::IsA(offer.model,entityModelClass) ||
+           offer.request.options.empty()) continue;
+        bool valid=false;
+        if(offer.request.mode==SelectionMode::CardDatabase) {
+            valid=ValidateAutomaticRecipient(offer.model,offer.databaseProxy);
+        } else {
+            valid=true;
+            for(const auto& option:offer.request.options) {
+                if(option.entityId<=0 || option.cardGuid<=0) {valid=false;break;}
+                Obj* entity=nullptr;
+                const auto lookup=BNM::TryInvoke([&]{entity=getEntityById[offer.model](option.entityId);});
+                if(lookup.IsValid() || !entity) {valid=false;break;}
+                int guid=-1;
+                const auto read=BNM::TryInvoke([&]{guid=cardGuid(entity);});
+                if(read.IsValid() || guid!=option.cardGuid) {valid=false;break;}
+            }
+        }
+        if(!valid) continue;
+        // A stale prediction from several seconds ago must not compete with
+        // the fresh finder call made during the holder's activation. Fail
+        // closed if two distinct models were produced in the same short
+        // activation window; their choice order may not agree.
+        const auto age=std::chrono::duration_cast<std::chrono::milliseconds>(now-offer.cachedAt).count();
+        if(age<0 || age>1500) continue;
+        if(found && found!=offer.model) {
+            const auto delta=std::chrono::duration_cast<std::chrono::milliseconds>(
+                offer.cachedAt>newest ? offer.cachedAt-newest : newest-offer.cachedAt).count();
+            if(delta<=200) {
+                LOG_WARN("CustomComponents/Pick3/PVE_START_TRICKS: phase=CACHED_AMBIGUOUS effect=%d group=%d owner=%d deltaMs=%lld failClosed=1",
+                    effectId,groupId,owner,static_cast<long long>(delta));
+                return nullptr;
+            }
+        }
+        if(!found || offer.cachedAt>newest) {found=offer.model;newest=offer.cachedAt;}
+    }
+    return found;
+}
 inline bool HasPendingOffer() {
     std::lock_guard<std::mutex> lock(snapshotMutex);
     PruneExpiredPendingOffersLocked();
@@ -291,6 +381,30 @@ inline bool PublishForActiveEffect(int effectId,int groupId,Obj* liveModel,int e
                    validOnLiveModel(item);
         });
         verifiedClone=it!=pendingOffers.end();
+        if (verifiedClone) {
+            const auto& selected=*it;
+            const auto samePayload=[&](const PendingOffer& other){
+                if(other.request.mode!=selected.request.mode ||
+                   other.request.requiredTargets!=selected.request.requiredTargets ||
+                   other.request.ownerPlayerId!=selected.request.ownerPlayerId ||
+                   other.request.options.size()!=selected.request.options.size() ||
+                   other.databaseProxy!=selected.databaseProxy) return false;
+                for(std::size_t i=0;i<other.request.options.size();++i)
+                    if(other.request.options[i].entityId!=selected.request.options[i].entityId ||
+                       other.request.options[i].cardGuid!=selected.request.options[i].cardGuid) return false;
+                return true;
+            };
+            for(auto other=std::next(it);other!=pendingOffers.end();++other) {
+                if(other->request.effectEntityId!=effectId || other->request.effectGroupId!=groupId ||
+                   (expectedOwnerPlayerId>=0 && other->request.ownerPlayerId!=expectedOwnerPlayerId) ||
+                   !validOnLiveModel(*other)) continue;
+                if(!samePayload(*other)) {
+                    PF3_REPAIR_TRACE("CustomComponents/Pick3/REPAIR175: CLONE_CONFLICT effect=%d group=%d liveModel=%p a=%p b=%p owner=%d failClosed=1",
+                        effectId,groupId,(void*)liveModel,(void*)selected.model,(void*)other->model,expectedOwnerPlayerId);
+                    return false;
+                }
+            }
+        }
     }
     if(it==pendingOffers.end()) {
         static int lastMissEffect=-1,lastMissGroup=-1;
@@ -549,6 +663,12 @@ static bool ShouldPrimaryHook(void* self, void* filter, void* candidates, const 
     selectionType[filter].Set(kManualValue);
     const bool value = originalShouldPrimary(self, filter, candidates, method);
     selectionType[filter].Set(originalValue);
+    // Do not bypass a stock blocking primary selection based solely on the
+    // primary-creator candidate list. The PickFromThree offer is resolved
+    // later with the live effect/group and its mode-specific eligible IDs.
+    // A one-option offer follows the SAME selection service as a manual one,
+    // without showing UGUI (see PreviewSystem::AUTO_SOLE). Otherwise the
+    // game can advance with an uncommitted primary or duplicate a submission.
     if (originalValue == EnumModes::kPickFromThreeCardDatabase) {
         const bool valid = numberOfTargets.IsValid() && numberOfTargets[filter].Get() == 1 &&
             additionalTargetType.IsValid() && additionalTargetType[filter].Get() == 1 &&
@@ -558,6 +678,20 @@ static bool ShouldPrimaryHook(void* self, void* filter, void* candidates, const 
         CC_DIAG("CustomComponents/Pick3/DB5: PRIMARY_PHASE stock=%d settingsValid=%d database=1",
                  value ? 1 : 0, valid ? 1 : 0);
         return valid; // No live Fruit target is needed to show database choices.
+    }
+    // Restore the stock one-target optimization.  The original game has
+    // already evaluated the primary candidates with SelectionType temporarily
+    // normalized to Manual above.  If it says a blocking selection is NOT
+    // needed, do not invent a blocking command for a single live target.
+    // The old FORCE_PHASE0 path stranded automatic revive/secondary-lane
+    // transactions when there was no real user choice to submit.
+    // Multi-target choices remain on the existing stock-owned UI path.
+    if (!value && EnumModes::IsLivePickFromThree(originalValue) && candidates) {
+        const auto* ids=reinterpret_cast<const List<int>*>(candidates);
+        if (ids->size==1 && ids->items && ids->items->m_Items[0]>=0) {
+            LOG_INFO("CustomComponents/Pick3/PICK3_AUTO_PRIMARY: action=STOCK_SOLE_OPTIMIZATION mode=%d candidate=%d stockDecision=0 noForcedPhase0=1",
+                     originalValue,ids->items->m_Items[0]);
+        }
     }
     CC_DIAG("CustomComponents/Pick3/STEP2: primary manual-block check=%d", value ? 1 : 0);
     return value;
@@ -570,6 +704,14 @@ static bool ShouldSecondaryHook(void* self, int primary, void* filter, void* can
     selectionType[filter].Set(kManualValue);
     const bool value = originalShouldSecondary(self, primary, filter, candidates, method);
     selectionType[filter].Set(originalValue);
+    // This is the game's own secondary-target optimization, not a synthetic
+    // target submission.  Record its decision so one-legal-lane failures can
+    // be distinguished from a retained phase-0 stock command.
+    const auto* ids=reinterpret_cast<const List<int>*>(candidates);
+    const int count=ids ? ids->size : -1;
+    if (count >= 0 && count <= 3)
+        LOG_INFO("CustomComponents/Pick3/PICK3_SECONDARY_STOCK_DECISION: mode=%d primary=%d candidates=%d manualRequired=%d nativeAutoCandidate=%d",
+                 originalValue,primary,count,int(value),int(count==1 && !value));
     return value;
 }
 
@@ -610,7 +752,18 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
     const int effectOwner = blockingPlayerId.IsValid()
         ? blockingPlayerId[blockingObject].Get() : -1;
     const int thisPlayer = LocalPlayerId();
-    if (effectOwner >= 0 && thisPlayer >= 0 && effectOwner != thisPlayer) {
+    // A received PickFromThree choice must validate its primary entity on
+    // both simulators. UI ownership must not gate the synchronous service
+    // validation bridge. It never creates an offer or a popup.
+    const auto* exactRecipient = activeValidationRecipient;
+    const bool serviceRecipientMatches = exactRecipient &&
+        exactRecipient->effect == effectId && exactRecipient->group == groupId &&
+        exactRecipient->owner == effectOwner && exactRecipient->sourceCard > 0 &&
+        exactRecipient->chosen > 0 &&
+        std::find(exactRecipient->validated.begin(), exactRecipient->validated.end(),
+                  exactRecipient->chosen) != exactRecipient->validated.end();
+    if (effectOwner >= 0 && thisPlayer >= 0 && effectOwner != thisPlayer &&
+        !serviceRecipientMatches) {
         static int lastLoggedEffect = -1, lastLoggedGroup = -1;
         if (lastLoggedEffect != effectId || lastLoggedGroup != groupId) {
             lastLoggedEffect = effectId; lastLoggedGroup = groupId;
@@ -676,13 +829,13 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
             (ownershipPhase != OwnershipPhase::Idle &&
              ownerEffect == effectId && ownerGroup == groupId);
     }
-    if (previouslyOffered) {
+    if (previouslyOffered || serviceRecipientMatches) {
         // Preserve stock behavior unless this exact pending SelectTargetService
         // dispatch was verified by the caller. The initial effect validator's
         // card list is the source of truth; do not substitute arbitrary cards.
         const auto* bridge = activeValidationRecipient;
         if (bridge && bridge->effect == effectId && bridge->group == groupId &&
-            bridge->owner == effectOwner && bridge->owner == thisPlayer &&
+            bridge->owner == effectOwner && bridge->sourceCard > 0 &&
             std::find(bridge->validated.begin(), bridge->validated.end(), bridge->chosen) != bridge->validated.end()) {
             LOG_INFO("CustomComponents/Pick3/STOCK_VALIDATION_BRIDGE: FIND_ENTER effect=%d group=%d owner=%d chosen=%d validated=%zu",effectId,groupId,effectOwner,bridge->chosen,bridge->validated.size());
             Obj* result = originalFindValid(self, blocking, method);
@@ -752,6 +905,16 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
         !EnumModes::IsPickFromThree(selectionType[filter].Get()))
         return originalFindValid(self, blocking, method);
     const int jsonSelectionType = selectionType[filter].Get();
+    // Last-mile evidence for initial-play integration: the selection finder is
+    // model-bound, but its target list is a later stock result and cannot be
+    // retroactively used as the initial validator's verified primary IDs.
+    // Only sample live selections; do not touch a pooled target collection.
+    static thread_local unsigned pairContextSamples = 0;
+    if (++pairContextSamples <= 48) {
+        Obj* primaryQuery = targetFilterQuery.IsValid() ? targetFilterQuery[filter].Get() : nullptr;
+        LOG_INFO("CustomComponents/Pick3/PICK3_PAIR_CONTEXT: phase=SELECTION_FINDER effect=%d group=%d owner=%d local=%d model=%p finder=%p primaryFilter=%p primaryQuery=%p selectionType=%d primaryIds=not-captured secondaryPairs=not-proven stockUnchanged=1",
+                 effectId,groupId,effectOwner,thisPlayer,(void*)model,(void*)finderObject,(void*)filter,(void*)primaryQuery,jsonSelectionType);
+    }
     const SelectionMode jsonMode = EnumModes::Resolve(jsonSelectionType, SelectionMode::RandomTargets);
     Obj* databaseQuery = nullptr;
     if (jsonMode == SelectionMode::CardDatabase) {
@@ -900,7 +1063,7 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
     if (jsonMode == SelectionMode::UniqueGuidTargets &&
         (sourceGuid==712 || sourceGuid==713) &&
         resolveValidatedInitialCardTargets) {
-        auto ids = resolveValidatedInitialCardTargets(sourceCard);
+        auto ids = resolveValidatedInitialCardTargets(model, sourceCard, effectId);
         for (const int id : ids) {
             if (id < 0) continue;
             Obj* entity=nullptr;
@@ -1137,6 +1300,9 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
     if (request.options.size() < static_cast<std::size_t>(required)) {
         LOG_ERR("CustomComponents/Pick3/STEP2: insufficient offered targets required=%d actual=%zu effect=%d",
                 required, request.options.size(), effectId);
+        // Read-only evidence needed to distinguish empty discard piles from
+        // filters dropping eligible candidates. Do not manufacture targets.
+        LOG_INFO("CustomComponents/Pick3/UNEARCH_OFFER_AUDIT: effect=%d group=%d required=%d sourceCandidates=%zu resolved=%zu offered=%zu mode=%d owner=%d",effectId,groupId,required,static_cast<std::size_t>(source->size),candidates.size(),request.options.size(),static_cast<int>(jsonMode),effectOwner);
         if (jsonMode == SelectionMode::CardDatabase)
             CancelDatabaseOverride(effectId, groupId, "insufficient-options");
         return result;
@@ -1185,6 +1351,17 @@ inline bool HasAutomaticDatabaseRecipientPhase() {
 inline int ActiveOwnerPlayerId() {
     std::lock_guard<std::mutex> lock(snapshotMutex);
     return latestOwnerPlayerId;
+}
+// Presentation activation can observe a stock-Manual filter (1) because we
+// temporarily normalized an exact PF3 (3/4/5) for the *current* transaction.
+// This proof is effect/group scoped. Never treat arbitrary stock Manual as PF3.
+inline bool HasNormalizedActiveChoice(int effect, int group) {
+    std::lock_guard<std::mutex> lock(snapshotMutex);
+    return std::any_of(runtimeOverrides.begin(),runtimeOverrides.end(),
+        [=](const RuntimeManualOverride& entry) {
+            return entry.effectId==effect && entry.groupId==group &&
+                   entry.filterHandle!=0;
+        });
 }
 inline bool HasQueuedChoice() {
     std::lock_guard<std::mutex> lock(snapshotMutex);

@@ -17,6 +17,7 @@
 
 #include "core/CardViewLifecycleCoordinator.hpp"
 #include "core/SceneViewContext.hpp"
+#include "presentation/detail/Pick3VisualQueueGate.hpp"
 #include "log.h"
 
 // Development traces are opt-in. Keep error reporting and the final
@@ -80,6 +81,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
     inline BNM::Field<Obj*> commandAnimationQueue;
     inline BNM::Field<Obj*> queueAnimations;
     inline BNM::Field<Obj*> queueFrontAnimations;
+    inline BNM::Method<bool> visualQueueCanYield;
     inline BNM::Field<bool> effectIsStarted;
     inline BNM::Field<bool> effectIsCancelled;
     inline std::uint64_t lifecycleQueueUpdates = 0;
@@ -191,6 +193,11 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
     inline LifecycleVoidFn originalCheckForCompletion = nullptr;
     inline LifecycleVoidFn originalQueueUpdate = nullptr;
     inline LifecycleBoolFn originalQueueIsEmpty = nullptr;
+    inline LifecycleBoolFn originalQueueCanYield = nullptr;
+    using QueueAnimationFn = void (*)(void*, Obj*, const void*);
+    inline QueueAnimationFn originalQueueAddAnimation = nullptr;
+    inline QueueAnimationFn originalQueueAddFrontAnimation = nullptr;
+    inline QueueAnimationFn originalQueueStartAnimation = nullptr;
     inline LifecycleBoolFn originalTriggeredCanYield = nullptr;
 
 
@@ -1208,8 +1215,13 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
         nullEffectAnimationCtor = nullEffectAnimationClass.GetMethod(".ctor", 0).cast<void>();
 
         auto checkForCompletion = timelineAnimation.GetMethod("CheckForCompletion", 0);
+        auto queueAddAnimation = animationQueue.GetMethod("AddAnimation", 1);
+        auto queueAddFrontAnimation = animationQueue.GetMethod("AddAnimationToFrontOfQueue", 1);
+        auto queueStartAnimation = animationQueue.GetMethod("StartAnimation", 1);
         auto queueUpdate = animationQueue.GetMethod("Update", 0);
         auto queueIsEmpty = animationQueue.GetMethod("IsEmpty", 0);
+        auto queueCanYield = animationQueue.GetMethod("CanYield", 0);
+        visualQueueCanYield = animationQueue.GetMethod("CanYield", 0).cast<bool>();
         auto triggeredCanYield = triggeredAbilityAnimation.GetMethod("CanYield", 0);
 
 
@@ -1530,8 +1542,21 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
         }
 
         BNM::BasicHook(checkForCompletion, CheckForCompletionHook, originalCheckForCompletion);
+        if (queueAddAnimation.IsValid())
+            BNM::BasicHook(queueAddAnimation, QueueAddAnimationHook, originalQueueAddAnimation);
+        if (queueAddFrontAnimation.IsValid())
+            BNM::BasicHook(queueAddFrontAnimation, QueueAddFrontAnimationHook, originalQueueAddFrontAnimation);
+        if (queueStartAnimation.IsValid())
+            BNM::BasicHook(queueStartAnimation, QueueStartAnimationHook, originalQueueStartAnimation);
+        LOG_INFO("CustomComponents/Pick3/ANIMATION_LIFECYCLE: hooks add=%d front=%d start=%d",
+            originalQueueAddAnimation != nullptr, originalQueueAddFrontAnimation != nullptr,
+            originalQueueStartAnimation != nullptr);
         BNM::BasicHook(queueUpdate, QueueUpdateHook, originalQueueUpdate);
         BNM::BasicHook(queueIsEmpty, QueueIsEmptyHook, originalQueueIsEmpty);
+        // Optional passive observer: stock calls original; never initiate CanYield.
+        if (queueCanYield.IsValid())
+            BNM::BasicHook(queueCanYield, QueueCanYieldHook, originalQueueCanYield);
+        LOG_INFO("CustomComponents/Pick3/PASSIVE_VISUAL: canYieldHook=%d", originalQueueCanYield ? 1 : 0);
         BNM::BasicHook(triggeredCanYield, TriggeredCanYieldHook, originalTriggeredCanYield);
         if (!originalCheckForCompletion || !originalQueueUpdate ||
             !originalQueueIsEmpty || !originalTriggeredCanYield) {

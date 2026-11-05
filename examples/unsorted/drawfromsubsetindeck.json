@@ -1,0 +1,13 @@
+{
+  "$type" : "PvZCards.Engine.Components.DrawCardFromSubsetInDeckEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data" : {
+    "SubsetQuery" : {
+      "$type" : "PvZCards.Engine.Queries.SubsetQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+      "$data" : {
+        "Subset" : "YOUR_SUBSET_ID"
+      }
+    },
+    "DrawAmount" : 1,
+    "PluckFailSafe" : false
+  }
+}

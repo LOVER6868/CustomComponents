@@ -187,7 +187,7 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
             isFighter.IsValid() && isEnvironment.IsValid() && faction.IsValid() &&
             prefabName.IsValid() && baseId.IsValid();
         localizationReady = localizedMediatorClass.IsValid() && localizationClass.IsValid() &&
-            localizationInMediator.IsValid() && findAll.IsValid() && nameKey.IsValid() &&
+            localizationInMediator.IsValid() && nameKey.IsValid() &&
             descriptionKey.IsValid() && hasKey.IsValid() && translate.IsValid();
         CC_DIAG("CustomComponents/Pick3/DATA: SETUP cardData=%d localization=%d",
                  dataReady ? 1 : 0, localizationReady ? 1 : 0);
@@ -196,22 +196,74 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
                  healthIconDecider.IsValid() ? 1 : 0, useTraitIcons?1:0);
     }
 
-    inline Obj* FindLocalizationMapper() {
-        if (!localizationReady) return nullptr;
-        ObjectArray* mediators = nullptr;
-        const auto ex = BNM::TryInvoke([&] {
-            mediators = findAll(localizedMediatorClass.GetMonoType());
-        });
-        if (ex.IsValid() || !mediators) return nullptr;
-        // Do not keep scene-owned mediator pointers across scene changes.
-        const auto count = mediators->GetCapacity();
-        for (BNM::IL2CPP::il2cpp_array_size_t i = 0; i < count; ++i) {
-            Obj* mediator = mediators->m_Items[i];
-            if (!mediator || !BNM::IsA(mediator, localizedMediatorClass)) continue;
-            Obj* mapper = localizationInMediator[mediator].Get();
-            if (mapper && BNM::IsA(mapper, localizationClass)) return mapper;
+    // Patch 1.7.3: capture the injected mapper after the game's OnRegister.
+    // The adjacent set_LocalizationMapper is only 8 ARM64 bytes long:
+    //     0x1EC4A70 .. 0x1EC4A77
+    // OnRegister starts at 0x1EC4A78. Dobby's default (non-near) arm64
+    // trampoline needs 12 or 16 bytes, so inline-hooking the setter
+    // overwrote OnRegister's prologue before its own detour was installed.
+    // Never inline-hook this eight-byte setter. OnRegister already exposes
+    // the game-injected LocalizationMapper field after stock registration.
+    using MediatorRegisterFn = void (*)(Obj*, const void*);
+    inline MediatorRegisterFn originalMediatorOnRegister = nullptr;
+    inline Obj* capturedLocalizationMapper = nullptr;
+    inline uintptr_t capturedLocalizationHandle = 0;
+    inline uintptr_t (*localizationPin)(Obj*, bool) = nullptr;
+    inline void (*localizationUnpin)(uintptr_t) = nullptr;
+    inline unsigned localizationVersion = 0;
+    inline void CaptureInjectedLocalizationMapper(Obj* mapper) {
+        if (!mapper || !localizationPin || !localizationUnpin) return;
+        if (mapper == capturedLocalizationMapper) return;
+        uintptr_t next = localizationPin(mapper, false);
+        if (!next) return;
+        if (capturedLocalizationHandle) localizationUnpin(capturedLocalizationHandle);
+        capturedLocalizationHandle = next;
+        capturedLocalizationMapper = mapper;
+        ++localizationVersion;
+        LOG_INFO("CustomComponents/Pick3/LOCALIZATION_CAPTURE: source=stock_mediator version=%u", localizationVersion);
+    }
+    inline void MediatorOnRegisterCapture(Obj* self, const void* method) {
+        // The original game registration MUST run exactly once; a recursion
+        // guard that returns early can leave the injected view uninitialized.
+        if (originalMediatorOnRegister)
+            originalMediatorOnRegister(self, method);
+        if (self && localizationInMediator.IsValid()) {
+            Obj* mapper = localizationInMediator[self].Get();
+            if (mapper) CaptureInjectedLocalizationMapper(mapper);
         }
-        return nullptr;
+    }
+    inline bool InstallLocalizationCapture(uintptr_t (*pin)(Obj*,bool), void (*unpin)(uintptr_t)) {
+        localizationPin = pin;
+        localizationUnpin = unpin;
+        if (!localizationReady || !pin || !unpin || !localizedMediatorClass.IsValid()) return false;
+        if (!originalMediatorOnRegister) {
+            const auto onRegister = localizedMediatorClass.GetMethod("OnRegister", 0);
+            const auto* info = onRegister.IsValid() ? onRegister.GetInfo() : nullptr;
+            if (info && info->parameters_count == 0 && info->methodPointer) {
+                // Unlike BNM's BasicHook wrapper, check the actual Dobby status.
+                void* trampoline = nullptr;
+                const int status = DobbyHook(reinterpret_cast<void*>(info->methodPointer),
+                                             reinterpret_cast<void*>(&MediatorOnRegisterCapture),
+                                             &trampoline);
+                if (status == 0 && trampoline &&
+                    trampoline != reinterpret_cast<void*>(&MediatorOnRegisterCapture)) {
+                    originalMediatorOnRegister = reinterpret_cast<MediatorRegisterFn>(trampoline);
+                    LOG_INFO("CustomComponents/Pick3/LOCALIZATION_CAPTURE: ON_REGISTER_HOOK_OK target=%p trampoline=%p",
+                             reinterpret_cast<void*>(info->methodPointer), trampoline);
+                } else {
+                    LOG_ERR("CustomComponents/Pick3/LOCALIZATION_CAPTURE: ON_REGISTER_HOOK_FAILED status=%d target=%p trampoline=%p",
+                            status, reinterpret_cast<void*>(info->methodPointer), trampoline);
+                    return false;
+                }
+            }
+        }
+        LOG_INFO("CustomComponents/Pick3/LOCALIZATION_CAPTURE: hooks setter=0 register=%d noSceneScan=1 setterInlineUnsafe=1",
+                 originalMediatorOnRegister ? 1 : 0);
+        return originalMediatorOnRegister != nullptr;
+    }
+    inline Obj* FindLocalizationMapper() {
+        // No FindObjectsOfTypeAll, no transient scene-owned mediator pointers.
+        return localizationReady && capturedLocalizationHandle ? capturedLocalizationMapper : nullptr;
     }
 
     inline bool TryTranslate(Obj* mapper, const std::string& asset, bool forName,

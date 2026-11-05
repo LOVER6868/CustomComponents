@@ -1,6 +1,6 @@
 # Feature status
 
-This is a **scope summary**, not a claim of universal regression coverage. Implementation details live in [architecture](../ARCHITECTURE.md) and source under `inc/`.
+This is a **scope summary**, not a claim of universal regression coverage. Implementation details live in [source layout](SOURCE_LAYOUT.md) and source under `inc/`.
 
 | Area | Implemented behavior | Important qualification |
 | --- | --- | --- |

@@ -17,6 +17,7 @@
 #include "core/CustomFieldBridgeSystem.hpp"
 #include "presentation/ZoneTriggeredAbilityPresentationSystem.hpp"
 #include "log.h"
+#include "pick3/SelectionTransactionRuntime.hpp"
 
 namespace CustomComponents::Systems::DiscardedSystem {
 

@@ -18,7 +18,10 @@
     inline Obj* FindComponent(Obj* entity, const char* name) {
         if (!entity)
             return nullptr;
-        for (auto* component : Items(entityComponents[entity].Get())) {
+        auto* components=entityComponents[entity].Get();
+        if(!components || !components->items || components->size<0 || components->size>int(components->items->capacity)) return nullptr;
+        for(int i=0;i<components->size;++i) {
+            auto* component=components->items->m_Items[i];
             if (TypeName(component) == name)
                 return component;
         }
@@ -29,7 +32,10 @@
     inline Obj* FindEntity(Obj* model, int id) {
         if (!model || id < 0)
             return nullptr;
-        for (auto* entity : Items(modelEntities[model].Get())) {
+        auto* entities=modelEntities[model].Get();
+        if(!entities || !entities->items || entities->size<0 || entities->size>int(entities->items->capacity)) return nullptr;
+        for(int i=0;i<entities->size;++i) {
+            auto* entity=entities->items->m_Items[i];
             if (entity && entityId[entity].Get() == id)
                 return entity;
         }

@@ -20,6 +20,7 @@
 #include "core/CustomComponentRegistry.hpp"
 #include "core/CustomFieldBridgeSystem.hpp"
 #include "log.h"
+#include "effects/detail/PhysicalDeckSelection.hpp"
 
 namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem {
 
@@ -40,10 +41,10 @@ namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem {
 
     inline BNM::Field<int> effectSource;
     inline BNM::Field<int> effectPlayer;
-    inline BNM::Field<int> effectGroup;
+    inline BNM::Field<int> effectGroup, effectDefinition;
 
     inline BNM::Field<int> customDrawAmount;
-    inline BNM::Field<bool> descriptorFailSafe;
+    inline BNM::Field<bool> descriptorFailSafe, descriptorEntityQuery;
 
     inline BNM::Field<MonoList<Obj*>*> modelEntities;
     inline BNM::Field<MonoList<Obj*>*> entityComponents;
@@ -123,14 +124,17 @@ namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem {
         int sourceId = -1;
         int playerId = -1;
         int effectGroupId = -1;
+        int effectEntityId = -1;
         int remaining = 0;
         bool pluckFailSafe = false;
+        bool entityQuery = false;
     };
 
     inline thread_local std::vector<PendingDraw> pendingDraws;
     // Stock runtime objects produced by our custom descriptor carry their
     // per-effect PluckFailSafe policy here until DrawCardAbilitySystem processes them.
     inline thread_local std::unordered_map<Obj*, bool> failSafeByAbilityEffect;
+    inline thread_local std::unordered_map<Obj*, bool> entityQueryByAbilityEffect;
 
 
 
@@ -236,7 +240,8 @@ namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem {
                 "PvZCards.Engine.Components",
                 "DrawCardFromSubsetEffectDescriptor",
                 {
-                    {"PluckFailSafe", CustomFieldBridgeSystem::FieldKind::Bool}
+                    {"PluckFailSafe", CustomFieldBridgeSystem::FieldKind::Bool},
+                    {"SubsetQueryUsesEntities", CustomFieldBridgeSystem::FieldKind::Bool}
                 },
                 false)) {
             LOG_ERR(
@@ -311,8 +316,10 @@ namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem {
         effectSource = effect.GetField("SourceId");
         effectPlayer = effect.GetField("PlayerId");
         effectGroup = effect.GetField("EffectGroupId");
+        effectDefinition = effect.GetField("EffectEntityId");
         customDrawAmount = stockRuntime.GetField("DrawAmount");
         descriptorFailSafe = customDescriptor.GetField("PluckFailSafe");
+        descriptorEntityQuery = customDescriptor.GetField("SubsetQueryUsesEntities");
 
         modelEntities = model.GetField("Entities");
         entityComponents = entity.GetField("Components");
@@ -363,7 +370,7 @@ namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem {
 
         if (!effectSource.IsValid() || !effectPlayer.IsValid() ||
             !effectGroup.IsValid() || !customDrawAmount.IsValid() ||
-            !descriptorFailSafe.IsValid() || !modelEntities.IsValid() ||
+            !effectDefinition.IsValid() || !descriptorFailSafe.IsValid() || !descriptorEntityQuery.IsValid() || !modelEntities.IsValid() ||
             !entityComponents.IsValid() || !entityId.IsValid() ||
             !subsetSystemModel.IsValid() || !subsetSystemFinder.IsValid() ||
             !abilitySystemModel.IsValid() || !subsetHandId.IsValid() ||

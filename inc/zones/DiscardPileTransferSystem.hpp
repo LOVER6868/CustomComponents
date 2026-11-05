@@ -23,6 +23,7 @@
 #include "core/CardViewLifecycleCoordinator.hpp"
 #include "core/SceneViewContext.hpp"
 #include "zones/DeckMaterializer.hpp"
+#include "zones/ReturnToLanePolicy.hpp"
 #include "diagnostics/DiagnosticLogging.hpp"
 #include "log.h"
 
@@ -93,6 +94,10 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
     inline BNM::Field<Obj*> moveLaneSystemModifier;
     inline BNM::Field<Obj*> moveLaneSystemHistory;
     inline BNM::Method<void> lanePlayCard;
+    inline BNM::Class environmentPlacerClass;
+    inline BNM::Method<void> environmentPlacerCtor, environmentPlaceCard;
+    inline BNM::Field<int> laneEnvironmentId;
+    inline BNM::Method<void> createEnvironmentRecordSetCard;
 
     // Stock LaneModifier, Lane, and LaneElement dependencies used by preflight.
     inline BNM::Field<Obj*> laneModifierModel;
@@ -137,12 +142,6 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
     inline ProcessEffectFn originalMoveLaneProcessEffect = nullptr;
     inline ProcessEffectFn originalMoveToDiscardProcessEffect = nullptr;
 
-    // Transfer bypass flag for diagnostic preflight. Change only after the
-    // underlying stock dependencies and full transfer path have been verified.
-    // When 1, matched custom lane effects are intentionally not executed.
-    inline constexpr bool kBypassCustomLaneTransferPendingVerification = true;
-
-
     template<typename T>
     #include "zones/detail/DiscardTransferHelpers.inl"
     #include "zones/detail/LegacyReturnDescriptorHook.inl"
@@ -150,11 +149,17 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
     #include "zones/detail/DiscardHandZoneHelpers.inl"
     #include "zones/detail/LegacyReturnProcessHook.inl"
     #include "zones/detail/DiscardToDeck.inl"
+    #include "zones/detail/DiscardRevivePairLegality.inl"
     #include "zones/detail/DiscardToLane.inl"
     #include "zones/detail/HandToDiscard.inl"
     // =====================================================================
     // Registration / hooks
     // =====================================================================
+
+    // Read-only callback for initial PickFromThree casting feasibility.
+    inline bool Pick3CanRevivePhysicalPair(Obj* model, int card, int lane, int player) {
+        return CheckDiscardRevivePair(model, card, lane, player).legal;
+    }
 
     inline bool RegisterTypes() {
         struct Registration {
@@ -426,6 +431,16 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
         laneElementIds = laneElementClass.GetField("LaneIds");
         laneGetNumFightersForPlayer = laneComponentClass.GetMethod("GetNumFightersForPlayer", 1).cast<int>();
         laneGetNumTotalFighters = laneComponentClass.GetMethod("GetNumTotalFighters", 0).cast<int>();
+        environmentPlacerClass = BNM::Class("PvZCards.Core.Systems.Utilities", "EnvironmentPlacer");
+        environmentPlacerCtor = environmentPlacerClass.GetMethod(".ctor", 1).cast<void>();
+        const auto intType=BNM::Class("System", "Int32").GetCompileTimeClass();
+        environmentPlaceCard = environmentPlacerClass.GetMethod("PlaceEnvironmentInLane", {intType,intType}).cast<void>();
+        laneEnvironmentId = laneComponentClass.GetField("EnvironmentId").cast<int>();
+        createEnvironmentRecordSetCard = BNM::Class("PvZCards.Engine.Records", "CreateEnvironmentInLaneRecord")
+            .GetMethod("set_Card", 1).cast<void>();
+        LOG_INFO("CustomComponents/ReturnToLane: environmentReady=%d",
+            int(environmentPlacerClass.IsValid() && environmentPlacerCtor.IsValid() &&
+                environmentPlaceCard.IsValid() && laneEnvironmentId.IsValid() && createEnvironmentRecordSetCard.IsValid()));
         lanePlayCard = laneModifier.GetMethod(
             "PlayCardInLane",
             {BNM::Class("System", "Int32").GetCompileTimeClass(),

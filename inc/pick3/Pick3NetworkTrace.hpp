@@ -12,6 +12,9 @@
 #include <BNM/Field.hpp>
 #include <BNM/BasicMonoStructures.hpp>
 #include "log.h"
+#include "pick3/PickedFromThreeSelection.hpp"
+#include "pick3/SelectionTransactionRuntime.hpp"
+#include "pick3/Patch2ProvenanceObservation.hpp"
 
 namespace CustomComponents::Pick3::NetworkTrace {
 using Obj = BNM::IL2CPP::Il2CppObject;
@@ -45,8 +48,14 @@ inline int (*originalConnectorSendHandlers)(Obj*, Obj*, Obj*, Obj*, Obj*, const 
 inline void (*originalPostSuccess)(Obj*, const void*) = nullptr;
 inline BNM::Field<int> postRequestIdField;
 inline Obj* (*originalQueueDoShift)(Obj*, const void*) = nullptr;
+inline void (*originalQueuePushOne)(Obj*, Obj*, int, Obj*, const void*) = nullptr;
+inline BNM::Class queueChooseClass;
+inline BNM::Field<int> queueChoosePhase, queueTargetId, queueSecondaryId;
 inline void (*originalCompleteEffect)(Obj*, Obj*, const void*) = nullptr;
 inline void (*originalProcessEffects)(Obj*, Obj*, const void*) = nullptr;
+inline void (*originalCreateEffectsForTargets)(Obj*, Obj*, Obj*, const void*) = nullptr;
+inline BNM::Field<int> selectTargetSourceField;
+inline BNM::Field<int> selectTargetEntityIdField;
 inline BNM::Class queueClass;
 inline BNM::Field<BNM::Structures::Mono::List<Obj*>*> queueEffects, queueResponses, queueGroupResponses;
 inline BNM::Field<int> queueCurrentGroup;
@@ -417,14 +426,73 @@ inline void QueueStage(const char* stage, Obj* q, QueueView v, QueueView before 
         v.effects,v.responses,v.groupResponses,v.firstEntity,v.firstGroup,
         v.matchingList,v.matchingIndex,before.effects,before.matchingList,before.matchingIndex);
 }
+// Queue lifecycle audit, enabled with the existing net trace switch (mode 3).
+// PushEffectToList is called before stock installs the final group ID.
+// Never retain an effect pointer or a pooled collection past this callback.
+inline bool IsSecondaryChoice(Obj* effect) {
+    return effect && queueChooseClass.IsValid() &&
+        BNM::IsA(effect, queueChooseClass) && queueChoosePhase.IsValid() &&
+        queueChoosePhase[effect].Get() == 1;
+}
+inline void LogSecondaryLifecycle(const char* phase, Obj* queue, Obj* effect,
+                                 int suppliedGroup, Obj* destination) {
+    if (Mode() != 3 || !IsSecondaryChoice(effect)) return;
+    const int entity = effectEntityField.IsValid() ? effectEntityField[effect].Get() : -1;
+    const int group = effectGroupField.IsValid() ? effectGroupField[effect].Get() : -1;
+    const int primary = queueTargetId.IsValid() ? queueTargetId[effect].Get() : -2;
+    const int secondary = queueSecondaryId.IsValid() ? queueSecondaryId[effect].Get() : -2;
+    LOG_INFO("CustomComponents/Pick3/PICK3_REVIVE_QUEUE_LIFECYCLE: phase=%s queue=%p choice=%p effect=%d group=%d suppliedGroup=%d primary=%d secondary=%d dest=%p stage=1 stockUnchanged=1",
+             phase, static_cast<void*>(queue), static_cast<void*>(effect),
+             entity, group, suppliedGroup, primary, secondary, static_cast<void*>(destination));
+}
+inline void ObserveQueueIdentity(const char* boundary, Obj* effect, int suppliedGroup);
+static void QueuePushOne(Obj* self, Obj* effect, int group, Obj* list, const void* method) {
+    // The insertion callback observes real stock group assignment, not a guessed
+    // relationship to the primary selection's group.
+    const bool log = Mode() == 3 && IsSecondaryChoice(effect);
+    if (log) LogSecondaryLifecycle("PUSH_ENTER", self, effect, group, list);
+    if (originalQueuePushOne) originalQueuePushOne(self, effect, group, list, method);
+    if (log) LogSecondaryLifecycle("PUSH_EXIT", self, effect, group, list);
+    CustomComponents::Pick3::TransactionRuntime::AttachInsertedEffect(effect);
+    ObserveQueueIdentity("QUEUE_PUSH_AFTER",effect,group);
+}
+// Correlate real queue-front effect state at the stock processing/completion
+// boundary. The queue owns the pointer during these synchronous callbacks.
+// This trace does not attempt to distinguish custom descriptor identity from
+// a stock MoveCardToLanesEffect; correlate effect/group with RUNTIME_CREATED.
+inline void TraceFrontEffect(const char* phase, Obj* queue) {
+    if (Mode() != 3 || !queue || !queueClass.IsValid() ||
+        !BNM::IsA(queue, queueClass) || !queueEffects.IsValid()) return;
+    auto* list = queueEffects[queue].Get();
+    if (!list || list->size <= 0 || !list->items ||
+        list->items->capacity <= 0) return;
+    Obj* effect = list->items->m_Items[0];
+    if (!effect || !effectEntityField.IsValid() || !effectGroupField.IsValid()) return;
+    const int entity = effectEntityField[effect].Get();
+    const int group = effectGroupField[effect].Get();
+    const int primary = queueTargetId.IsValid() ? queueTargetId[effect].Get() : -2;
+    const int secondary = queueSecondaryId.IsValid() ? queueSecondaryId[effect].Get() : -2;
+    const int stage = IsSecondaryChoice(effect) ? 1 :
+        (queueChooseClass.IsValid() && BNM::IsA(effect, queueChooseClass) &&
+         queueChoosePhase.IsValid() ? queueChoosePhase[effect].Get() : -1);
+    LOG_INFO("CustomComponents/Pick3/PICK3_REVIVE_PROCESS_GATE: phase=%s queue=%p runtime=%p effect=%d group=%d stage=%d primary=%d secondary=%d currentGroup=%d readOnly=1",
+        phase, static_cast<void*>(queue), static_cast<void*>(effect),
+        entity, group, stage, primary, secondary,
+        queueCurrentGroup.IsValid() ? queueCurrentGroup[queue].Get() : -1);
+}
 static Obj* QueueDoShift(Obj* self, const void* method) {
     // Queue snapshots are taken before and after original, never modified.
     QueueView before{};
     if (Mode()) before=ReadQueue(self);
+    TraceFrontEffect("DOSHIFT_BEFORE",self);
     Obj* result=originalQueueDoShift ? originalQueueDoShift(self,method):nullptr;
     if (Mode()) {
         const auto after=ReadQueue(self);
         QueueStage("QUEUE_DOSHIFT_RETURN",self,after,before);
+        if (Mode() == 3) {
+            LOG_INFO("CustomComponents/Pick3/PICK3_REVIVE_QUEUE_LIFECYCLE: phase=DOSHIFT queue=%p returned=%p beforeGroup=%d afterGroup=%d beforeFront=%d/%d afterFront=%d/%d stockUnchanged=1",
+                     static_cast<void*>(self), static_cast<void*>(result), before.currentGroup, after.currentGroup, before.firstEntity, before.firstGroup, after.firstEntity, after.firstGroup);
+        }
         // The returned Effect is expected to remain alive until caller consumes it.
         // Avoid dereferencing here because IL2CPP may already pool retired items.
     }
@@ -433,17 +501,130 @@ static Obj* QueueDoShift(Obj* self, const void* method) {
 static void CompleteEffect(Obj* self, Obj* queue, const void* method) {
     QueueView before{};
     if (Mode()) before=ReadQueue(queue);
+    TraceFrontEffect("COMPLETE_BEFORE",queue);
     if (originalCompleteEffect) originalCompleteEffect(self,queue,method);
+    TraceFrontEffect("COMPLETE_AFTER",queue);
     if (Mode()) QueueStage("COMPLETE_EFFECT_RETURN",queue,ReadQueue(queue),before);
 }
+// Stock SelectTargetSystem.ProcessEffect — read-only, called on both simulations.
+// Effect pointers are observed only within this synchronous callback.
+// This is a stock execution boundary, not proof of model commit.
+// The exact snapshot candidate is selected ONLY for diagnostic correlation;
+// ambiguous effect/group histories are explicitly logged.
+inline std::uint64_t TraceCandidate(int effect, int group, const char* boundary) {
+    const auto history = CustomComponents::Pick3::Picked::CopySnapshotHistory();
+    std::uint64_t newest = 0;
+    unsigned candidates = 0, confirmed = 0;
+    for (const auto& record : history) {
+        if (record.selection.effectEntityId != effect || record.selection.effectGroupId != group) continue;
+        ++candidates;
+        if (record.observation == CustomComponents::Pick3::Picked::SnapshotObservation::CallbackSuccessObserved) ++confirmed;
+        if (record.sequence > newest) newest = record.sequence;
+    }
+    if (++CustomComponents::Pick3::Provenance::boundaryCount <= CustomComponents::Pick3::Provenance::kMaxBoundaryLogs)
+        LOG_INFO("CustomComponents/Pick3/PATCH2_PROVENANCE: phase=SNAPSHOT_CANDIDATE boundary=%s effect=%d group=%d candidates=%u callbackSuccess=%u latestSeq=%llu unique=%d authoritative=0 reason=%s readOnly=1",
+            boundary,effect,group,candidates,confirmed,(unsigned long long)newest,int(candidates==1),
+            candidates==0 ? "NO_SNAPSHOT" : (candidates==1 ? "SINGLE_OBSERVATION_NOT_COMMIT" : "MULTIPLE_GENERATIONS"));
+    return candidates == 1 ? newest : 0; // never choose arbitrarily on ambiguity
+}
+// Called by the already-installed Submission::Pick3ModelSelectHook.
+// Do not install a second detour on SelectTargetSystem.ProcessEffect:
+// the Submission hook owns that method, including the revive audit.
+inline std::uint64_t ObserveExistingSelectEnter(int effect, int group, Obj* self, Obj* selected) {
+    const auto candidate = TraceCandidate(effect, group, "EXISTING_SELECT_TARGET_PROCESS");
+    static std::atomic<unsigned> calls{0};
+    const unsigned n = ++calls;
+    if (n <= 256) LOG_INFO("CustomComponents/Pick3/PATCH2_PROVENANCE: phase=SELECT_TARGET_ENTER event=%u source=EXISTING_SUBMISSION_HOOK system=%p effect=%p effectId=%d group=%d candidateSeq=%llu readOnly=1",n,(void*)self,(void*)selected,effect,group,(unsigned long long)candidate);
+    if (effect < 0 || group < 0) LOG_INFO("CustomComponents/Pick3/PATCH2_PROVENANCE: phase=SELECT_TARGET_IDENTITY_MISSING effect=%d group=%d readOnly=1",effect,group);
+    return candidate;
+}
+inline void ObserveExistingSelectExit(int effect, int group, std::uint64_t candidate) {
+    static std::atomic<unsigned> calls{0};
+    const unsigned n = ++calls;
+    if (n <= 256) LOG_INFO("CustomComponents/Pick3/PATCH2_PROVENANCE: phase=SELECT_TARGET_EXIT event=%u source=EXISTING_SUBMISSION_HOOK effectId=%d group=%d candidateSeq=%llu stockReturned=1 NOT_COMMIT_PROOF=1",n,effect,group,(unsigned long long)candidate);
+}
+// Queue-boundary evidence is an exact effect/group collision test, NOT a
+// lineage proof: descendant effects may get different IDs/groups, and neither
+// reused effect IDs nor pooled pointers should be treated as ancestry.
+inline void ObserveQueueIdentity(const char* boundary, Obj* effect, int suppliedGroup) {
+    static std::atomic<unsigned> seen{0}, missing{0}, ambiguous{0};
+    const unsigned n=++seen;
+    if (n>256 || !effect || !effectEntityField.IsValid() || !effectGroupField.IsValid()) return;
+    const int e=effectEntityField[effect].Get(), g=effectGroupField[effect].Get();
+    unsigned count=0;
+    std::uint64_t candidate=0;
+    const auto records=CustomComponents::Pick3::Picked::CopySnapshotHistory();
+    for (const auto& r:records) if (r.selection.effectEntityId==e && r.selection.effectGroupId==g) {
+        ++count; candidate=r.sequence;
+    }
+    if(count || CustomComponents::Pick3::Provenance::active.depth)
+        LOG_INFO("CustomComponents/Pick3/PATCH2_PROVENANCE: phase=QUEUE_IDENTITY event=%u boundary=%s effect=%d group=%d suppliedGroup=%d historyMatches=%u candidateSeq=%llu scopeEffect=%d scopeGroup=%d scopeSeq=%llu scopeDepth=%u result=%s mapping=OBSERVATION_ONLY",n,boundary,e,g,suppliedGroup,count,(unsigned long long)(count==1?candidate:0),CustomComponents::Pick3::Provenance::active.effect,CustomComponents::Pick3::Provenance::active.group,(unsigned long long)CustomComponents::Pick3::Provenance::active.snapshot,CustomComponents::Pick3::Provenance::active.depth,count==1?"EXACT_IDENTITY_CANDIDATE":count?"AMBIGUOUS":"UNBOUND");
+    if (!count && CustomComponents::Pick3::Provenance::active.depth && ++missing<=24)
+        LOG_INFO("CustomComponents/Pick3/PATCH2_PROVENANCE: phase=ORIGIN_MISSING boundary=%s effect=%d group=%d scopeEffect=%d scopeGroup=%d reason=NO_EXACT_HISTORY_MATCH ancestryNotProven=1",boundary,e,g,CustomComponents::Pick3::Provenance::active.effect,CustomComponents::Pick3::Provenance::active.group);
+    if(count>1 && ++ambiguous<=24)
+        LOG_INFO("CustomComponents/Pick3/PATCH2_PROVENANCE: phase=ORIGIN_AMBIGUOUS boundary=%s effect=%d group=%d matches=%u reason=MULTIPLE_GENERATIONS",boundary,e,g,count);
+}
+// Private stock method: SelectTargetSystem.CreateEffectsForTargets(effect, entity).
+// Hooked only if BNM resolves it. Its arguments are observed synchronously;
+// effect pointers never enter the persistent snapshot ledger.
+// Supplied by the submission adapter; observes stock components only.
+inline bool (*validateAcceptedCards)(Obj*,const std::vector<Picked::SelectedCard>&)=nullptr;
+static void CreateEffectsForTargets(Obj* self, Obj* effect, Obj* entity, const void* method) {
+    static thread_local unsigned seq=0;
+    const unsigned n=++seq;
+    const int e = effect && effectEntityField.IsValid() ? effectEntityField[effect].Get() : -1;
+    const int g = effect && effectGroupField.IsValid() ? effectGroupField[effect].Get() : -1;
+    const auto candidate = TraceCandidate(e,g,"CREATE_EFFECTS_FOR_TARGETS");
+    CustomComponents::Pick3::Provenance::ScopedObservation scope(e,g,candidate,"CREATE_EFFECTS_FOR_TARGETS");
+    if(n<=256) LOG_INFO("CustomComponents/Pick3/PATCH2_PROVENANCE: phase=CREATE_DESCENDANT_ENTER seq=%u system=%p selectEffect=%p entity=%p effectId=%d group=%d candidateSeq=%llu parentEffect=%d parentGroup=%d readOnly=1",n,(void*)self,(void*)effect,(void*)entity,e,g,(unsigned long long)candidate,scope.previous.effect,scope.previous.group);
+    namespace RT=CustomComponents::Pick3::TransactionRuntime;
+    namespace TX=CustomComponents::Pick3::Transaction;
+    // Method and offsets verified against supplied dump.cs. All reads occur
+    // while stock owns the arguments; no SelectTargetEffect pointer is saved.
+    const auto identity=TX::Context{e,RT::IntAt(effect,0x24),RT::IntAt(effect,0x28),RT::IntAt(effect,0x2C)};
+    Obj* model=RT::ObjectAt(self,0x10);
+    // Prefer this model's decoded service intent; the thread-local scope may
+    // belong to a prediction or may already have unwound before queue drain.
+    auto submitted=RT::PendingFor(RT::ModelOf(model),e,g);
+    if(!submitted.sequence) submitted=RT::submitted;
+    auto* targets=reinterpret_cast<IntList*>(RT::ObjectAt(effect,0x48));
+    bool targetMatch=targets && targets->items && targets->size>0 && targets->size<=3 &&
+        static_cast<std::size_t>(targets->size)==submitted.targets.size();
+    if(targetMatch) for(int i=0;i<targets->size;++i)
+        if(targets->items->m_Items[i]!=submitted.targets[i]) targetMatch=false;
+    const bool cancelled=effect && *reinterpret_cast<const bool*>(reinterpret_cast<const std::uint8_t*>(effect)+0x45);
+    const bool accepted=RT::pipelineReady && !cancelled && originalCreateEffectsForTargets && e==submitted.effect && g==submitted.group &&
+        submitted.sequence && (RT::IntAt(effect,0x50)==0 && targetMatch) &&
+        validateAcceptedCards && validateAcceptedCards(model,submitted.cards);
+    Picked::SelectionSnapshot acceptedSnapshot;
+    acceptedSnapshot.sequence=submitted.sequence;
+    acceptedSnapshot.selection={e,g,submitted.cards};
+    auto value=accepted?TX::Make(RT::ModelOf(model,true),identity.source,acceptedSnapshot):TX::Ref{};
+    TX::Scoped selectionScope(value,e);
+    if(value) LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=STOCK_SELECTION_ACCEPTED effect=%d group=%d seq=%llu authoritativeNetworkCommit=0",e,g,(unsigned long long)value->sequence);
+    if(originalCreateEffectsForTargets) originalCreateEffectsForTargets(self,effect,entity,method);
+    else LOG_ERR("CustomComponents/Pick3/PATCH2_PROVENANCE: phase=ORIGINAL_MISSING boundary=CREATE_EFFECTS_FOR_TARGETS");
+    const bool cancelledAfter=effect && *reinterpret_cast<const bool*>(reinterpret_cast<const std::uint8_t*>(effect)+0x45);
+    if(value && cancelledAfter) TX::Reject(value);
+    if(value && !cancelledAfter && RT::onStockAccepted) {
+        // Refresh this exact generation's stock-created entity binding.
+        auto completed=RT::Capture(model,e,g,identity.source,value->sequence);
+        if(completed) RT::onStockAccepted(model,effect,completed,identity,g);
+    }
+    if(n<=256) LOG_INFO("CustomComponents/Pick3/PATCH2_PROVENANCE: phase=CREATE_DESCENDANT_EXIT seq=%u effectId=%d group=%d candidateSeq=%llu NOT_COMMIT_PROOF=1",n,e,g,(unsigned long long)candidate);
+}
+
 static void ProcessEffects(Obj* self, Obj* queue, const void* method) {
     QueueView before{};
     if (Mode()) before=ReadQueue(queue);
+    TraceFrontEffect("PROCESS_BEFORE",queue);
     if (originalProcessEffects) originalProcessEffects(self,queue,method);
+    TraceFrontEffect("PROCESS_AFTER",queue);
     if (Mode()) QueueStage("PROCESS_EFFECTS_RETURN",queue,ReadQueue(queue),before);
 }
 static Obj* QueueShift(Obj* self, const void* method) {
     Obj* shifted=originalQueueShift ? originalQueueShift(self,method) : nullptr;
+    if (shifted) ObserveQueueIdentity("QUEUE_SHIFT",shifted,-1);
     if (!Mode() || !shifted || !effectEntityField.IsValid() || !effectGroupField.IsValid()) return shifted;
     const int e=effectEntityField[shifted].Get(), g=effectGroupField[shifted].Get();
     std::array<Flight,48> snapshot;
@@ -476,10 +657,18 @@ inline void Initialize() {
     queueResponses=queueClass.GetField("ResponseEffects").cast<BNM::Structures::Mono::List<Obj*>*>();
     queueGroupResponses=queueClass.GetField("GroupResponseEffects").cast<BNM::Structures::Mono::List<Obj*>*>();
     queueCurrentGroup=queueClass.GetField("CurrentGroupId").cast<int>();
+    queueChooseClass=BNM::Class("PvZCards.Engine", "ChooseTargetBlockingEffect");
+    queueChoosePhase=queueChooseClass.GetField("Phase").cast<int>();
+    queueTargetId=effect.GetField("TargetId").cast<int>();
+    queueSecondaryId=effect.GetField("SecondaryTargetId").cast<int>();
+    auto pushOne=queueClass.GetMethod("PushEffectToList",3);
     auto doShift=queueClass.GetMethod("DoShift",0);
     auto processor=BNM::Class("PvZCards.Engine","EffectCollectionProcessor");
     auto complete=processor.GetMethod("CompleteEffect",1);
     auto processEffects=processor.GetMethod("ProcessEffects",1);
+    auto selectSystem=BNM::Class("PvZCards.Core.Systems","SelectTargetSystem");
+    auto selectTarget=selectSystem.GetMethod("ProcessEffect",1);
+    auto createTargets=selectSystem.GetMethod("CreateEffectsForTargets",2);
     auto connector=BNM::Class("PvZCards.Multiplayer.Networking","PvPGameConnectorImpl");
     auto connectorSend=connector.GetMethod("Send",2);
     auto postWithHandlers=connector.GetMethod("PostWithHandlers",4);
@@ -509,9 +698,20 @@ inline void Initialize() {
     if(lOk.IsValid()) BNM::BasicHook(lOk,LocalSuccess,originalLocalSuccess);
     if(lFail.IsValid()) BNM::BasicHook(lFail,LocalFailure,originalLocalFailure);
     if(shift.IsValid()) BNM::BasicHook(shift,QueueShift,originalQueueShift);
+    if(pushOne.IsValid() && queueChooseClass.IsValid() && queueChoosePhase.IsValid())
+        BNM::BasicHook(pushOne,QueuePushOne,originalQueuePushOne);
     if(doShift.IsValid()) BNM::BasicHook(doShift,QueueDoShift,originalQueueDoShift);
     if(complete.IsValid()) BNM::BasicHook(complete,CompleteEffect,originalCompleteEffect);
     if(processEffects.IsValid()) BNM::BasicHook(processEffects,ProcessEffects,originalProcessEffects);
+    if(createTargets.IsValid()) BNM::BasicHook(createTargets,CreateEffectsForTargets,originalCreateEffectsForTargets);
+    LOG_INFO("CustomComponents/Pick3/PATCH2_PROVENANCE: phase=INIT version=2.5 selectResolved=%d selectHookOwnedBySubmission=%d createResolved=%d createInstalled=%d queueAudit=EXISTING execScope=EXISTING_QUEUE_PROCESS_HOOK windowLimited=1 lookupMode=OBSERVATION_ONLY",int(selectTarget.IsValid()),int(selectTarget.IsValid()),int(createTargets.IsValid()),int(originalCreateEffectsForTargets!=nullptr));
+    if(!selectTarget.IsValid())
+        LOG_ERR("CustomComponents/Pick3/PATCH2_PROVENANCE: phase=HOOK_FAILURE method=SelectTargetSystem.ProcessEffect reason=NOT_RESOLVED existingHookWillReportInstall=1");
+    LOG_INFO("CustomComponents/Pick3/PATCH2_PROVENANCE: phase=HOOK_OWNER method=SelectTargetSystem.ProcessEffect owner=Submission.Pick3ModelSelectHook secondDetour=0 existingHookWillReportInstall=1");
+    if(!createTargets.IsValid() || !originalCreateEffectsForTargets)
+        LOG_ERR("CustomComponents/Pick3/PATCH2_PROVENANCE: phase=HOOK_FAILURE method=SelectTargetSystem.CreateEffectsForTargets effect=NO_CREATE_SCOPE");
+    LOG_INFO("CustomComponents/Pick3/PICK3_REVIVE_QUEUE_LIFECYCLE: installed=%d stageField=%d mode3Required=1 readOnly=1", originalQueuePushOne != nullptr, queueChoosePhase.IsValid());
+    LOG_INFO("CustomComponents/Pick3/STOCK_SELECT_TARGET: hookResolved=%d hookInstalled=%d",selectTarget.IsValid()?1:0,selectTarget.IsValid()?1:0);
     if(connectorSend.IsValid()) BNM::BasicHook(connectorSend,ConnectorSend,originalConnectorSend);
     if(postWithHandlers.IsValid()) BNM::BasicHook(postWithHandlers,ConnectorSendHandlers,originalConnectorSendHandlers);
     if(postSuccess.IsValid() && postRequestIdField.IsValid()) BNM::BasicHook(postSuccess,PosterRequestSuccess,originalPostSuccess);

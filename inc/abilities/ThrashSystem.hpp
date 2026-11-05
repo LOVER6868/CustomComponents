@@ -11,6 +11,7 @@
 #include "core/CustomComponentRegistry.hpp"
 #include "abilities/GrantableAbilityRuntime.hpp"
 #include "log.h"
+#include "pick3/SelectionTransactionRuntime.hpp"
 
 namespace CustomComponents::Systems {
     namespace ThrashSystem {
@@ -268,7 +269,16 @@ namespace CustomComponents::Systems {
             void* previousRouter = activeEffectRouter;
             activeEffectRouter = self;
 
+            CustomComponents::Pick3::TransactionRuntime::ScopedRouter selectionScope(
+                static_cast<BNM::IL2CPP::Il2CppObject*>(self),
+                static_cast<BNM::IL2CPP::Il2CppObject*>(effect));
+            CustomComponents::Pick3::TransactionRuntime::AuditBoundCostTarget(
+                CustomComponents::Pick3::TransactionRuntime::RouterModel(
+                    static_cast<BNM::IL2CPP::Il2CppObject*>(self)),
+                static_cast<BNM::IL2CPP::Il2CppObject*>(effect));
             originalEffectRouterProcess(self, effect, method);
+            CustomComponents::Pick3::TransactionRuntime::CompleteAutomaticSelection(selectionScope.link,
+                static_cast<BNM::IL2CPP::Il2CppObject*>(effect));
 
             activeEffectRouter = previousRouter;
         }
@@ -797,6 +807,8 @@ namespace CustomComponents::Systems {
                 EffectRouterProcessHook,
                 originalEffectRouterProcess
             );
+
+            CustomComponents::Pick3::TransactionRuntime::externalRouterHook = originalEffectRouterProcess != nullptr;
 
             BNM::BasicHook(
                 damageTarget,

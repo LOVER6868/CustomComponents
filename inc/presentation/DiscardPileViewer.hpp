@@ -45,6 +45,9 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
 
     inline InspectTappedExecuteFn originalInspectTappedExecute = nullptr;
     inline PickTargetFn originalPickTarget = nullptr;
+    // Share the existing board-tap trampoline with Discover-style PF3 UI.
+    // The callback returns true only for taps owned by an active PF3 screen.
+    inline bool (*externalPickerTap)(Obj*, int*) = nullptr;
 
     // InspectTappedCardEntityCommand
     inline BNM::Field<Obj*> commandGestureData;
@@ -335,11 +338,54 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
         return true;
     }
 
+    // Reusable stock card-inspection overlay for PF3 option GUID snapshots.
+    // Entity IDs from CardDatabase options are not real engine entities; never
+    // forward their virtual CardViewMapper IDs to the inspection system.
+    inline bool ShowCardGuidList(Obj* showSignal, const int* /*ids*/,
+                                 const int* guids, int count, int initial) {
+        if (!showSignal || !guids || count <= 0 ||
+            !inspectionItemClass.IsValid() || !inspectionConfigClass.IsValid() ||
+            !inspectionItemCtor.IsValid() || !inspectionConfigCtor.IsValid() ||
+            !inspectionConfigItems.IsValid() || !showInspectionDispatch.IsValid()) {
+            LOG_WARN("CustomComponents/DiscardPileViewer: PF3 inspection unavailable signal=%p count=%d",
+                     static_cast<void*>(showSignal), count);
+            return false;
+        }
+        MonoObjList* items = inspectionItemClass.NewList<Obj*>();
+        if (!items) return false;
+        int focus = 0;
+        for (int i = 0; i < count; ++i) {
+            if (guids[i] <= 0) continue;
+            Obj* item = inspectionItemClass.CreateNewInstance();
+            if (!item) continue;
+            inspectionItemCtor[item](guids[i]);
+            // Inspect by immutable card GUID, as in the discard-pile viewer.
+            if (i == initial) focus = items->size;
+            items->Add(item);
+        }
+        if (items->size == 0) return false;
+        Obj* config = inspectionConfigClass.CreateNewInstance();
+        if (!config) return false;
+        inspectionConfigCtor[config]();
+        inspectionConfigItems[config] = items;
+        inspectionConfigInitialIndex[config] = focus;
+        inspectionConfigWrapping[config] = false;
+        inspectionConfigLockUnownedHeroes[config] = false;
+        inspectionConfigAllowHeroPurchase[config] = false;
+        inspectionConfigShowCrafting[config] = false;
+        LOG_INFO("CustomComponents/DiscardPileViewer: PF3 inspection open count=%d focus=%d", items->size, focus);
+        showInspectionDispatch[showSignal](config);
+        return true;
+    }
+
     static int PickTargetHook(
         void* self,
         Obj* overlappedEntities,
         const void* method
     ) {
+        int pickerResult = -1;
+        if (externalPickerTap && externalPickerTap(static_cast<Obj*>(self), &pickerResult))
+            return pickerResult;
         const int stockResult =
             originalPickTarget
             ? originalPickTarget(self, overlappedEntities, method)

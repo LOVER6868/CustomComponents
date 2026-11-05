@@ -29,8 +29,18 @@ struct Receiver : Obj {
             (unsigned long long)ticket, (unsigned long long)activeTicket,
             int(value), reason, int(before), int(accepted), int(completion.Status()));
     }
-    void OnSuccess() { if (networkObserver) networkObserver(true,0); Finish(Result::Success, 0); }
-    void OnFailure(int reason) { if (networkObserver) networkObserver(false,reason); Finish(Result::Failure, reason); }
+    void OnSuccess() {
+        // Old managed service delegates may still fire; never publish telemetry
+        // or alter completion for a retired selection ticket.
+        if (!ticket || ticket != activeTicket) return;
+        if (networkObserver) networkObserver(true,0);
+        Finish(Result::Success, 0);
+    }
+    void OnFailure(int reason) {
+        if (!ticket || ticket != activeTicket) return;
+        if (networkObserver) networkObserver(false,reason);
+        Finish(Result::Failure, reason);
+    }
     BNM_CustomMethod(OnSuccess, false, BNM::Defaults::Get<void>(), "OnSuccess");
     BNM_CustomMethod(OnFailure, false, BNM::Defaults::Get<void>(), "OnFailure",
         BNM::CompileTimeClassBuilder("PvZCards.Engine", "ServiceFailure", "Assembly-CSharp.dll").Build());
@@ -53,16 +63,18 @@ inline void Detach() {
     // already captured by an asynchronous service. Its managed owner keeps it alive.
     completion.Invalidate();
     activeTicket = 0;
-    if (service && remove.IsValid()) {
-        const auto detach = [&](BNM::Field<Obj*>& field, Obj* callback) {
-            if (!callback || !field.IsValid()) return;
-            Obj* current = field[service].Get();
-            Obj* updated = nullptr;
-            const auto ex = BNM::TryInvoke([&] { updated = remove(current, callback); });
-            if (!ex.IsValid()) field[service].Set(updated);
-        };
-        detach(successField, successDelegate); detach(failureField, failureDelegate);
-    }
+    // PATCH 1.6.5: Do not synchronously call Delegate.Remove here.
+    // On the matched phone crash, the native PC at libsprig+0x138A04 is
+    // BNM::TryInvoke within the managed Delegate.Remove/setter path, reached
+    // immediately after RETIRE_BOUNDARY: BEFORE and before AFTER_DETACH.
+    // BNM::TryInvoke cannot intercept a native SIGSEGV (null + 0x38).
+    // The service's managed delegate chain retains our receiver/delegates
+    // until that service is collected. Retired callbacks are inert because
+    // activeTicket was invalidated above. This has a bounded-to-service-lifetime
+    // accumulation tradeoff; proper deferred unsubscription needs proof that
+    // Delegate.Remove works on the correct service/managed thread.
+    LOG_INFO("CustomComponents/Pick3/PATCH165_DETACH: skip_native_delegate_remove service=%p success=%p failure=%p retiredTicket=1",
+             (void*)service, (void*)successDelegate, (void*)failureDelegate);
     service = successDelegate = failureDelegate = nullptr;
     for (auto handle : roots) Core::SceneViewContext::freeGCHandle(handle);
     roots.clear();

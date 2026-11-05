@@ -38,11 +38,13 @@
             ? GetDescriptorPolicy(source, descriptorFailSafe[source].Get())
             : false;
 
+        const bool entityQuery=custom && source && IsCustomDescriptor(source) && descriptorEntityQuery.IsValid() && descriptorEntityQuery[source].Get();
         originalDescriptorCopy(self, source, instances, method);
 
         if (custom) {
             auto* target = static_cast<Obj*>(self);
             descriptorFailSafe[target] = policy;
+            if(descriptorEntityQuery.IsValid()) descriptorEntityQuery[target]=entityQuery;
             PutDescriptorPolicy(target, policy);
         }
     }
@@ -55,8 +57,10 @@
 
         originalDescriptorPool(self, instances, method);
 
-        if (custom)
+        if (custom) {
             descriptorFailSafe[descriptor] = false;
+            if(descriptorEntityQuery.IsValid()) descriptorEntityQuery[descriptor]=false;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -83,6 +87,7 @@
                     "DrawCardFromSubsetInDeckEffectDescriptor"
                 ).GetClass()) {
             auto* descriptor = static_cast<Obj*>(self);
+            entityQueryByAbilityEffect[runtime]=descriptorEntityQuery.IsValid() && descriptorEntityQuery[descriptor].Get();
             failSafeByAbilityEffect[runtime] =
                 GetDescriptorPolicy(
                     descriptor,
@@ -130,8 +135,12 @@
             pending.sourceId = effectSource[effect].Get();
             pending.playerId = effectPlayer[effect].Get();
             pending.effectGroupId = effectGroup[effect].Get();
+            pending.effectEntityId = effectDefinition[effect].Get();
             pending.remaining = std::max(0, customDrawAmount[effect].Get());
             pending.pluckFailSafe = it->second;
+            auto mode=entityQueryByAbilityEffect.find(effect);
+            pending.entityQuery=mode!=entityQueryByAbilityEffect.end() && mode->second;
+            if(mode!=entityQueryByAbilityEffect.end()) entityQueryByAbilityEffect.erase(mode);
 
             // Consume the bridge now. PendingDraw owns the policy for the children.
             failSafeByAbilityEffect.erase(it);

@@ -23,7 +23,7 @@
 #include "presentation/TargetingPresentationRefreshSystem.hpp"
 #include "pick3/PickFromThreeCore.hpp"
 #include "pick3/PickFromThreeTargetBridge.hpp"
-#include "presentation/PickFromThreePreviewSystem.hpp"
+#include "presentation/PickFromThreeDiscoverPresentation.hpp"
 #include "presentation/ZoneTriggeredAbilityPresentationSystem.hpp"
 #include "triggers/CustomTrigger.hpp"
 #include "triggers/CustomTriggerCarrierEffect.hpp"

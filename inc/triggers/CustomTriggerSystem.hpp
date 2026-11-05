@@ -2,6 +2,7 @@
 #include "diagnostics/DiagnosticLogging.hpp"
 
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <cstdint>
 #include <string>
@@ -14,6 +15,8 @@
 
 #include "triggers/ReturnedFromDiscardPileTrigger.hpp"
 #include "triggers/PickFromThreeTrigger.hpp"
+#include "triggers/ReturnToLaneMoveFilter.hpp"
+#include "pick3/Patch2ProvenanceObservation.hpp"
 #include "zones/DiscardProvenanceSystem.hpp"
 #include "triggers/DiscardOutsidePlayTrigger.hpp"
 #include "triggers/CustomTrigger.hpp"
@@ -24,10 +27,21 @@
 #include "presentation/ZoneTriggeredAbilityPresentationSystem.hpp"
 #include "diagnostics/DiagnosticLogging.hpp"
 #include "log.h"
+#include "pick3/SelectionTransactionRuntime.hpp"
 
 namespace CustomComponents::Systems::CustomTriggerSystem {
 
     using Obj = BNM::IL2CPP::Il2CppObject;
+    // Source-agnostic, stock-validated selection producer. The callback may
+    // recognize a completed initial Play or another exact in-flight selection;
+    // it MUST reject ambiguous, uncommitted, or unrelated source/effect/target.
+    using InFlightSelectionProof = bool (*)(Obj* model, int sourceCard,
+                                           int effectId, int selectedTargetId);
+    inline InFlightSelectionProof inFlightSelectionProof = nullptr;
+    inline void RegisterInFlightSelectionProof(InFlightSelectionProof proof) {
+        inFlightSelectionProof = proof;
+    }
+
     template<typename T> using MonoList = BNM::Structures::Mono::List<T>;
 
     // Capture coherent stock TriggerSystem<T> producer contexts.
@@ -244,6 +258,8 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
                 gateQueueSystems.back() = system;
             }
         }
+        CustomComponents::Pick3::TransactionRuntime::RegisterRouter(
+            router,CustomComponents::Pick3::TransactionRuntime::ObjectAt(system,0x30));
         originalQueueRegisterHandlers(self, router, method);
     }
     // The existing queue-system hook can admit one verified live selection
@@ -251,6 +267,35 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
     inline Obj* liveSelectionQueueScope = nullptr;
     inline bool (*liveSelectionQueueCallback)(Obj*) = nullptr;
     inline bool liveSelectionQueueBusy = false;
+    // A selection-scoped audit window, armed by the existing selection-service
+    // hook rather than by custom trigger firing. The queue may process work on
+    // a different thread after the service returns; use atomic counters.
+    inline std::atomic<unsigned> pick3QueueWindow{0};
+    inline std::atomic<unsigned> pick3QueueBudget{0};
+    inline std::atomic<unsigned> pick3QueueSequence{0};
+    inline std::atomic<int> pick3QueueExpectedEffect{-1};
+    inline std::atomic<int> pick3QueueExpectedGroup{-1};
+    inline std::atomic<unsigned> pick3QueueMatchedEffects{0};
+    inline thread_local unsigned pickFromThreeServiceDepth = 0;
+    inline void ArmPick3QueueAudit(const char* reason, int effectId, int groupId) {
+        const unsigned window = pick3QueueWindow.fetch_add(1, std::memory_order_relaxed) + 1;
+        pick3QueueExpectedEffect.store(effectId, std::memory_order_release);
+        pick3QueueExpectedGroup.store(groupId, std::memory_order_release);
+        pick3QueueMatchedEffects.store(0, std::memory_order_release);
+        pick3QueueBudget.store(96, std::memory_order_release);
+        LOG_INFO("CustomComponents/Pick3/PICK3_QUEUE_WINDOW: phase=ARM id=%u reason=%s effect=%d group=%d budget=96",
+                 window, reason, effectId, groupId);
+    }
+    inline bool TakePick3QueueAudit(unsigned& window, unsigned& seq) {
+        unsigned remaining = pick3QueueBudget.load(std::memory_order_acquire);
+        while (remaining && !pick3QueueBudget.compare_exchange_weak(
+            remaining, remaining - 1, std::memory_order_acq_rel,
+            std::memory_order_acquire)) {}
+        if (!remaining) return false;
+        window = pick3QueueWindow.load(std::memory_order_acquire);
+        seq = pick3QueueSequence.fetch_add(1, std::memory_order_relaxed) + 1;
+        return true;
+    }
     static void QueueProcessEffectGateHook(void* self, Obj* effect, const void* method) {
         Obj* triggers = GateField(static_cast<Obj*>(self), 0x18);
         if (triggers && triggers == liveSelectionQueueScope &&
@@ -260,9 +305,69 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
             liveSelectionQueueBusy = false;
         }
         const bool observed = gateObservedRemaining > 0 && triggers && triggers == gateObservedTriggers;
-        if (observed) LogPick3QueueGate("STOCK_PROCESS_ENTER", triggers);
-        originalQueueProcessEffect(self, effect, method);
+        unsigned window = 0, seq = 0;
+        const bool independentSample = TakePick3QueueAudit(window, seq);
+        if (independentSample && effect) {
+            // ProcessEffect takes a stock Effect. Read the same fixed Effect
+            // fields already used by the trigger dispatcher, with no managed
+            // calls, allocation, or dispatch. A queue window is diagnostic,
+            // not evidence of authoritative server acceptance.
+            const auto* effectBytes = reinterpret_cast<const std::uint8_t*>(effect);
+            const int sourceId = *reinterpret_cast<const int*>(effectBytes + 0x24);
+            const int targetId = *reinterpret_cast<const int*>(effectBytes + 0x28);
+            const int springboardId = *reinterpret_cast<const int*>(effectBytes + 0x2C);
+            const int effectId = *reinterpret_cast<const int*>(effectBytes + 0x30);
+            const int groupId = *reinterpret_cast<const int*>(effectBytes + 0x3C);
+            const int wantedEffect = pick3QueueExpectedEffect.load(std::memory_order_acquire);
+            const int wantedGroup = pick3QueueExpectedGroup.load(std::memory_order_acquire);
+            const bool matches = wantedEffect >= 0 && wantedGroup >= 0 &&
+                effectId == wantedEffect && groupId == wantedGroup;
+            if (matches) pick3QueueMatchedEffects.fetch_add(1, std::memory_order_relaxed);
+            CustomComponents::Pick3::Provenance::Queue(effectId, groupId, sourceId, targetId,
+                pickFromThreeServiceDepth != 0);
+            LOG_INFO("CustomComponents/Pick3/PICK3_QUEUE_IDENTITY: window=%u seq=%u source=%d target=%d springboard=%d effectId=%d group=%d expectedEffect=%d expectedGroup=%d exact=%d duringSelectService=%d",
+                window, seq, sourceId, targetId, springboardId,
+                effectId, groupId, wantedEffect, wantedGroup,
+                int(matches), int(pickFromThreeServiceDepth != 0));
+        }
+        if (independentSample) {
+            LOG_INFO("CustomComponents/Pick3/PICK3_STOCK_QUEUE: phase=ENTER window=%u seq=%u duringSelectService=%d queue=%p effect=%p triggers=%p observedGate=%d",
+                     window, seq, int(pickFromThreeServiceDepth != 0),
+                     self, effect, triggers, int(observed));
+        }
+        // Individual effect handoff, observed at an already-installed stock
+        // queue hook. No new detour, managed getter, or effect dispatch.
         if (observed) {
+            LOG_INFO("CustomComponents/Pick3/PICK3_TRIGGER_TIMELINE: phase=QUEUE_EFFECT_ENTER queue=%p effects=%p effect=%p triggers=%p remaining=%d",
+                     self, GateField(static_cast<Obj*>(self), 0x10), effect, triggers, gateObservedRemaining);
+            LogPick3QueueGate("STOCK_PROCESS_ENTER", triggers);
+        }
+        // Patch 2.2: use the already-installed stock execution detour.
+        // The scoped observer only compares immutable effect/group IDs with
+        // snapshot history; it never changes return values or queue state.
+        const auto* executionBytes = reinterpret_cast<const std::uint8_t*>(effect);
+        const int executionEffect = executionBytes
+            ? *reinterpret_cast<const int*>(executionBytes + 0x30) : -1;
+        const int executionGroup = executionBytes
+            ? *reinterpret_cast<const int*>(executionBytes + 0x3C) : -1;
+        const int executionSource = executionBytes
+            ? *reinterpret_cast<const int*>(executionBytes + 0x24) : -1;
+        const int executionTarget = executionBytes
+            ? *reinterpret_cast<const int*>(executionBytes + 0x28) : -1;
+        {
+            CustomComponents::Pick3::Provenance::ScopedQueueExecution executionScope(
+                executionEffect, executionGroup, executionSource, executionTarget);
+            CustomComponents::Pick3::Picked::DeferredLink::ScopedExecution linkedSelection(
+                executionEffect, executionSource, executionTarget);
+            originalQueueProcessEffect(self, effect, method);
+        }
+        if (independentSample) {
+            LOG_INFO("CustomComponents/Pick3/PICK3_STOCK_QUEUE: phase=EXIT window=%u seq=%u duringSelectService=%d queue=%p effect=%p",
+                     window, seq, int(pickFromThreeServiceDepth != 0), self, effect);
+        }
+        if (observed) {
+            LOG_INFO("CustomComponents/Pick3/PICK3_TRIGGER_TIMELINE: phase=QUEUE_EFFECT_EXIT queue=%p effect=%p triggers=%p remaining=%d",
+                     self, effect, triggers, gateObservedRemaining);
             LogPick3QueueGate("STOCK_PROCESS_EXIT", triggers);
             --gateObservedRemaining;
             if (gateObservedRemaining == 0 || !gateHasTriggers[triggers]()) {
@@ -615,7 +720,50 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
     }
 
     inline bool Initialize() {
-        return RegisterTypes() && InstallHooks();
+        const bool installed=RegisterTypes() && InstallHooks();
+        if(installed) {
+            CustomComponents::Pick3::TransactionRuntime::consumeTriggerData =
+                +[](Obj* collection,Obj* data) -> bool {
+                    if(!collection || !data) return false;
+                    // Match the collection's injected simulation model, never
+                    // a UI model or a process-global last returned card.
+                    for(std::size_t i=stockTriggerContextCount;i-- > 0;) {
+                        auto& producer=stockTriggerContexts[i];
+                        if(producer.triggeredEffects && producer.triggeredEffects!=collection) continue;
+                        if(!RefreshStockTriggerContext(producer) || producer.triggeredEffects!=collection) continue;
+                        Obj* context=triggerDataContext[data].Get();
+                        const auto event=CustomComponents::Pick3::TransactionRuntime::ReadContext(context);
+                        if(!ReturnToLaneMoveFilter::ShouldSuppress(producer.model,
+                            triggerDataEffectEntityId[data].Get(),event.effect,
+                            FindEntityById,HasNamedComponent)) return false;
+                        // The stock movement carrier is an implementation detail
+                        // of returning a card. Keep other move effects unchanged.
+                        returnToPool[producer.instances](data);
+                        return true;
+                    }
+                    return false;
+                };
+            const bool transactionReady=CustomComponents::Pick3::TransactionRuntime::Initialize();
+            if(!transactionReady) LOG_ERR("CustomComponents/Pick3/PF3_TX: phase=INIT_FAILED baselinePreserved=1");
+            if(transactionReady) CustomComponents::Pick3::TransactionRuntime::onStockAccepted =
+                +[](Obj* model,Obj* effect,CustomComponents::Pick3::Transaction::Ref value,
+                    CustomComponents::Pick3::Transaction::Context context,int group) {
+                    if(!value || value->cards.size()!=1) return;
+                    const auto& card=value->cards.front();
+                    const int target=CustomComponents::Pick3::Transaction::LiveTarget(value,0);
+                    if(target<=0) {
+                        CustomComponents::Pick3::TransactionRuntime::AwaitCreation(value,context,group);
+                        LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=EVENT_AWAIT_CREATED_ENTITY effect=%d group=%d seq=%llu",value->effect,group,(unsigned long long)value->sequence);
+                        return;
+                    }
+                    Pick3EffectIdentitySnapshot identity;
+                    identity.sourceId=context.source;identity.targetId=target;
+                    identity.springboardId=context.springboard;identity.effectEntityId=value->effect;
+                    identity.effectGroupId=group;identity.valid=true;identity.selectionSequence=value->sequence;
+                    FireInModel("PickFromThreeTrigger",effect,model,&identity);
+                };
+        }
+        return installed;
     }
 
 } // namespace CustomComponents::Systems::CustomTriggerSystem

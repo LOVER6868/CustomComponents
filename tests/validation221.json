@@ -1,0 +1,212 @@
+[
+  {
+    "test": "SelectionTransaction216Regression compile",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "SelectionTransaction216Regression",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "SelectionTransaction216RuntimeRegression compile",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "SelectionTransaction216RuntimeRegression",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "SelectionTransaction219RuntimeRegression compile",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "SelectionTransaction219RuntimeRegression",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "SelectionResolution219Regression compile",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "SelectionResolution219Regression",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "SelectionTransaction220DatabaseRegression compile",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "SelectionTransaction220DatabaseRegression",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "SelectionTransaction221AutomaticRegression compile",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "SelectionTransaction221AutomaticRegression",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Patch211DualDomainRegression compile",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Patch211DualDomainRegression",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Patch2InFlightSelection29Regression compile",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Patch2InFlightSelection29Regression",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Patch2ExactRouting25Regression compile",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Patch2ExactRouting25Regression",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Patch2Routing26ValidationRegression compile",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Patch2Routing26ValidationRegression",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Patch2SnapshotHistory1730Regression compile",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Patch2SnapshotHistory1730Regression",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Patch2SnapshotHistory1731Regression compile",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Patch2SnapshotHistory1731Regression",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Patch2ExactSnapshot1733Regression compile",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Patch2ExactSnapshot1733Regression",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Patch2ExecutionScope22Regression compile",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Patch2ExecutionScope22Regression",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Pick3DatabaseTargetContextRegression compile",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Pick3DatabaseTargetContextRegression",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Pick3VerifiedBindingRegression compile",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Pick3VerifiedBindingRegression",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "routing-off compile",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "routing-off",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "full-syntax",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "rollback-syntax",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "Patch210DispatchProofOnceSourceRegression.py",
+    "passed": true,
+    "output": "2.16 dispatch proof once PASS\n"
+  },
+  {
+    "test": "Patch2InFlightSelection29SourceRegression.py",
+    "passed": true,
+    "output": "2.10 source guards PASS\n"
+  },
+  {
+    "test": "Patch262QueryLoggingSafetyRegression.py",
+    "passed": true,
+    "output": "PASS: 2.6.2 query diagnostic has no managed getter calls; guarded exact routing enabled\n"
+  },
+  {
+    "test": "Patch28DeferredSafetyRegression.py",
+    "passed": true,
+    "output": "PASS: 2.8 deferred safety and trigger failure logging\n"
+  },
+  {
+    "test": "final-physical-copy-identity-regression",
+    "passed": true,
+    "output": ""
+  },
+  {
+    "test": "final-translation-unit-syntax",
+    "passed": true,
+    "output": ""
+  }
+]
