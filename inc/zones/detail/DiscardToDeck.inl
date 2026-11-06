@@ -4,6 +4,7 @@
     // =====================================================================
 
     static void CreateDeckProcessEffectHook(void* self, Obj* effect, const void* method) {
+        if(!Engine::DeckCreation::Prepare(static_cast<Obj*>(self),effect)) return;
         if (!effect ||
             createDeckRuntimeCardGuid[effect].Get() !=
                 Components::ReturnFromDiscardPileToDeckEffectDescriptor::kExistingEntityDeckSentinel) {
@@ -126,4 +127,5 @@
         CustomTriggerSystem::FireReturnedFromDiscardPile(effect);
         if constexpr (false) CC_DIAG("CustomComponents/DECK-HANG-DIAG: RETURN-TRIGGER-EXIT card=%d effectEntity=%d", cardId, traceEffectEntityId);
     }
+
 

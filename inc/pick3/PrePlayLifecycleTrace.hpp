@@ -1,3 +1,5 @@
+#include "diagnostics/DiagnosticLogging.hpp"
+#include "core/HookRegistry.hpp"
 #pragma once
 // Patch 1.7.20: opt-in read-only observation of the stock pre-Play lifecycle.
 // IMPORTANT: DetermineCurrentInputState and BindCommandsForState are ALREADY
@@ -70,7 +72,7 @@ inline void Log(const char* stage, int prior, int next, Obj* drag,
     int first=-1, second=-1;
     const int count=Count(drag,first,second);
     const int hand=drag && dragInHand.IsValid() ? int(dragInHand[drag].Get()) : -1;
-    LOG_INFO("CustomComponents/Pick3/PREPLAY1720: n=%u stage=%s prior=%d next=%d field=%d "
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PREPLAY1720: n=%u stage=%s prior=%d next=%d field=%d "
              "dragCard=%d inHand=%d targetCount=%d targetsFirst=[%d,%d] "
              "readOnly=1 retainedCommand=0",
              ++events,stage,prior,next,stateField,card,hand,count,first,second);
@@ -145,7 +147,7 @@ inline void OnStopDrag(int card, bool after) {
         if (releaseDepth == 1) { ++releaseSerial; releasePlayCount = 0; }
     }
     if (CanLog()) {
-        LOG_INFO("CustomComponents/Pick3/PREPLAY1721: n=%u stage=%s card=%d "
+        CC_SELECTION_DIAG("CustomComponents/Pick3/PREPLAY1721: n=%u stage=%s card=%d "
                  "releaseDepth=%u releaseSerial=%u playsInside=%u "
                  "readOnly=1 replay=0", ++events,
                  after ? "RELEASE_SCOPE_EXIT" : "RELEASE_SCOPE_ENTER",
@@ -153,7 +155,7 @@ inline void OnStopDrag(int card, bool after) {
     }
     // Preserve the existing 1.7.20 event names for log correlation.
     if (CanLog() && card >= 0)
-        LOG_INFO("CustomComponents/Pick3/PREPLAY1720: n=%u stage=%s card=%d "
+        CC_SELECTION_DIAG("CustomComponents/Pick3/PREPLAY1720: n=%u stage=%s card=%d "
                  "readOnly=1 replay=0",++events,
                  after ? "STOP_DRAG_EXIT" : "STOP_DRAG_ENTER",card);
     if (after && releaseDepth) --releaseDepth;
@@ -166,13 +168,13 @@ inline void OnPlay(int card, int target, int handled, bool after) {
     ++playObservations;
     if (!after && releaseDepth) ++releasePlayCount;
     if (CanLog())
-        LOG_INFO("CustomComponents/Pick3/PREPLAY1721: n=%u stage=%s card=%d target=%d "
+        CC_SELECTION_DIAG("CustomComponents/Pick3/PREPLAY1721: n=%u stage=%s card=%d target=%d "
                  "handled=%d releaseDepth=%u releaseSerial=%u "
                  "insideStopDrag=%d readOnly=1", ++events,
                  after ? "PLAY_RETURN" : "PLAY_ENTER",card,target,handled,
                  releaseDepth,releaseSerial,int(releaseDepth>0));
     if (!CanLog()) return;
-    LOG_INFO("CustomComponents/Pick3/PREPLAY1720: n=%u stage=%s card=%d target=%d "
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PREPLAY1720: n=%u stage=%s card=%d target=%d "
              "handled=%d playObservation=%u stockForward=1 readOnly=1",
              ++events,after ? "PLAY_EXEC_RETURN" : "PLAY_EXEC_ENTER",card,target,
              handled,playObservations);
@@ -185,7 +187,7 @@ inline bool Configure(bool requested) {
     lastHighlightCard=lastHighlightState=lastHighlightCount=-99;
     lastHighlightFirst=lastHighlightSecond=-99;
     if (!requested) {
-        LOG_INFO("CustomComponents/Pick3/PREPLAY1720: SETUP enabled=0 duplicateStateHooks=0");
+        CC_SELECTION_DIAG("CustomComponents/Pick3/PREPLAY1720: SETUP enabled=0 duplicateStateHooks=0");
         return true;
     }
     auto holder=BNM::Class("PvZCards.Game","GameInputStateHolder");
@@ -209,9 +211,9 @@ inline bool Configure(bool requested) {
     }
     // This method is not hooked by any existing CustomComponents module.
     // Configure is expected once at startup; avoid ever stacking ourselves.
-    if (!originalHighlight) BNM::BasicHook(execute,Highlight,originalHighlight);
+    if (!originalHighlight) CustomComponents::Core::Hooks::Install(execute,Highlight,originalHighlight);
     enabled = originalHighlight != nullptr;
-    LOG_INFO("CustomComponents/Pick3/PREPLAY1720: SETUP enabled=%d highlight=%d "
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PREPLAY1720: SETUP enabled=%d highlight=%d "
              "sharedDetermine=1 sharedBind=1 duplicateStateHooks=0 "
              "commandReplay=0 gestureMutation=0 budget=%u",
              int(enabled),int(originalHighlight!=nullptr),kMaxEvents);

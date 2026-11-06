@@ -1,3 +1,6 @@
+#include "diagnostics/DiagnosticLogging.hpp"
+#include "core/HookRegistry.hpp"
+#include "core/Performance.hpp"
 #pragma once
 #include <BNM/Class.hpp>
 #include <BNM/Field.hpp>
@@ -5,41 +8,34 @@
 #include "core/SceneViewContext.hpp"
 #include "pick3/SelectionTransaction.hpp"
 #include "pick3/SelectionSubmissionLedger.hpp"
+#include "core/ModelRegistry.hpp"
+#include "engine/TriggerQueue.hpp"
+#include "engine/EffectQueue.hpp"
 namespace CustomComponents::Pick3::TransactionRuntime {
 using Obj=BNM::IL2CPP::Il2CppObject;
 namespace GC=CustomComponents::Core::SceneViewContext;
-struct ModelRoot { Transaction::Model token; std::uint32_t handle; };
-struct RouterRoot { std::uint32_t handle; Transaction::Model model; };
+struct RouterRoot { std::shared_ptr<Core::ManagedRuntime::Root> reference; Transaction::Model model; };
 inline std::mutex rootsLock;
-inline std::vector<ModelRoot> models;
 inline std::vector<RouterRoot> routers;
-inline Transaction::Model nextModel=1;
 inline BNM::Field<Obj*> queryModel;
 inline BNM::Class modifySunCostEffectClass;
 inline bool pipelineReady=false;
-inline Transaction::Model ModelOf(Obj* model,bool create=false) {
-    if(!model || !GC::newGCHandle || !GC::getGCHandle || !GC::freeGCHandle) return 0;
-    std::lock_guard<std::mutex> guard(rootsLock);
-    for(const auto& m:models) if(GC::getGCHandle(m.handle)==model) return m.token;
-    if(!create || models.size()>=256) return 0;
-    const auto handle=GC::newGCHandle(model,false);
-    if(!handle) return 0;
-    const auto token=nextModel++;
-    models.push_back({token,handle});return token;
-}
+inline Transaction::Model ModelOf(Obj* model,bool create=false) { return Core::ModelRegistry::Identify(model,create); }
 inline void RegisterRouter(Obj* router,Obj* model) {
     const auto token=ModelOf(model,true);
     if(!router || !token) return;
     std::lock_guard<std::mutex> guard(rootsLock);
-    for(auto& r:routers) if(GC::getGCHandle(r.handle)==router) {r.model=token;return;}
-    if(routers.size()>=256) return;
-    const auto handle=GC::newGCHandle(router,false);
-    if(handle) routers.push_back({handle,token});
+    for(auto it=routers.begin();it!=routers.end();) {
+        auto* object=it->reference->Get();
+        if(!object) it=routers.erase(it);
+        else { if(object==router) {it->model=token;return;} ++it; }
+    }
+    auto reference=std::make_shared<Core::ManagedRuntime::Root>(router,true);
+    if(reference->Get()) routers.push_back({reference,token});
 }
 inline Transaction::Model RouterModel(Obj* router) {
     std::lock_guard<std::mutex> guard(rootsLock);
-    if(!GC::getGCHandle) return 0;
-    for(const auto& r:routers) if(GC::getGCHandle(r.handle)==router) return r.model;
+    for(const auto& entry:routers) if(entry.reference->Get()==router) return entry.model;
     return 0;
 }
 inline int IntAt(Obj* object,std::size_t offset) {
@@ -93,8 +89,9 @@ inline void AttachInsertedEffect(Obj* effect) {
         GC::freeGCHandle(handle);return;
     }
     effectRoots.push_back({key,handle,Transaction::active.contextEffect});
-    LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=DESCENDANT_ATTACHED seq=%llu effect=%d group=%d instance=%llu",(unsigned long long)value->sequence,key.effect,key.group,(unsigned long long)key.instance);
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=DESCENDANT_ATTACHED seq=%llu effect=%d group=%d instance=%llu",(unsigned long long)value->sequence,key.effect,key.group,(unsigned long long)key.instance);
 }
+inline void AttachQueueEffect(Obj*,Obj* effect,int,Obj*) { AttachInsertedEffect(effect); }
 struct AutomaticChoice {
     Transaction::Model model=0; int effect=-1,source=-1,target=-1,guid=-1;
     Transaction::Context context; Transaction::Ref value; bool notified=false;
@@ -125,7 +122,7 @@ inline void AttachAutomaticEffects(Obj* model,int effect,int source,int target,i
         auto h=GC::newGCHandle(list->items->m_Items[i],false);
         if(h) automaticRoots.push_back({h,choice,Key(choice->model,list->items->m_Items[i])});
     }
-    LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=AUTO_CREATED effect=%d primary=%d guid=%d effects=%d",effect,target,guid,list->size);
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=AUTO_CREATED effect=%d primary=%d guid=%d effects=%d",effect,target,guid,list->size);
 }
 struct EffectLink { Transaction::Ref value; int contextEffect=-1; std::shared_ptr<AutomaticChoice> automatic; };
 inline EffectLink TakeInsertedEffect(Transaction::Model model,Obj* effect) {
@@ -142,7 +139,7 @@ inline EffectLink TakeInsertedEffect(Transaction::Model model,Obj* effect) {
         // identity fields must still match when it reaches the router.
         if(expected.group==-1 && observed.group>=0) observed.group=-1;
         const bool identityMatches=observed==expected && Transaction::Current(value);
-        LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=DESCENDANT_ROUTED seq=%llu effect=%d finalGroup=%d identityMatches=%d",
+        CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=DESCENDANT_ROUTED seq=%llu effect=%d finalGroup=%d identityMatches=%d",
             (unsigned long long)(value?value->sequence:0),IntAt(effect,0x30),IntAt(effect,0x3C),int(identityMatches));
         return identityMatches?EffectLink{value,contextEffect}:EffectLink{};
     }
@@ -156,8 +153,7 @@ inline bool IsScopedChild(Transaction::Model model,Obj* effect,const Transaction
         (effectEntity==Transaction::active.effect ||
          effectEntity==Transaction::active.contextEffect);
 }
-inline EffectLink ResolveEffectLink(Obj* router,Obj* effect) {
-    const auto model=RouterModel(router);
+inline EffectLink ResolveEffectLink(Obj* router,Obj* effect,Transaction::Model model) {
     auto link=TakeInsertedEffect(model,effect);
     if(!Transaction::Current(link.value)) {
         std::shared_ptr<AutomaticChoice> choice;
@@ -167,7 +163,7 @@ inline EffectLink ResolveEffectLink(Obj* router,Obj* effect) {
              const auto expected=it->key;
              if(expected.group==-1 && observed.group>=0) observed.group=-1;
              if(observed==expected) choice=it->choice;
-             else LOG_WARN("CustomComponents/Pick3/PF3_TX: phase=AUTO_IDENTITY_REJECTED effect=%d group=%d",IntAt(effect,0x30),IntAt(effect,0x3C));
+             else LOG_WARN("CustomComponents/Pick3/PF3_TX: phase=AUTO_IDENTITY_REJECTED effect=%d group=%d expectedModel=%llu actualModel=%llu expectedGroup=%d expectedSource=%d actualSource=%d expectedTarget=%d actualTarget=%d",IntAt(effect,0x30),IntAt(effect,0x3C),(unsigned long long)expected.model,(unsigned long long)observed.model,expected.group,expected.source,observed.source,expected.target,observed.target);
              GC::freeGCHandle(it->handle);automaticRoots.erase(it);break;
          }}
         if(choice && choice->model==model && IntAt(effect,0x30)==choice->effect && IntAt(effect,0x24)==choice->source && IntAt(effect,0x3C)>=0) {
@@ -191,17 +187,18 @@ inline EffectLink ResolveEffectLink(Obj* router,Obj* effect) {
         // and effect-entity identity must all agree.
         link.value=Transaction::active.value;
         link.contextEffect=Transaction::active.contextEffect;
-        LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=DESCENDANT_SCOPE_INHERITED seq=%llu effect=%d source=%d model=%llu",
+        CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=DESCENDANT_SCOPE_INHERITED seq=%llu effect=%d source=%d model=%llu",
             (unsigned long long)link.value->sequence,IntAt(effect,0x30),
             IntAt(effect,0x24),(unsigned long long)model);
     }
     return link;
 }
 struct ScopedRouter {
+    Transaction::Model model;
     EffectLink link;
     Transaction::Scoped scope;
     ScopedRouter(Obj* router,Obj* effect)
-        :link(ResolveEffectLink(router,effect)),
+        :model(RouterModel(router)),link(ResolveEffectLink(router,effect,model)),
          scope(link.value,IntAt(effect,0x30),link.contextEffect) {}
 };
 inline void AuditBoundCostTarget(Transaction::Model model,Obj* effect) {
@@ -216,7 +213,7 @@ inline void AuditBoundCostTarget(Transaction::Model model,Obj* effect) {
     if(!TX::Resolve(model,effectId,oldTarget,false,matched) || matched || value->cards.size()!=1) return;
     const int selected=TX::LiveTarget(value,0);
     if(selected<=0) return;
-    LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=COST_TARGET_MISMATCH seq=%llu effect=%d group=%d source=%d actualTarget=%d selectedTarget=%d boundary=EFFECT_ROUTER changed=0",
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=COST_TARGET_MISMATCH seq=%llu effect=%d group=%d source=%d actualTarget=%d selectedTarget=%d boundary=EFFECT_ROUTER changed=0",
         (unsigned long long)value->sequence,effectId,IntAt(effect,0x3C),IntAt(effect,0x24),oldTarget,selected);
 }
 // Only survives a synchronous stock selection-service call. The model-side
@@ -234,12 +231,11 @@ inline void CompleteAutomaticSelection(const EffectLink& link,Obj* effect) {
     {std::lock_guard<std::mutex> guard(automaticLock);
      if(link.automatic->notified) return;
      link.automatic->notified=true;}
-    Obj* model=nullptr;
-    {std::lock_guard<std::mutex> guard(rootsLock);
-     for(const auto& root:models) if(root.token==link.value->model) {model=GC::getGCHandle(root.handle);break;}}
+    Obj* model=Core::ModelRegistry::Get(link.value->model);
     if(model) {
-        LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=AUTO_EVENT_RELEASE seq=%llu effect=%d group=%d primary=%d",(unsigned long long)link.value->sequence,link.value->effect,link.value->group,link.automatic->target);
+        CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=AUTO_EVENT_RELEASE seq=%llu effect=%d group=%d primary=%d",(unsigned long long)link.value->sequence,link.value->effect,link.value->group,link.automatic->target);
         onStockAccepted(model,effect,link.value,link.automatic->context,link.value->group);
+        Transaction::Complete(link.value);
     }
 }
 struct AwaitingCreation { Transaction::Ref value; Transaction::Context context; int group; };
@@ -286,7 +282,7 @@ inline void Produced(Obj* model,Obj* producingEffect,int effect,int group,std::u
     }
     auto value=Capture(model,effect,group,found.value->source,sequence);
     if(value) {
-        LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=DATABASE_EVENT_RELEASE seq=%llu effect=%d group=%d target=%d",
+        CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=DATABASE_EVENT_RELEASE seq=%llu effect=%d group=%d target=%d",
             (unsigned long long)sequence,effect,group,Transaction::LiveTarget(value,0));
         onStockAccepted(model,producingEffect,value,found.context,group);
     }
@@ -312,7 +308,7 @@ inline void AttachTriggerData(Obj* data,const Transaction::Ref& value) {
     const auto ticket=nextTrigger++;
     if(!Transaction::AttachListener(value,listener,source,context,ticket)) {GC::freeGCHandle(handle);return;}
     triggerRoots.push_back({value->model,listener,source,context,ticket,handle});
-    LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=LISTENER_SELECTION_ATTACHED seq=%llu listener=%d source=%d ticket=%llu",(unsigned long long)value->sequence,listener,source,(unsigned long long)ticket);
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=LISTENER_SELECTION_ATTACHED seq=%llu listener=%d source=%d ticket=%llu",(unsigned long long)value->sequence,listener,source,(unsigned long long)ticket);
 }
 inline void RebindTriggerData(Transaction::Model model,Obj* original,Obj* copy) {
     if(!model || !original || !copy || !GC::getGCHandle) return;
@@ -324,7 +320,7 @@ inline void RebindTriggerData(Transaction::Model model,Obj* original,Obj* copy) 
         const auto handle=GC::newGCHandle(copy,false);
         if(!handle) continue;
         GC::freeGCHandle(r.handle);r.handle=handle;
-        LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=TRIGGER_COPY_BOUND listener=%d ticket=%llu",r.listener,(unsigned long long)r.ticket);
+        CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=TRIGGER_COPY_BOUND listener=%d ticket=%llu",r.listener,(unsigned long long)r.ticket);
     }
 }
 inline Transaction::Ref TakeTriggerData(Transaction::Model model,Obj* data,
@@ -343,15 +339,8 @@ inline Transaction::Ref TakeTriggerData(Transaction::Model model,Obj* data,
     }
     return count==1?result:Transaction::Ref{};
 }
-inline void (*originalTriggerAdd)(Obj*,Obj*,const void*)=nullptr;
 inline Obj* (*originalCreateTriggered)(Obj*,Obj*,const void*)=nullptr;
-// A consumed trigger must also be returned to its owning stock pool.
-inline bool (*consumeTriggerData)(Obj*,Obj*)=nullptr;
-static void TriggerAddHook(Obj* self,Obj* data,const void* method) {
-    if(consumeTriggerData && consumeTriggerData(self,data)) return;
-    AttachTriggerData(data,Transaction::active.value);
-    originalTriggerAdd(self,data,method);
-}
+inline void AttachQueuedTrigger(Obj*,Obj* data) { AttachTriggerData(data,Transaction::active.value); }
 static Obj* CreateTriggeredHook(Obj* self,Obj* data,const void* method) {
     Obj* effect=originalCreateTriggered(self,data,method);
     // Stock copies TriggerData into the runtime TriggeredEffect. Transfer the
@@ -362,17 +351,18 @@ static Obj* CreateTriggeredHook(Obj* self,Obj* data,const void* method) {
 }
 inline Obj* (*originalFindTargets)(Obj*,Obj*,Obj*,const void*)=nullptr;
 static Obj* FindTargetsHook(Obj* self,Obj* entity,Obj* context,const void* method) {
+    Core::Performance::Scope timing(Core::Performance::Area::TargetFinder);
     Obj* result=originalFindTargets(self,entity,context,method);
     const auto value=Transaction::active.value;
     if(!Transaction::Current(value)) return result;
     auto* list=reinterpret_cast<BNM::Structures::Mono::List<int>*>(result);
     const int count=list ? list->size : 0;
-    LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=TARGETS seq=%llu listener=%d count=%d",(unsigned long long)value->sequence,Transaction::active.effect,count);
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=TARGETS seq=%llu listener=%d count=%d",(unsigned long long)value->sequence,Transaction::active.effect,count);
     if(list && list->items && count>=0 && count<=int(list->items->capacity))
         for(int i=0;i<count;++i) {
             const int id=list->items->m_Items[i]; bool matched=false;
             Transaction::Resolve(value->model,Transaction::active.effect,id,false,matched);
-            LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=TARGET seq=%llu entity=%d selected=%d",(unsigned long long)value->sequence,id,int(matched));
+            CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=TARGET seq=%llu entity=%d selected=%d",(unsigned long long)value->sequence,id,int(matched));
         }
     return result;
 }
@@ -388,12 +378,12 @@ static Obj* ResolverCreateEffectsHook(Obj* self,Obj* entity,Obj* context,const v
     if(!Transaction::Current(value)) return result;
     auto* list=reinterpret_cast<BNM::Structures::Mono::List<Obj*>*>(result);
     const int count=list ? list->size : 0;
-    LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=CREATED_EFFECTS seq=%llu listener=%d contextEffect=%d count=%d",
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=CREATED_EFFECTS seq=%llu listener=%d contextEffect=%d count=%d",
         (unsigned long long)value->sequence,listener,IntAt(effectContext,0x18),count);
     if(list && list->items && count>=0 && count<=int(list->items->capacity))
         for(int i=0;i<count;++i) {
             Obj* effect=list->items->m_Items[i];
-            LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=CREATED_EFFECT seq=%llu index=%d effect=%d source=%d target=%d group=%d cost=%d",
+            CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=CREATED_EFFECT seq=%llu index=%d effect=%d source=%d target=%d group=%d cost=%d",
                 (unsigned long long)value->sequence,i,IntAt(effect,0x30),IntAt(effect,0x24),IntAt(effect,0x28),IntAt(effect,0x3C),
                 int(effect && modifySunCostEffectClass.IsValid() && BNM::IsA(effect,modifySunCostEffectClass)));
             AttachInsertedEffect(effect);
@@ -401,21 +391,37 @@ static Obj* ResolverCreateEffectsHook(Obj* self,Obj* entity,Obj* context,const v
     return result;
 }
 inline bool externalRouterHook=false;
+inline void RetireModel(Transaction::Model model) {
+    RetireSubmissions(model);
+    Transaction::RetireModel(model);
+    {std::lock_guard<std::mutex> guard(rootsLock);
+     routers.erase(std::remove_if(routers.begin(),routers.end(),[&](const auto& r){return r.model==model;}),routers.end());}
+    {std::lock_guard<std::mutex> guard(awaitingLock);
+     awaitingCreation.erase(std::remove_if(awaitingCreation.begin(),awaitingCreation.end(),[&](const auto& r){return r.value->model==model;}),awaitingCreation.end());}
+    {std::lock_guard<std::mutex> guard(effectsLock);
+     effectRoots.erase(std::remove_if(effectRoots.begin(),effectRoots.end(),[&](const auto& r){
+        if(r.key.model!=model) return false;GC::freeGCHandle(r.handle);return true;}),effectRoots.end());}
+    {std::lock_guard<std::mutex> guard(triggersLock);
+     triggerRoots.erase(std::remove_if(triggerRoots.begin(),triggerRoots.end(),[&](const auto& r){
+        if(r.model!=model) return false;GC::freeGCHandle(r.handle);return true;}),triggerRoots.end());}
+    {std::lock_guard<std::mutex> guard(automaticLock);
+     automaticRoots.erase(std::remove_if(automaticRoots.begin(),automaticRoots.end(),[&](const auto& r){
+        if(r.choice->model!=model) return false;GC::freeGCHandle(r.handle);return true;}),automaticRoots.end());}
+}
 inline void (*originalRouter)(void*,void*,const void*)=nullptr;
 static void RouterHook(void* self,void* effect,const void* method) {
     auto* router=static_cast<Obj*>(self);
     auto* runtimeEffect=static_cast<Obj*>(effect);
+    Core::Performance::Scope timing(Core::Performance::Area::EffectRouter,runtimeEffect && runtimeEffect->klass?runtimeEffect->klass->name:"none",IntAt(runtimeEffect,0x30),IntAt(runtimeEffect,0x28));
     ScopedRouter scope(router,runtimeEffect);
-    AuditBoundCostTarget(RouterModel(router),runtimeEffect);
-    originalRouter(self,effect,method);
+    AuditBoundCostTarget(scope.model,runtimeEffect);
+    {Core::Performance::Scope stock(Core::Performance::Area::StockEffectRouter,runtimeEffect && runtimeEffect->klass?runtimeEffect->klass->name:"none",IntAt(runtimeEffect,0x30),IntAt(runtimeEffect,0x28));originalRouter(self,effect,method);}
     CompleteAutomaticSelection(scope.link,runtimeEffect);
 }
 inline bool Initialize() {
-    // Return-to-lane trigger filtering shares this hook but is independent of
-    // optional PickFromThree transaction routing.
-    auto add=BNM::Class("PvZCards.Engine","TriggeredEffectCollection").GetMethod("Add",1);
-    if(add.IsValid() && !originalTriggerAdd) BNM::BasicHook(add,TriggerAddHook,originalTriggerAdd);
-    if(!originalTriggerAdd) LOG_ERR("CustomComponents/ReturnToLane: move trigger filter unavailable");
+    Core::ModelRegistry::retired.Add(RetireModel);
+    const bool triggerQueueReady=Engine::TriggerQueue::Initialize();
+    const bool effectQueueReady=Engine::EffectQueue::Initialize();
 #if !CUSTOMCOMPONENTS_PF3_TRANSACTION_PIPELINE
     return true;
 #endif
@@ -423,22 +429,25 @@ inline bool Initialize() {
     modifySunCostEffectClass=BNM::Class("PvZCards.Engine.Effects","ModifySunCostEffect");
     if(!externalRouterHook && !originalRouter) {
         auto method=BNM::Class("PvZCards.Engine","EffectRouter").GetMethod("ProcessEffect",1);
-        if(method.IsValid()) BNM::BasicHook(method,RouterHook,originalRouter);
+        if(method.IsValid()) CustomComponents::Core::Hooks::Install(method,RouterHook,originalRouter);
     }
     auto create=BNM::Class("PvZCards.Core.Systems","TriggeredEffectQueuingSystem").GetMethod("CreateTriggeredEffectFrom",1);
-    if(create.IsValid() && add.IsValid()) {
-        if(!originalCreateTriggered) BNM::BasicHook(create,CreateTriggeredHook,originalCreateTriggered);
-        if(originalCreateTriggered && !originalTriggerAdd) BNM::BasicHook(add,TriggerAddHook,originalTriggerAdd);
+    if(create.IsValid() && triggerQueueReady) {
+        if(!originalCreateTriggered) CustomComponents::Core::Hooks::Install(create,CreateTriggeredHook,originalCreateTriggered);
     }
     auto targets=BNM::Class("PvZCards.Core.Systems.Utilities","TargetEntityFinder").GetMethod("FindTargets",2);
-    if(targets.IsValid() && !originalFindTargets) BNM::BasicHook(targets,FindTargetsHook,originalFindTargets);
-    LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=TARGET_HOOK installed=%d",int(originalFindTargets!=nullptr));
+    if(targets.IsValid() && !originalFindTargets) CustomComponents::Core::Hooks::Install(targets,FindTargetsHook,originalFindTargets);
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=TARGET_HOOK installed=%d",int(originalFindTargets!=nullptr));
     auto creator=BNM::Class("PvZCards.Core.Systems","TriggeredEffectResolverSystem").GetMethod("CreateEffects",2);
     if(creator.IsValid() && !originalResolverCreateEffects)
-        BNM::BasicHook(creator,ResolverCreateEffectsHook,originalResolverCreateEffects);
-    LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=CREATION_HOOK installed=%d",int(originalResolverCreateEffects!=nullptr));
-    pipelineReady=queryModel.IsValid() && (externalRouterHook || originalRouter) && originalTriggerAdd && originalCreateTriggered && originalResolverCreateEffects;
-    LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=INIT version=2.23 ready=%d router=%d queryModel=%d triggerAdd=%d triggerCopy=%d costEffectClass=%d",int(pipelineReady),int(externalRouterHook || originalRouter),int(queryModel.IsValid()),int(originalTriggerAdd!=nullptr),int(originalCreateTriggered!=nullptr),int(modifySunCostEffectClass.IsValid()));
+        CustomComponents::Core::Hooks::Install(creator,ResolverCreateEffectsHook,originalResolverCreateEffects);
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=CREATION_HOOK installed=%d",int(originalResolverCreateEffects!=nullptr));
+    pipelineReady=queryModel.IsValid() && (externalRouterHook || originalRouter) && triggerQueueReady && effectQueueReady && originalCreateTriggered && originalResolverCreateEffects;
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=INIT version=2.23 ready=%d router=%d queryModel=%d triggerAdd=%d triggerCopy=%d costEffectClass=%d",int(pipelineReady),int(externalRouterHook || originalRouter),int(queryModel.IsValid()),int(triggerQueueReady),int(originalCreateTriggered!=nullptr),int(modifySunCostEffectClass.IsValid()));
+    if(pipelineReady) {
+        Engine::TriggerQueue::beforeEnqueue.Add(AttachQueuedTrigger);
+        Engine::EffectQueue::afterPush.Add(AttachQueueEffect);
+    }
     return pipelineReady;
 }
 inline void Reset() {
@@ -458,11 +467,7 @@ inline void Reset() {
         if(GC::freeGCHandle) for(const auto& effect:effectRoots) GC::freeGCHandle(effect.handle);
         effectRoots.clear();
     }
-    std::lock_guard<std::mutex> guard(rootsLock);
-    if(GC::freeGCHandle) {
-        for(const auto& r:routers) GC::freeGCHandle(r.handle);
-        for(const auto& m:models) GC::freeGCHandle(m.handle);
-    }
-    routers.clear();models.clear(); // tokens are never reused across matches
+    {std::lock_guard<std::mutex> guard(rootsLock);routers.clear();}
+    Core::ModelRegistry::Reset();
 }
 } // namespace CustomComponents::Pick3::TransactionRuntime

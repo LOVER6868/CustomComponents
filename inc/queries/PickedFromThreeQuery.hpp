@@ -1,3 +1,4 @@
+#include "engine/BoardPlacement.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 // PickedFromThreeQuery evaluates the GUID of CardDatabase backing entities.
@@ -16,10 +17,10 @@
 #include "queries/InDeckQuery.hpp"
 #include "pick3/PickedFromThreeSelection.hpp"
 #include "pick3/SelectionTransactionRuntime.hpp"
-#include "pick3/Patch2ProvenanceObservation.hpp"
-#include "pick3/Patch2QueryCallerObservation.hpp"
-#include "pick3/Patch2ShadowResolution.hpp"
-#include "pick3/Patch2ExactRouting.hpp"
+#include "pick3/SelectionExecutionScope.hpp"
+#include "pick3/SelectionQueryScope.hpp"
+#include "diagnostics/SelectionResolutionComparison.hpp"
+#include "pick3/SelectionQueryRouting.hpp"
 #include "log.h"
 #include "pick3/SelectionResolutionPolicy.hpp"
 
@@ -106,8 +107,9 @@ inline PickedResolution ResolvePicked(Obj* context,int effectId,int entity,int g
 }
 inline std::atomic<unsigned> pickedResolutionLogs{0};
 inline void LogPickedResolution(const char* domain,int effect,int entity,int guid,const PickedResolution& r) {
+    if constexpr(!CustomComponents::Diagnostics::kSelectionTrace) return;
     const auto n=++pickedResolutionLogs;
-    if(n<=256 || r.matched) LOG_INFO("CustomComponents/Pick3/PF3_QUERY: domain=%s effect=%d entity=%d guid=%d resolver=%s matched=%d seq=%llu",
+    if(n<=256) LOG_INFO("CustomComponents/Pick3/PF3_QUERY: domain=%s effect=%d entity=%d guid=%d resolver=%s matched=%d seq=%llu",
         domain,effect,entity,guid,r.origin,int(r.matched),
         (unsigned long long)(r.transaction?CustomComponents::Pick3::Transaction::active.value->sequence:0));
 }
@@ -118,6 +120,7 @@ struct PickedFromThreeQuery final : BNM::IL2CPP::Il2CppObject {
         if (ctor.IsValid()) ctor.cast<void>()[this]();
     }
     bool Matches(Obj* entity, Obj* context) {
+        if(auto* preview=Engine::PlacementQueryContext::ProvisionalCard())return Engine::BoardPlacement::Guid(entity)==Engine::BoardPlacement::Guid(preview);
         const int effectId = PickedEffectId(context);
         const int guid = InDeckCardGuidOf(entity);
         const bool legacyMatch = CustomComponents::Pick3::Picked::Matches(effectId, guid, true);
@@ -153,6 +156,7 @@ struct PickedFromThreeEntityQuery final : BNM::IL2CPP::Il2CppObject {
         if (ctor.IsValid()) ctor.cast<void>()[this]();
     }
     bool Matches(Obj* entity, Obj* context) {
+        if(auto* preview=Engine::PlacementQueryContext::ProvisionalCard())return entity==preview;
         const int effectId = PickedEffectId(context);
         const int entityId = entity && pickedFromThreeEntityId.IsValid()
             ? pickedFromThreeEntityId[entity].Get() : -1;

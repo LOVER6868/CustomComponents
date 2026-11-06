@@ -37,7 +37,7 @@ inline DiscardRevivePairLegality CheckDiscardRevivePair(
     // Environments occupy a separate slot. The stock placer replaces the
     // previous environment; friendly fighter capacity is irrelevant.
     const bool environment = FindComponent(context.card, "Environment") != nullptr;
-    const bool fighter = FindComponent(context.card, "Fighter") != nullptr;
+    const bool fighter = Engine::CardTypes::Fighter(context.card);
     const auto kind=ReturnToLanePolicy::Classify(fighter,environment);
     if(kind==ReturnToLanePolicy::CardKind::Unsupported) { result.reason = "CARD_TYPE"; return result; }
     if(environment) {
@@ -46,6 +46,12 @@ inline DiscardRevivePairLegality CheckDiscardRevivePair(
         result.legal = result.capacity;
         result.reason = result.legal ? "LEGAL_ENVIRONMENT_PAIR" : "ENVIRONMENT_UNAVAILABLE";
         return result;
+    }
+    // A return is not a move, but it still must obey fighter terrain rules.
+    // Keep this independent of creation placement and its grant overrides.
+    if(!ReturnToLanePolicy::AllowsTerrain(kind,FindComponent(laneEntity,"WaterTerrain")!=nullptr,
+        Engine::BoardPlacement::Active(context.card,"Aquatic"))) {
+        result.reason="AQUATIC_REQUIRED";return result;
     }
     if(!laneGetNumFightersForPlayer.IsValid()) { result.reason = "CAPACITY_UNAVAILABLE"; return result; }
     result.ownerFighters = laneGetNumFightersForPlayer[lane](expectedPlayerId);

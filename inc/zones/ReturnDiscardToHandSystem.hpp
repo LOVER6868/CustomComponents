@@ -1,3 +1,4 @@
+#include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 
@@ -360,10 +361,6 @@ namespace CustomComponents::Systems::ReturnFromDiscardPileSystem {
                 drawRecordSetDeckId[drawRecord](deckId); // visual anchor only
                 drawRecordSetCard[drawRecord](cardData);
                 effectRecordSetDefaultIds[drawRecord](effect);
-                // Cross-thread identity ticket only; frontend ShowInHand owns
-                // the actual one-shot stat presentation correction.
-                ZoneTriggeredAbilityPresentationSystem::RememberHandDeckReturn(
-                    model, targetId, statReturnSource);
 
                 CC_DIAG(
                     "CustomComponents/ReturnFromDiscard: FRONTEND DRAW-STYLE EntityId=%d HandId=%d VisualDeckId=%d record=%p cardData=%p",
@@ -536,12 +533,12 @@ namespace CustomComponents::Systems::ReturnFromDiscardPileSystem {
             return false;
         }
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             descriptorToEffect,
             DescriptorToEffectHook,
             originalDescriptorToEffect
         );
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             processEffect,
             ProcessEffectHook,
             originalProcessEffect
@@ -565,3 +562,4 @@ namespace CustomComponents::Systems::ReturnFromDiscardPileSystem {
     }
 
 } // namespace CustomComponents::Systems::ReturnFromDiscardPileSystem
+

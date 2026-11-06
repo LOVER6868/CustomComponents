@@ -3,7 +3,7 @@
 // -DCUSTOMCOMPONENTS_PF3_REPAIR_TRACE=0 for the release build.
 // No additional native hooks. All event sampling is bounded at call sites.
 #ifndef CUSTOMCOMPONENTS_PF3_REPAIR_TRACE
-#define CUSTOMCOMPONENTS_PF3_REPAIR_TRACE 1
+#define CUSTOMCOMPONENTS_PF3_REPAIR_TRACE 0
 #endif
 #include "log.h"
 #if CUSTOMCOMPONENTS_PF3_REPAIR_TRACE

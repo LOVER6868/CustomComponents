@@ -1,3 +1,8 @@
+#include "engine/BoardPlacement.hpp"
+#include "engine/DeckCreation.hpp"
+#include "engine/EntityAccess.hpp"
+#include "engine/CardTypes.hpp"
+#include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 
@@ -24,6 +29,9 @@
 #include "core/SceneViewContext.hpp"
 #include "zones/DeckMaterializer.hpp"
 #include "zones/ReturnToLanePolicy.hpp"
+#include "zones/ReturnToLaneTargetScope.hpp"
+#include "zones/ZoneTransfer.hpp"
+#include "core/ManagedPool.hpp"
 #include "diagnostics/DiagnosticLogging.hpp"
 #include "log.h"
 
@@ -116,6 +124,9 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
     // History / frontend bridge
     // ---------------------------------------------------------------------
     inline BNM::Method<Obj*> historyAddRecordByType;
+    inline BNM::Method<void> historyAppendRecord;
+    inline BNM::Field<Obj*> historyInstances;
+    inline BNM::Field<MonoList<Obj*>*> historyRecords;
 
     inline BNM::Method<void> returnedDeckRecordSetCardId;
     inline BNM::Method<void> returnedDeckRecordSetDeckId;
@@ -150,6 +161,7 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
     #include "zones/detail/LegacyReturnProcessHook.inl"
     #include "zones/detail/DiscardToDeck.inl"
     #include "zones/detail/DiscardRevivePairLegality.inl"
+    #include "zones/detail/ReturnToLaneTargeting.inl"
     #include "zones/detail/DiscardToLane.inl"
     #include "zones/detail/HandToDiscard.inl"
     // =====================================================================
@@ -452,6 +464,10 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
             "AddRecord",
             {systemType.GetCompileTimeClass()}
         ).cast<Obj*>();
+        historyAppendRecord=history.GetMethod("AddRecord",
+            {BNM::Class("PvZCards.Engine","Record").GetCompileTimeClass()}).cast<void>();
+        historyInstances=history.GetField("<Instances>k__BackingField").cast<Obj*>();
+        historyRecords=history.GetField("Records").cast<MonoList<Obj*>*>();
 
         returnedDeckRecordSetCardId = returnedDeckRecord.GetMethod("set_CardId", 1).cast<void>();
         returnedDeckRecordSetDeckId = returnedDeckRecord.GetMethod("set_DeckId", 1).cast<void>();
@@ -527,29 +543,29 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
             return false;
         }
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             createDeckToEffect,
             CreateDeckDescriptorToEffectHook,
             originalCreateDeckDescriptorToEffect
         );
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             moveLaneToEffect,
             MoveLaneDescriptorToEffectHook,
             originalMoveLaneDescriptorToEffect
         );
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             createDeckProcess,
             CreateDeckProcessEffectHook,
             originalCreateDeckProcessEffect
         );
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             moveLaneProcess,
             MoveLaneProcessEffectHook,
             originalMoveLaneProcessEffect
         );
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             moveToDiscardProcess,
             MoveToDiscardProcessEffectHook,
             originalMoveToDiscardProcessEffect
@@ -608,7 +624,8 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
         return RegisterTypes() &&
                DiscardFromHandSystem::Initialize() &&
                DiscardFromHandPresentationSystem::Initialize() &&
-               InstallHooks() && moveToDiscardEffectPileId.IsValid();
+               InstallHooks() && moveToDiscardEffectPileId.IsValid() && Targeting::Initialize();
     }
 
 } // namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem
+

@@ -1,0 +1,8 @@
+{
+  "$type": "PvZCards.Engine.Components.Armor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "ArmorAmount": {
+      "BaseValue": 2
+    }
+  }
+}

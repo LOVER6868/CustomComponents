@@ -193,6 +193,7 @@
             return false;
         }
 
+        const auto producerLease=stockContext->lifetime;
         Obj* model = stockContext->model;
         Obj* instances = stockContext->instances;
         Obj* triggeredEffects = stockContext->triggeredEffects;
@@ -397,7 +398,7 @@
                         effectEntityGetSource[static_cast<Obj*>(nullptr)](effectEntity), model);
                     if (tracePlayListener) {
                         LOG_INFO(
-                            "CustomComponents/UnearthTrace: CUSTOM_PLAY_LISTENER effect=%d listenerEffect=%d listenerSource=%d verdict=rejected model=%p",
+                            "CustomComponents/PickFromThreeTrace: CUSTOM_PLAY_LISTENER effect=%d listenerEffect=%d listenerSource=%d verdict=rejected model=%p",
                             effectSourceId[firingEffect].Get(), traceEffectId, traceSourceId, (void*)model);
                         LOG_INFO(
                             "CustomComponents/Pick3/PATCH2_TRIGGER: phase=PLAY_LISTENER_REJECTED listenerEffect=%d listenerSource=%d reason=STOCK_TRIGGER_VALIDATOR_FALSE group=UNKNOWN model=%p",
@@ -474,7 +475,7 @@
                     listenerEffectEntityId, listenerSourceId, model);
                 if (tracePlayListener) {
                     LOG_INFO(
-                        "CustomComponents/UnearthTrace: CUSTOM_PLAY_LISTENER effect=%d listenerEffect=%d listenerSource=%d verdict=queued model=%p",
+                        "CustomComponents/PickFromThreeTrace: CUSTOM_PLAY_LISTENER effect=%d listenerEffect=%d listenerSource=%d verdict=queued model=%p",
                         effectSourceId[firingEffect].Get(), traceEffectId, traceSourceId, (void*)model);
                     // 2.8: immutable integers only; no new managed getters.
                     // Queued means accepted by TriggeredEffectCollection.Add,

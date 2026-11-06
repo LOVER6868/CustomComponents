@@ -1,9 +1,23 @@
 # Documentation
 
-Start with [source layout](SOURCE_LAYOUT.md), [hook ownership](HOOK_OWNERSHIP.md),
-and [release notes](../CHANGELOG.md). Component usage guides live in `reference/`;
-[PickFromThree](PICKFROMTHREE.md) covers selection configuration and UI behavior.
+Begin with [installation](GETTING_STARTED.md), then find a component in the
+[feature catalog](FEATURES.md) or browse the [examples](../examples/README.md).
 
-`history/` preserves earlier research and patch notes. Those documents may describe
-superseded experiments or unverified states. Current source and release notes take
-precedence when assessing this build.
+| Guide | Contents |
+| --- | --- |
+| [Getting started](GETTING_STARTED.md) | Installation, dependency fix and first card edit |
+| [Features](FEATURES.md) | Abilities, effects, queries, triggers and presentation |
+| [PickFromThree](PICKFROMTHREE.md) | Modes, additional targets and picked-card identity |
+| [Queries](QUERIES.md) | Physical cards, GUIDs, positions and placement |
+| [Zone effects](ZONE_EFFECTS.md) | Discard, draw, return, create and deck ordering |
+| [Abilities](ABILITIES.md) | Grants, durations, random keywords and board abilities |
+| [Presentation](PRESENTATION.md) | Inspection stats, heralds and custom icons |
+| [Configuration](CONFIGURATION.md) | Runtime options and diagnostics |
+| [Compatibility](KNOWN_ISSUES.md) | Constraints and integration notes |
+| [Architecture](ARCHITECTURE.md) | Model ownership, transactions and shared services |
+| [Source layout](SOURCE_LAYOUT.md) | Implementation map |
+| [Hook ownership](HOOK_OWNERSHIP.md) | Native owners and observer interfaces |
+| [Contributing](CONTRIBUTING.md) | Local development and the GitHub distribution |
+
+The [changelog](../CHANGELOG.md) describes changes from the upstream revision.
+Working notes and investigation logs are kept outside this public manual.

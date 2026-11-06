@@ -1,77 +1,53 @@
-# Release notes
+# Changelog
 
-## Patch 4 — ReturnToLane and project cleanup
+## Unreleased
 
-Baseline: the patch 3 source archive whose PvP PickFromThreeTrigger behavior the
-user confirmed works. The patch 3 deferred-submission ledger is included unchanged.
+Compared with published [`main` at e6b7823](https://github.com/LOVER6868/CustomComponents/tree/e6b7823e140e34918accd22ad8c4d2f1daa89db9),
+verified on 2026-11-06. These are the changes in this working version, not released
+GitHub version numbers.
 
-### Gameplay
+### Added
 
-- Filter stock `MoveTrigger` entries whose event originates from the custom
-  ReturnToLane descriptor. Resolve both listener and origin in the exact producer
-  model; return suppressed TriggerData to that producer's InstanceManager.
-- Keep the existing single `TriggeredEffectCollection.Add` detour. Install its
-  filter even with optional PF3 transaction routing compiled out.
-- Classify returned cards as fighter or environment. Environments use the stock
-  EnvironmentPlacer and environment creation record; fighters retain LaneModifier,
-  Team-Up capacity checks, and fighter creation records. Unsupported cards reject.
-- Share physical legality between selection feasibility and execution. Emit both
-  play and return events in the executing model after successful placement/history.
+- RandomKeyword grants with configurable pools and source/duration-aware removal.
+- Destroyable hidden BoardAbility support.
+- Configurable StatIcons and a reusable frame-icon provider registry.
+- CreateCardInDeckFromSubset for integrated subset-based deck creation/shuffling.
+- ListPositionQuery for deck/discard positions from either end.
+- OpenLaneForCardQuery and CanBePlacedQuery for placement-aware targeting.
+- Independent additional-target selection and additional-first ordering for PF3.
+- Team-Up, Aquatic and front/back options for stock subset creation.
+- A current feature catalog, authoring guides and categorized example indexes.
 
-### Research basis
+### Changed
 
-The supplied `dump.cs` and matching local ARM64 `libil2cpp.so` were inspected.
-`CreatedCardPlacer.PlayEnvironment` at RVA 0x22097D8 calls
-`EnvironmentPlacer.PlaceEnvironmentInLane(int,int)` at 0x22099FC. That public
-method removes the old environment and then installs the returned environment's
-LaneElement/slot; `RecordEnvironmentCreatedInLane` at 0x2209AAC writes a
-CreateEnvironmentInLaneRecord. These addresses are evidence for this binary,
-not hardcoded hook addresses added by this patch.
+- PF3 selection, submission and listener routing retain model/effect/group/generation
+  identity and exact physical representatives, including automatic unique-GUID choices.
+- Verified created-card binding participates in normal operation independently of
+  tracing. Provisional target queries remain separate from committed picked queries.
+- Consecutive menus observe the frontend frame tick and refresh the real local
+  holder without submitting synthetic board actions.
+- Return-to-lane preserves card identity, supports fighters/environments, checks
+  fighter capacity and Aquatic water placement, and excludes return-origin moves.
+- Custom discards provide their own herald origin and cooperate with optional
+  HeraldModifiers. Inspection stat reconciliation is confined to discard viewing.
+- Deck subset drawing supports physical-entity queries and delivered-card heralds.
+- Subset creation options survive deserialization/copying; granted Aquatic affects
+  the stock subset finder before its innate-trait lane restriction.
+- Shared services centralize native hook ownership, model lifetime, queues, managed
+  settings and subset selection.
 
-ReturnToLane already used MoveCardToLanesEffect as a stock runtime carrier, so
-stock trigger processing could treat a discard return as movement. Filtering the
-queued MoveTrigger by originating descriptor preserves normal movement effects.
-This source/binary analysis still needs confirmation against device traces.
+### Performance and distribution
 
-### Cleanup
-
-- Moved 66 historical patch/investigation/changeset files into `docs/history/` and
-  repaired existing Markdown links affected by those moves. No gameplay sources
-  or historical tests were discarded.
-- Replaced the 473-line lane-return investigation handler with a focused transfer
-  implementation. Removed disabled trace blocks and a misleading bypass constant.
-- Removed temporary vector allocations from repeated entity/component lookups;
-  validate list bounds before iteration.
-- Added a current README, layout guide, ReturnToLane guide, test index, and one
-  Windows native-check command. Build output is ignored under `.build/`.
-- Kept existing source filenames and hook boundaries so the cleanup stays reviewable.
+- Reuse generation metadata instead of copying the full selection history.
+- Reuse verified router model lookups and cache tag/keyword metadata.
+- Avoid copying every tag for a single-prefix lookup.
+- Add bounded nested timing for turn/phase, copy, selection and ability expiry work.
+- Separate local tests, maintenance tools and investigation notes from the GitHub
+  distribution. Include the required dependency installer with the production patch.
+- Replace scattered private iteration notes with the current public manual.
 
 ### Validation
 
-Android NDK r27d / Clang 18 full-module syntax checks passed for ARM64/API 21 in
-default and rollback configurations. Six MSVC C++20 behavioral regressions passed;
-see [tests](tests/README.md). The package's entries are checked against local source
-hashes. This is a source release, not a linked library or APK.
-
-### Device acceptance still required
-
-Use matching patch 4 builds/card data on both PvP clients, then test:
-
-| Scenario | Expected |
-| --- | --- |
-| Fighter return into an empty lane | Original entity appears; play and return listeners execute; move listeners do not |
-| Ordinary move, including a move generated by a return listener | MoveTrigger continues to execute |
-| Full friendly side / Team-Up | Full side rejects; a legal plant Team-Up pair succeeds |
-| Environment return with friendly fighters present | Environment slot used independently of fighter capacity |
-| Environment replaces either player's environment | Prior environment is discarded once; lane slot and view show the returned environment |
-| Environment enters an empty lane | Correct environment animation and persistent effect, no fighter slot consumed |
-| Non-card/trick or invalid source/destination | No discard removal or listener event |
-| Repeat lane → discard → lane | No duplicate entity/view or trigger delivery |
-| PvE, then PvP with each player selecting | Same board state and trigger results on both devices |
-| PickFromThree live/database selection | Working patch 3 trigger behavior remains |
-
-Runtime failures after discard removal are not a general rollback transaction.
-The existing stale-view/model gate is preserved; it can skip a transfer until the
-frontend mapping is clear. Face-down behavior and arbitrary multi-card event-target
-semantics are outside this patch. Historical issues remain in
-[known issues](docs/KNOWN_ISSUES.md).
+Local host, schema and native build checks accompany development. Device gameplay
+and performance measurements remain separate evidence; the manual documents current
+constraints rather than claiming universal test coverage.

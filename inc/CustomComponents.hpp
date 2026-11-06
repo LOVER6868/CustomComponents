@@ -16,6 +16,7 @@
 #include "queries/InDeckQuery.hpp"
 #include "queries/InDiscardPileQuery.hpp"
 #include "queries/DiscardedFromQuery.hpp"
+#include "queries/ListPositionQuery.hpp"
 #include "queries/PickedFromThreeQuery.hpp"
 
 // Custom triggers and shared presentation infrastructure
@@ -42,3 +43,7 @@
 // Deck persistence and discard inspection systems
 #include "zones/DeckMaterializer.hpp"
 #include "presentation/DiscardPileViewer.hpp"
+
+#include "effects/SubsetCreationExtensions.hpp"
+
+#include "queries/PlacementQueries.hpp"

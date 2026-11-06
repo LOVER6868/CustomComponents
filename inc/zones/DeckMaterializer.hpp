@@ -1,3 +1,5 @@
+#include "engine/Events.hpp"
+#include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 #include "core/SceneViewContext.hpp"
@@ -640,8 +642,10 @@ static void InitializeDeckHook(
     // Runtime tracing proved that the normal starting deck's AddCardGuids call
     // completes inside InitializeDeck. Materialize only after stock has finished
     // constructing and associating the player's deck.
+    Engine::Events::beforeDeckInitialize.Notify({static_cast<Obj*>(self),playerData,playerEntity});
     originalInitializeDeck(self, playerData, playerEntity, method);
     MaterializePlayerDeck(self, playerEntity);
+    Engine::Events::afterDeckInitialize.Notify({static_cast<Obj*>(self),playerData,playerEntity});
 }
 
 inline bool Initialize() {
@@ -728,8 +732,8 @@ inline bool Initialize() {
             pvpCreateCardIfMissing.IsValid() && pvpBackingEntityByGuid.IsValid();
     }
     LOG_INFO("CustomComponents/DeckMaterializer: pvpInsertStockHelperReady=%d (optional; no extra hooks)",pvpInsertApisReady?1:0);
-    BNM::BasicHook(initializeDeck, InitializeDeckHook, originalInitializeDeck);
-    BNM::BasicHook(
+    CustomComponents::Core::Hooks::Install(initializeDeck, InitializeDeckHook, originalInitializeDeck);
+    CustomComponents::Core::Hooks::Install(
         removeExtraCardsProcess,
         RemoveExtraCardsProcessHook,
         originalRemoveExtraCardsProcess

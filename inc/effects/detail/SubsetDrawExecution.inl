@@ -26,18 +26,20 @@
         const void* method
     ) {
         if (!currentPluck || !currentPluck->active)
-            return originalPickRandomGuid(self, cards, method);
+            return Engine::SubsetSelection::PickDatabase(static_cast<Obj*>(self),cards,method,originalPickRandomGuid,GuidOf);
 
         currentPluck->pickerCalled = true;
 
         if (TypeName(cards) != "List`1") {
-            return originalPickRandomGuid(self, cards, method);
+            return Engine::SubsetSelection::PickDatabase(static_cast<Obj*>(self),cards,method,originalPickRandomGuid,GuidOf);
         }
 
+        const auto rules=Engine::SubsetSelection::candidateRules.Read();
+        const auto context=Engine::SubsetSelection::Request(static_cast<Obj*>(self),Engine::SubsetSelection::Purpose::DeckDraw,currentPluck->deckEntity);
         std::set<int> candidateGuids;
         for (auto* card : Items(reinterpret_cast<MonoList<Obj*>*>(cards))) {
             const int guid = GuidOf(card);
-            if (guid >= 0)
+            if (guid >= 0 && Core::CandidateRules<Engine::SubsetSelection::Context>::Allows(rules,context,guid))
                 candidateGuids.insert(guid);
         }
 
@@ -60,12 +62,12 @@
             return -1;
 
         // This path is only expected for PluckFailSafe=true fallback.
-        return originalPickRandomGuid(self, cards, method);
+        return Engine::SubsetSelection::PickDatabase(static_cast<Obj*>(self),cards,method,originalPickRandomGuid,GuidOf);
     }
 
     // Explicit live-query mode. Evaluate in the real model and intersect exact
     // entity IDs with this deck's physical entries; never choose a GUID copy.
-    inline int FindEntitySubsetEntry(Obj* finder,Obj* query,Obj* effect,Obj* model,
+    inline int FindEntitySubsetEntry(Obj* finder,Obj* query,Obj* effect,Obj* model,Obj* deck,
             const std::vector<Obj*>& entries,const std::set<Obj*>& reserved) {
         static auto contextClass=BNM::Class("PvZCards.Engine","EntityQueryContext");
         static auto finderClass=BNM::Class("PvZCards.Engine","EntityFinder");
@@ -97,8 +99,12 @@
         Obj* liveFinder=finderClass.CreateNewObjectParameters(model);
         Obj* matches=liveFinder?find[liveFinder](query,context):nullptr;
         std::vector<std::pair<int,int>> identities;
+        const auto rules=Engine::SubsetSelection::candidateRules.Read();
+        auto selection=Engine::SubsetSelection::Request(finder,Engine::SubsetSelection::Purpose::DeckDraw,deck);
+        selection.model=model;selection.effect=effect;selection.query=query;
         for(auto* entity:Items(reinterpret_cast<MonoList<Obj*>*>(matches)))
-            if(entity && GuidOf(entity)>0) identities.push_back({entityId[entity].Get(),GuidOf(entity)});
+            if(entity && GuidOf(entity)>0 && Core::CandidateRules<Engine::SubsetSelection::Context>::Allows(rules,selection,GuidOf(entity)))
+                identities.push_back({entityId[entity].Get(),GuidOf(entity)});
         std::vector<CustomComponents::DeckSelection::Entry> physical;
         for(auto* entry:entries)
             physical.push_back(entry?CustomComponents::DeckSelection::Entry{entryEntityId[entry].Get(),entryGuid[entry].Get(),reserved.count(entry)!=0}:CustomComponents::DeckSelection::Entry{});
@@ -150,7 +156,7 @@
         const auto reserved = Reserved(model, deck, entries);
         if(pending->entityQuery) {
             Obj* finder=subsetSystemFinder[static_cast<Obj*>(self)].Get();
-            const int index=FindEntitySubsetEntry(finder,subsetEffectQuery[effect].Get(),effect,model,entries,reserved);
+            const int index=FindEntitySubsetEntry(finder,subsetEffectQuery[effect].Get(),effect,model,FindEntity(model,deck),entries,reserved);
             Obj* ability=AbilitySystemFor(model);
             Obj* handEntity=FindEntity(model,hand);
             if(index>=0 && ability && handEntity && MoveToTop(list,index,entries[index])) {

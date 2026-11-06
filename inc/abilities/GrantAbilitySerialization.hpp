@@ -1,3 +1,4 @@
+#include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 #include <mutex>
@@ -290,7 +291,7 @@ namespace CustomComponents::GrantAbilitySerialization {
         }
         CC_DIAG("CustomComponents/GrantAbility/Serialization: sharing SetObjectProperties hook with CustomFieldBridge");
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             convert,
             ConvertHook,
             originalConvert
@@ -302,7 +303,7 @@ namespace CustomComponents::GrantAbilitySerialization {
         }
         CC_DIAG("CustomComponents/GrantAbility/Serialization: HOOK OK ToEffect");
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             descriptorCopy,
             DescriptorCopyHook,
             originalDescriptorCopy
@@ -314,7 +315,7 @@ namespace CustomComponents::GrantAbilitySerialization {
         }
         CC_DIAG("CustomComponents/GrantAbility/Serialization: HOOK OK Descriptor.DeepCopyFrom");
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             effectCopy,
             EffectCopyHook,
             originalEffectCopy
@@ -326,7 +327,7 @@ namespace CustomComponents::GrantAbilitySerialization {
         }
         CC_DIAG("CustomComponents/GrantAbility/Serialization: HOOK OK Effect.DeepCopyFrom");
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             descriptorPool,
             DescriptorPoolHook,
             originalDescriptorPool
@@ -338,7 +339,7 @@ namespace CustomComponents::GrantAbilitySerialization {
         }
         CC_DIAG("CustomComponents/GrantAbility/Serialization: HOOK OK Descriptor.HandleReturnToPool");
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             effectPool,
             EffectPoolHook,
             originalEffectPool

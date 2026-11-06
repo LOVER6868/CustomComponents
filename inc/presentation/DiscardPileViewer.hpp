@@ -1,3 +1,5 @@
+#include "core/HookRegistry.hpp"
+#include "presentation/InspectionStatPresentation.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 
@@ -48,6 +50,7 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
     // Share the existing board-tap trampoline with Discover-style PF3 UI.
     // The callback returns true only for taps owned by an active PF3 screen.
     inline bool (*externalPickerTap)(Obj*, int*) = nullptr;
+    inline bool (*externalAdditionalTap)(Obj*,Obj*,int*) = nullptr;
 
     // InspectTappedCardEntityCommand
     inline BNM::Field<Obj*> commandGestureData;
@@ -287,8 +290,10 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
             }
 
             inspectionItemCtor[item](guid);
+            Presentation::InspectionStats::Remember(item,cardEntity,model);
 
-            // Keep this a GUID-based *inspection snapshot*. The stock
+            // Artwork keeps its GUID identity; InspectionStats separately owns
+            // a value snapshot for this exact physical card. The stock
             // InspectionItem(int) constructor leaves EntityId=-1 and
             // CreationSourceGuid=-1. A card may leave the discard pile while
             // asynchronously loaded inspection panels are being recycled;
@@ -342,7 +347,8 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
     // Entity IDs from CardDatabase options are not real engine entities; never
     // forward their virtual CardViewMapper IDs to the inspection system.
     inline bool ShowCardGuidList(Obj* showSignal, const int* /*ids*/,
-                                 const int* guids, int count, int initial) {
+                                 const int* guids, int count, int initial,
+                                 const Presentation::InspectionStats::Snapshot* stats=nullptr) {
         if (!showSignal || !guids || count <= 0 ||
             !inspectionItemClass.IsValid() || !inspectionConfigClass.IsValid() ||
             !inspectionItemCtor.IsValid() || !inspectionConfigCtor.IsValid() ||
@@ -359,7 +365,8 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
             Obj* item = inspectionItemClass.CreateNewInstance();
             if (!item) continue;
             inspectionItemCtor[item](guids[i]);
-            // Inspect by immutable card GUID, as in the discard-pile viewer.
+            if(stats) Presentation::InspectionStats::Store(Presentation::InspectionStats::items,item,stats[i]);
+            // Artwork uses the GUID; optional stats are per-physical-card values.
             if (i == initial) focus = items->size;
             items->Add(item);
         }
@@ -391,6 +398,8 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
             ? originalPickTarget(self, overlappedEntities, method)
             : -1;
 
+        int additionalResult=stockResult;
+        if(externalAdditionalTap && externalAdditionalTap(static_cast<Obj*>(self),overlappedEntities,&additionalResult))return additionalResult;
         // Preserve every normal stock board-tap target.
         // EntityId 0 is valid in this build (the local player commonly uses it).
         if (stockResult >= 0)
@@ -808,13 +817,13 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
             return false;
         }
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             execute,
             InspectTappedExecuteHook,
             originalInspectTappedExecute
         );
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             pickTarget,
             PickTargetHook,
             originalPickTarget
@@ -839,8 +848,8 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
             auto prev = inspectionMediator.GetMethod("ScrollToPrev", 0);
             if (overlayActiveLoads.IsValid() && overlayDismissed.IsValid() &&
                 next.IsValid() && prev.IsValid()) {
-                BNM::BasicHook(next, ScrollNextHook, originalScrollNext);
-                BNM::BasicHook(prev, ScrollPrevHook, originalScrollPrev);
+                CustomComponents::Core::Hooks::Install(next, ScrollNextHook, originalScrollNext);
+                CustomComponents::Core::Hooks::Install(prev, ScrollPrevHook, originalScrollPrev);
                 LOG_INFO("CustomComponents/DiscardPileViewer/SCROLL: guard installed next=%d prev=%d",
                          originalScrollNext ? 1 : 0, originalScrollPrev ? 1 : 0);
             } else {
@@ -859,3 +868,7 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
     }
 
 } // namespace CustomComponents::Utilities::DiscardPileViewer
+
+
+
+

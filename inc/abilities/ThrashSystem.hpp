@@ -1,3 +1,4 @@
+#include "core/HookRegistry.hpp"
 #pragma once
 #include <BNM/Class.hpp>
 #include <BNM/Field.hpp>
@@ -269,14 +270,19 @@ namespace CustomComponents::Systems {
             void* previousRouter = activeEffectRouter;
             activeEffectRouter = self;
 
+            auto* runtimeEffect=static_cast<BNM::IL2CPP::Il2CppObject*>(effect);
+            const char* effectName=runtimeEffect && runtimeEffect->klass?runtimeEffect->klass->name:"none";
+            CustomComponents::Core::Performance::Scope timing(CustomComponents::Core::Performance::Area::EffectRouter,effectName,
+                CustomComponents::Pick3::TransactionRuntime::IntAt(runtimeEffect,0x30),CustomComponents::Pick3::TransactionRuntime::IntAt(runtimeEffect,0x28));
             CustomComponents::Pick3::TransactionRuntime::ScopedRouter selectionScope(
                 static_cast<BNM::IL2CPP::Il2CppObject*>(self),
                 static_cast<BNM::IL2CPP::Il2CppObject*>(effect));
             CustomComponents::Pick3::TransactionRuntime::AuditBoundCostTarget(
-                CustomComponents::Pick3::TransactionRuntime::RouterModel(
-                    static_cast<BNM::IL2CPP::Il2CppObject*>(self)),
+                selectionScope.model,
                 static_cast<BNM::IL2CPP::Il2CppObject*>(effect));
-            originalEffectRouterProcess(self, effect, method);
+            {CustomComponents::Core::Performance::Scope stock(CustomComponents::Core::Performance::Area::StockEffectRouter,effectName,
+                CustomComponents::Pick3::TransactionRuntime::IntAt(runtimeEffect,0x30),CustomComponents::Pick3::TransactionRuntime::IntAt(runtimeEffect,0x28));
+             originalEffectRouterProcess(self, effect, method);}
             CustomComponents::Pick3::TransactionRuntime::CompleteAutomaticSelection(selectionScope.link,
                 static_cast<BNM::IL2CPP::Il2CppObject*>(effect));
 
@@ -796,13 +802,13 @@ namespace CustomComponents::Systems {
                 return false;
             }
 
-            BNM::BasicHook(
+            CustomComponents::Core::Hooks::Install(
                 createAndAddDamageEffect,
                 CreateAndAddDamageEffectHook,
                 originalCreateAndAddDamageEffect
             );
 
-            BNM::BasicHook(
+            CustomComponents::Core::Hooks::Install(
                 effectRouterProcess,
                 EffectRouterProcessHook,
                 originalEffectRouterProcess
@@ -810,7 +816,7 @@ namespace CustomComponents::Systems {
 
             CustomComponents::Pick3::TransactionRuntime::externalRouterHook = originalEffectRouterProcess != nullptr;
 
-            BNM::BasicHook(
+            CustomComponents::Core::Hooks::Install(
                 damageTarget,
                 DamageTargetHook,
                 originalDamageTarget

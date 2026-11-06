@@ -1,3 +1,4 @@
+#include "core/HookRegistry.hpp"
 #pragma once
 
 #include <BNM/BasicMonoStructures.hpp>
@@ -217,7 +218,7 @@ inline bool Initialize() {
         return false;
     }
 
-    BNM::BasicHook(
+    CustomComponents::Core::Hooks::Install(
         calculate,
         CalculateSortedValueHook,
         originalCalculateSortedValue

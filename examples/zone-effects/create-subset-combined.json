@@ -1,0 +1,13 @@
+{
+  "$type": "PvZCards.Engine.Components.CreateCardFromSubsetEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "ForceFaceDown": false,
+    "SubsetQuery": {
+      "$type": "PvZCards.Engine.Queries.PickedFromThreeQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+      "$data": {}
+    },
+    "GrantTeamup": true,
+    "GrantAquatic": true,
+    "CreationPosition": "Front"
+  }
+}

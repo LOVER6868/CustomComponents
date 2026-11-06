@@ -1,3 +1,7 @@
+#include "presentation/DiscardHerald.hpp"
+#include "presentation/StatIconSystem.hpp"
+#include "presentation/FrameIconRegistry.hpp"
+#include "effects/CreateCardInDeckFromSubset.hpp"
 #include <bloom/bloom.h>
 #include <cstdio>
 #include <cstdlib>
@@ -6,11 +10,12 @@
 
 #include "log.h"
 #include "CustomComponents.hpp"
+#include "abilities/BoardAbilitySystem.hpp"
 #include "diagnostics/Pick3PredictionIsolationAudit.hpp"
 #include "diagnostics/PvpInitialModelAudit.hpp"
 #include "diagnostics/PvpDeckPrepopulatePrototype.hpp"
 #include "pick3/Pick3ReleaseSafety.hpp"
-#include "pick3/Pick3CreationProvenanceTrace.hpp"
+#include "pick3/CreationProvenance.hpp"
 #include "DrawCardFromSubsetInDeck.hpp"
 #include "DiscardPileZoneEffects.hpp"
 
@@ -95,6 +100,7 @@ namespace {
             return;
         }
 
+        CustomComponents::Core::Performance::enabled=BLOOM_CONFIG_BOOL("Performance", "Enabled", false);
         const int startupCutoff = ReadStartupCutoff();
         LOG_INFO("CustomComponents/STARTUP_DIAG: BEGIN cutoff=%d (-1 means full startup)", startupCutoff);
         // The cutoff stops the *entire* remainder of initialization in original order.
@@ -159,6 +165,10 @@ namespace {
         if (!CustomComponents::Systems::DrawCardFromSubsetInDeckSystem::Initialize()) {
             LOG_ERR("CustomComponents: DrawCardFromSubsetInDeck initialization failed");
             return;
+        }
+
+        if(!CustomComponents::Effects::SubsetCreationExtensions::Initialize()) {
+            LOG_ERR("CustomComponents: subset creation extensions initialization failed");return;
         }
 
         // Off by default. Opt in via config.ini to observe stock prediction copying.
@@ -286,6 +296,11 @@ namespace {
             LOG_ERR("CustomComponents: DiscardedFromQuery initialization failed");
             return;
         }
+        if(!CustomComponents::Queries::InitializeListPositionQuery()) {
+            LOG_ERR("CustomComponents: ListPositionQuery initialization failed");return;
+        }
+
+        if(!CustomComponents::Queries::InitializePlacementQueries()) {LOG_ERR("CustomComponents: placement queries initialization failed");return;}
 
         // Enable ordered-zone ListPosition sorting through stock target scoping.
         if (!CustomComponents::Systems::TargetScopeSupport::Initialize()) {
@@ -311,6 +326,13 @@ namespace {
             return;
         }
 
+        if(!CustomComponents::Abilities::RandomKeyword::Register() ||
+           !CustomComponents::Abilities::BoardAbility::Initialize()) {
+            LOG_ERR("CustomComponents: selected ability initialization failed");return;
+        }
+        if(!CustomComponents::Effects::CreateDeckSubset::Initialize()) {LOG_ERR("CustomComponents: subset deck creation initialization failed");return;}
+        if(!CustomComponents::Systems::InitializeStatIcons() || !CustomComponents::Presentation::FrameIcons::Initialize()) {LOG_ERR("CustomComponents: icon service initialization failed");return;}
+        if(!CustomComponents::Presentation::Herald::Initialize()) {LOG_ERR("CustomComponents: discarded herald initialization failed");return;}
         // All feature enum registrations must precede the single shared
         // DefaultDeserializer.GetValue native hook. Do not install it in a
         // feature-specific serializer; this is the generic hook owner.
@@ -410,21 +432,14 @@ namespace {
         // interruption/holder fallback settings no longer exist.
         CustomComponents::Pick3::TargetButtonTrace::enableGuardedReconcile =
             BLOOM_CONFIG_BOOL("Pick3LifecycleRepair", "GuardedStockButtonRecovery", true);
-        // Optional read-only CardDatabase GUID-to-entity diagnostic.
-        // Disabled unless explicitly requested; never alters stock effect execution.
+        // Binding is gameplay behavior. The trace switch controls optional
+        // diagnostics, never whether produced cards receive their PF3 identity.
         const bool creationTraceRequested = BLOOM_CONFIG_BOOL("Pick3CreationTrace", "Enabled", false);
-        if (creationTraceRequested) {
-            if (!CustomComponents::Pick3::CreationTrace::Initialize())
-                LOG_ERR("CustomComponents/Pick3/CREATION_TRACE: requested but unavailable");
-        }
-        // The optional CreationTrace already owns FindCard when enabled;
-        // never install 2 detours on the same IL2CPP method. With it disabled,
-        // this observer uses the same previously known stock FindCard boundary.
         if (installSubmission && candidateReady) {
-            if (!CustomComponents::Pick3::ExactRouting::Initialize(!creationTraceRequested))
-                LOG_ERR("CustomComponents/Pick3/PATCH2_ROUTING: phase=HOOK_FAILURE finder unavailable; existing queries continue");
-        } else {
-            LOG_INFO("CustomComponents/Pick3/PATCH2_ROUTING: phase=DISABLED reason=NO_SUBMISSION_HOOKS legacyQuery=1");
+            const bool provenanceReady=CustomComponents::Pick3::CreationProvenance::Initialize(creationTraceRequested);
+            if(!provenanceReady)LOG_ERR("CustomComponents/Pick3/CREATION_BINDING: unavailable");
+            if (!CustomComponents::Pick3::ExactRouting::Initialize(!CustomComponents::Pick3::CreationProvenance::originalFindCard))
+                LOG_ERR("CustomComponents/Pick3/PATCH2_ROUTING: finder unavailable");
         }
         STARTUP_BOUNDARY(9, "pick3-discover-ui");
         if (candidateReady && BLOOM_CONFIG_BOOL("PickFromThreePresentation", "Enabled", true)) {
@@ -447,6 +462,7 @@ namespace {
             }
         }
 
+        LOG_INFO("CustomComponents/BUILD: patch=6.4.5 built=%s %s", __DATE__, __TIME__);
         LOG_INFO("CustomComponents/STARTUP_DIAG: COMPLETED full startup");
 #undef STARTUP_BOUNDARY
         LOG_INFO(
@@ -467,3 +483,6 @@ extern "C" bool Bloom_RegisterSetCardDataObserver(
 }
 
 BLOOM_REGISTER_PNP(Init);
+
+
+

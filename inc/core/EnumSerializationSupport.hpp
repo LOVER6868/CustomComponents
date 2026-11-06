@@ -1,3 +1,4 @@
+#include "core/HookRegistry.hpp"
 #pragma once
 
 #include <array>
@@ -112,7 +113,7 @@ inline bool Initialize() {
         return false;
     }
 
-    BNM::BasicHook(getValue, GetValueHook, originalGetValue);
+    CustomComponents::Core::Hooks::Install(getValue, GetValueHook, originalGetValue);
     if (!originalGetValue) {
         LOG_ERR("CustomComponents/EnumSerialization: GetValue hook failed");
         return false;

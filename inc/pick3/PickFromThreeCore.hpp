@@ -154,6 +154,7 @@ struct PreviewRequest {
     // Effect.PlayerId: the selecting player, not the side receiving the Play.
     // -1 means unknown. This is kept with the request through the UI delay.
     int ownerPlayerId = -1;
+    int additionalTargetId = -1;
 };
 
 // Only used for the READ-ONLY Step 2 device probe. Real gameplay must use the

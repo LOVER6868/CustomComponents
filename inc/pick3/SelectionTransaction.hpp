@@ -19,6 +19,7 @@ struct Bindings {
     std::mutex lock;
     std::vector<int> produced;
     bool cancelled=false;
+    bool completed=false;
 };
 struct Value {
     Model model=0;
@@ -79,6 +80,13 @@ inline Ref Make(Model model,int source,const Picked::SelectionSnapshot& s) {
        s.observation==Picked::SnapshotObservation::ErasedBeforeCommitProof) return {};
     for(const auto& c:s.selection.cards) if(c.cardGuid<=0 || c.entityId==0 || c.entityId<-1) return {};
     std::lock_guard<std::mutex> guard(lock);
+    // Active scopes, queued effects, listener tickets and creation waits retain
+    // their own Ref. Completed cache entries need not pin a match forever.
+    values.erase(std::remove_if(values.begin(),values.end(),[](const Ref& r){
+        if(r.use_count()!=1) return false;
+        std::lock_guard<std::mutex> bindings(r->bindings->lock);
+        return r->bindings->completed;
+    }),values.end());
     for(const auto& r:values) if(r->model==model && r->sequence==s.sequence) {
         if(r->source!=source || r->effect!=s.selection.effectEntityId || r->group!=s.selection.effectGroupId ||
            r->cards.size()!=s.selection.cards.size()) return {};
@@ -116,7 +124,11 @@ inline int LiveTarget(const Ref& r,std::size_t index) {
 }
 inline void Reject(const Ref& r) {
     if(!Current(r)) return;
-    std::lock_guard<std::mutex> guard(r->bindings->lock);r->bindings->cancelled=true;
+    std::lock_guard<std::mutex> guard(r->bindings->lock);r->bindings->cancelled=true;r->bindings->completed=true;
+}
+inline void Complete(const Ref& r) {
+    if(!Current(r)) return;
+    std::lock_guard<std::mutex> guard(r->bindings->lock);r->bindings->completed=true;
 }
 inline bool Resolve(Model model,int effect,int candidate,bool guidDomain,bool& out) {
 #if CUSTOMCOMPONENTS_PF3_TRANSACTION_PIPELINE && CUSTOMCOMPONENTS_PF3_TRANSACTION_ROUTING
@@ -139,8 +151,9 @@ inline bool Resolve(Model model,int effect,int candidate,bool guidDomain,bool& o
 }
 inline bool ClaimEvent(const Ref& r) {
     std::lock_guard<std::mutex> guard(lock);
-    if(!Current(r) || emitted.size()>=capacity) return false;
+    if(!Current(r)) return false;
     for(const auto& k:emitted) if(k.model==r->model && k.sequence==r->sequence) return false;
+    if(emitted.size()>=capacity) emitted.erase(emitted.begin()); // bounded replay window, not a lifetime quota
     emitted.push_back({r->model,r->sequence}); return true;
 }
 inline bool AttachListener(const Ref& r,int listener,int source,Context event,std::uint64_t instance=0) {
@@ -179,5 +192,12 @@ inline Ref TakeEffect(EffectKey key) {
 inline void Reset() {
     std::lock_guard<std::mutex> guard(lock);
     ++epoch; emitted.clear();listeners.clear();queued.clear();values.clear();active={};
+}
+inline void RetireModel(Model model) {
+    std::lock_guard<std::mutex> guard(lock);
+    values.erase(std::remove_if(values.begin(),values.end(),[&](const auto& r){return r->model==model;}),values.end());
+    queued.erase(std::remove_if(queued.begin(),queued.end(),[&](const auto& r){return r.key.model==model;}),queued.end());
+    listeners.erase(std::remove_if(listeners.begin(),listeners.end(),[&](const auto& r){return r.model==model;}),listeners.end());
+    emitted.erase(std::remove_if(emitted.begin(),emitted.end(),[&](const auto& r){return r.model==model;}),emitted.end());
 }
 } // namespace CustomComponents::Pick3::Transaction

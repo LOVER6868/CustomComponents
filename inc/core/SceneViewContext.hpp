@@ -8,6 +8,7 @@
 
 #include <BNM/Class.hpp>
 #include <cstdint>
+#include "core/ManagedRuntime.hpp"
 
 #include "diagnostics/DiagnosticLogging.hpp"
 #include "log.h"
@@ -20,9 +21,9 @@ namespace CustomComponents::Core::SceneViewContext {
 
     // Provided by the existing CardView lifecycle initialization. These are
     // the same IL2CPP exports also used to root deferred CreateCardAsync work.
-    inline NewGCHandleFn newGCHandle = nullptr;
-    inline GetGCHandleFn getGCHandle = nullptr;
-    inline FreeGCHandleFn freeGCHandle = nullptr;
+    using ManagedRuntime::newGCHandle;
+    using ManagedRuntime::getGCHandle;
+    using ManagedRuntime::freeGCHandle;
     inline uint32_t mapperHandle = 0;
     inline std::uintptr_t modelIdentity = 0;
 

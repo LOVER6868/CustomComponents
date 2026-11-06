@@ -1,0 +1,13 @@
+{
+  "$type": "PvZCards.Engine.Components.CreateCardInDeckFromSubsetEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "AmountToCreate": 1,
+    "DeckPosition": "Random",
+    "SubsetQuery": {
+      "$type": "PvZCards.Engine.Queries.SubsetQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+      "$data": {
+        "Subset": "Gourmet"
+      }
+    }
+  }
+}

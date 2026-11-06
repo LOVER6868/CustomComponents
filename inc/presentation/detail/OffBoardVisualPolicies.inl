@@ -157,22 +157,6 @@
         if (policy.skipAll) {
             Obj* noop = MakeTargetVisualNoOp();
             if (noop) {
-                // Capture exact cards for later UI synchronization. Do not touch
-                // gameplay components or mutate the effect's TargetIds.
-                if (std::strcmp(actionType, "BuffEventAction") == 0 ||
-                    std::strcmp(actionType, "ModifySunCostEventAction") == 0) {
-                    Obj* mapper = traceVisualMapper[static_cast<Obj*>(self)].Get();
-                    Obj* model = mapper ? viewMapperEntityModel[mapper].Get() : nullptr;
-                    Obj* idsObject = traceVisualTargetIds[static_cast<Obj*>(self)].Get();
-                    if (model && idsObject) {
-                        auto* ids = reinterpret_cast<BNM::Structures::Mono::List<int>*>(idsObject);
-                        if (ids->GetSize() == policy.count && ids->items) {
-                            const int* values = ids->GetData();
-                            if (values) for (int i = 0; i < policy.count; ++i)
-                                RememberFrameSync(model, values[i]);
-                        }
-                    }
-                }
                 if (policy.staleReturnHand) {
                     CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/RETURN-HAND-TARGET: suppressed stale source-matched hand target action=%p type=%s source=%d targets=%d animation=%p",
                              self, actionType, expectedOffBoardSourceId, policy.staleReturnHand, noop);
@@ -305,4 +289,5 @@
         CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/PERSISTENT: STOCK EXIT action=%p result=%p", self, result);
         return result;
     }
+
 

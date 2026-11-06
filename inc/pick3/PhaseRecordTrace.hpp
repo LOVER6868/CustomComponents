@@ -1,3 +1,5 @@
+#include "diagnostics/DiagnosticLogging.hpp"
+#include "core/HookRegistry.hpp"
 #pragma once
 // Stock record/animation boundary trace ONLY. No synthetic record/signal,
 // state machine transitions, or repetition of Process().
@@ -67,11 +69,11 @@ inline void Setup() {
     auto recordClass=BNM::Class("PvZCards.Engine.Records","EffectRecord");
     recordEffectId=recordClass.GetMethod("get_EffectEntityId",0).cast<int>();
     recordGroupId=recordClass.GetMethod("get_EffectGroupId",0).cast<int>();
-    auto hook=[](auto m,auto fn,auto& old){if(m.IsValid())BNM::BasicHook(m,fn,old);};
+    auto hook=[](auto m,auto fn,auto& old){if(m.IsValid())CustomComponents::Core::Hooks::Install(m,fn,old);};
     hook(processor.GetMethod("ProcessChooseTargetPhaseEndRecord",1),End,originalEnd);
     hook(processor.GetMethod("ProcessPhaseResumeRecord",1),ResumeRecord,originalResumeRecord);
     hook(processor.GetMethod("DispatchPhaseResumeSignal",0),Dispatch,originalDispatch);
     hook(svc.GetMethod("FinishChooseTargetPhase",1),Finish,originalFinish);
-    LOG_INFO("CustomComponents/PHASE_RECORD: SETUP chooseEnd=%d resumeRecord=%d dispatch=%d localFinish=%d recordFields=%d readOnly=1",!!originalEnd,!!originalResumeRecord,!!originalDispatch,!!originalFinish,!!(recordEffectId.IsValid()&&recordGroupId.IsValid()));
+    CC_SELECTION_DIAG("CustomComponents/PHASE_RECORD: SETUP chooseEnd=%d resumeRecord=%d dispatch=%d localFinish=%d recordFields=%d readOnly=1",!!originalEnd,!!originalResumeRecord,!!originalDispatch,!!originalFinish,!!(recordEffectId.IsValid()&&recordGroupId.IsValid()));
 }
 }

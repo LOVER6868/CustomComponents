@@ -1,7 +1,9 @@
+#include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
-#include "diagnostics/DiagnosticLogging.hpp"
+#include "core/Performance.hpp"
 #include "core/AbilityRegistry.hpp"
+#include "abilities/RandomKeywordSystem.hpp"
 #include "abilities/AbilityDefinitions.hpp"
 #include "abilities/GrantAbilityPresentation.hpp"
 #include "abilities/GrantAbilitySerialization.hpp"
@@ -80,7 +82,7 @@ namespace CustomComponents::GrantAbility {
     static void GrantHook(void* self, void* effect, const void* method) {
         Systems::ZoneTriggeredAbilityPresentationSystem::AuditOwnedEffect(2, self,
             static_cast<Systems::ZoneTriggeredAbilityPresentationSystem::Obj*>(effect),
-            [&] { GrantHookImpl(self, effect, method); });
+            [&] { Abilities::RandomKeyword::Grant(self,effect,[&]{GrantHookImpl(self,effect,method);}); });
     }
 
     // Stock GrantableAbilityRemover::RecordAbilityRemoval creates an AbilityRemovedRecord,
@@ -144,10 +146,11 @@ namespace CustomComponents::GrantAbility {
     static void RemoveHook(void* self, void* effect, const void* method) {
         Systems::ZoneTriggeredAbilityPresentationSystem::AuditOwnedEffect(3, self,
             static_cast<Systems::ZoneTriggeredAbilityPresentationSystem::Obj*>(effect),
-            [&] { RemoveHookImpl(self, effect, method); });
+            [&] { Abilities::RandomKeyword::Remove(self,effect,[&]{RemoveHookImpl(self,effect,method);}); });
     }
 
     inline void Expire(void* finder, void* remover, int duration) {
+        Core::Performance::Scope timing(Core::Performance::Area::AbilityExpiry);
         if (!finder) return;
         auto* model = finderModel[finder].Get();
         auto* list = model ? allEntities[model]() : nullptr;
@@ -166,9 +169,11 @@ namespace CustomComponents::GrantAbility {
 
     static void TurnEndHook(void* self, void* effect, const void* method) {
         originalTurnEnd(self, effect, method); Expire(turnFinder[self].Get(), turnRemover[self].Get(), 1);
+        auto* finder=turnFinder[self].Get();Abilities::RandomKeyword::Expire(static_cast<Abilities::RandomKeyword::Obj*>(finder?finderModel[finder].Get():nullptr),1);
     }
     static void NextFighterHook(void* self, const void* method) {
         originalNextFighter(self, method); Expire(nextFinder[self].Get(), nextRemover[self].Get(), 2);
+        auto* finder=nextFinder[self].Get();Abilities::RandomKeyword::Expire(static_cast<Abilities::RandomKeyword::Obj*>(finder?finderModel[finder].Get():nullptr),2);
     }
 
     inline bool Initialize() {
@@ -279,25 +284,25 @@ namespace CustomComponents::GrantAbility {
         CC_DIAG("CustomComponents/GrantAbility/INIT: presentation ready");
 
         // Enable GrantAbilitySystem + RemoveGrantAbilitySystem and both duration-removal systems.
-        BNM::BasicHook(gp, GrantHook, originalGrant);
+        CustomComponents::Core::Hooks::Install(gp, GrantHook, originalGrant);
         if (!originalGrant) {
             LOG_ERR("CustomComponents/GrantAbility: GrantAbilitySystem::ProcessEffect hook failed");
             return false;
         }
 
-        BNM::BasicHook(rp, RemoveHook, originalRemove);
+        CustomComponents::Core::Hooks::Install(rp, RemoveHook, originalRemove);
         if (!originalRemove) {
             LOG_ERR("CustomComponents/GrantAbility: RemoveGrantAbilitySystem::ProcessEffect hook failed");
             return false;
         }
 
-        BNM::BasicHook(tp, TurnEndHook, originalTurnEnd);
+        CustomComponents::Core::Hooks::Install(tp, TurnEndHook, originalTurnEnd);
         if (!originalTurnEnd) {
             LOG_ERR("CustomComponents/GrantAbility: EndOfTurnAbilityRemovalSystem::ProcessEffect hook failed");
             return false;
         }
 
-        BNM::BasicHook(np, NextFighterHook, originalNextFighter);
+        CustomComponents::Core::Hooks::Install(np, NextFighterHook, originalNextFighter);
         if (!originalNextFighter) {
             LOG_ERR("CustomComponents/GrantAbility: NextFighterAbilityRemovalSystem::AttemptEffectRemoval hook failed");
             return false;
@@ -310,3 +315,4 @@ namespace CustomComponents::GrantAbility {
         return true;
     }
 }
+

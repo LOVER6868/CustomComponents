@@ -1,3 +1,5 @@
+#include "diagnostics/DiagnosticLogging.hpp"
+#include "core/HookRegistry.hpp"
 #pragma once
 // Read-only diagnostic detours. Each original is called exactly once.
 #include <BNM/Class.hpp>
@@ -46,7 +48,7 @@ inline int ReadMachineState(Obj* machine) {
    BNM::Class concrete(machine);
    if (concrete.IsValid()) machineCurrentState=concrete.GetField("CurrentState").cast<int>();
    if (!machineFieldDiscoveryLogged || machineCurrentState.IsValid()) {
-      LOG_INFO("CustomComponents/BUTTON_FSM: DISCOVER machine=%p concrete=%d currentField=%d",(void*)machine,int(concrete.IsValid()),int(machineCurrentState.IsValid()));
+      CC_SELECTION_DIAG("CustomComponents/BUTTON_FSM: DISCOVER machine=%p concrete=%d currentField=%d",(void*)machine,int(concrete.IsValid()),int(machineCurrentState.IsValid()));
       machineFieldDiscoveryLogged=true;
    }
  }
@@ -270,7 +272,7 @@ medPhase=med.GetField("<VisualTurnPhaseModel>k__BackingField").cast<Obj*>();medM
 // Runtime discovery happens in Snapshot after obtaining the actual closed
 // GenericStateMachine instance. Do not assume the open generic field layout.
 viewAnimator=view.GetField("ButtonAnimator").cast<Obj*>();
-auto hook=[](auto method,auto detour,auto& old){if(method.IsValid())BNM::BasicHook(method,detour,old);};
+auto hook=[](auto method,auto detour,auto& old){if(method.IsValid())CustomComponents::Core::Hooks::Install(method,detour,old);};
 hook(med.GetMethod("ChooseTargetStart",0),Choose,oldChoose);hook(med.GetMethod("ReturnToRegularPhase",0),Resume,oldResume);hook(med.GetMethod("ZombieSurprise",0),Surprise,oldSurprise);hook(med.GetMethod("InputStateChanged",1),Input,oldInput);hook(med.GetMethod("DoesButtonVisuallyCareAboutCurrentPhase",0),Care,oldCare);hook(med.GetMethod("AddButtonEnableEffectAnimation",3),Anim,oldAnim);
 hook(holder.GetMethod("GetFirstEffectInQueue",0),First,oldFirst);
 hook(holder.GetMethod("DetermineCurrentInputState",0),Determine,oldDetermine);
@@ -279,10 +281,11 @@ hook(holder.GetMethod("UnbindOldCommands",0),Unbind,oldUnbind);
 hook(holder.GetMethod("BindCommandsForState",1),Bind,oldBind);
 hook(view.GetMethod("ActivateButton",1),Activate,oldActivate);
 auto triggered=BNM::Class("PvZCards.Core.Systems","TriggeredAbilityStartSystem");
-hook(triggered.GetMethod("ProcessEffect",1),TriggeredStart,oldTriggeredStart);
+// TriggeredAbilityStartSystem already has a gameplay owner; no second audit detour.
+(void)triggered;
 hook(view.GetMethod("SetDone",0),Done,oldDone);hook(view.GetMethod("SetOptionalEarlyEnd",0),Optional,oldOptional);
-LOG_INFO("CustomComponents/UNIFIED_DIAG: machineField=%d animatorField=%d buttonActivate=%d stockTriggerStart=%d; no gameplay overrides",int(machineCurrentState.IsValid()),int(viewAnimator.IsValid()),int(oldActivate!=nullptr),int(oldTriggeredStart!=nullptr));
-LOG_INFO("CustomComponents/LIFECYCLE: SETUP determine=%d effectState=%d unbind=%d resumeSignalField=%d targetStartSignalField=%d readOnly=1",!!oldDetermine,!!oldStateFromEffect,!!oldUnbind,int(medResumeSignal.IsValid()),int(medTargetStartSignal.IsValid()));
-LOG_INFO("CustomComponents/STATE_TRACE: SETUP choose=%d resume=%d surprise=%d input=%d care=%d anim=%d first=%d bind=%d done=%d optional=%d",!!oldChoose,!!oldResume,!!oldSurprise,!!oldInput,!!oldCare,!!oldAnim,!!oldFirst,!!oldBind,!!oldDone,!!oldOptional);
+CC_SELECTION_DIAG("CustomComponents/UNIFIED_DIAG: machineField=%d animatorField=%d buttonActivate=%d stockTriggerStart=%d; no gameplay overrides",int(machineCurrentState.IsValid()),int(viewAnimator.IsValid()),int(oldActivate!=nullptr),int(oldTriggeredStart!=nullptr));
+CC_SELECTION_DIAG("CustomComponents/LIFECYCLE: SETUP determine=%d effectState=%d unbind=%d resumeSignalField=%d targetStartSignalField=%d readOnly=1",!!oldDetermine,!!oldStateFromEffect,!!oldUnbind,int(medResumeSignal.IsValid()),int(medTargetStartSignal.IsValid()));
+CC_SELECTION_DIAG("CustomComponents/STATE_TRACE: SETUP choose=%d resume=%d surprise=%d input=%d care=%d anim=%d first=%d bind=%d done=%d optional=%d",!!oldChoose,!!oldResume,!!oldSurprise,!!oldInput,!!oldCare,!!oldAnim,!!oldFirst,!!oldBind,!!oldDone,!!oldOptional);
 }
 }

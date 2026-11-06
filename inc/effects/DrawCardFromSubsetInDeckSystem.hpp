@@ -1,3 +1,6 @@
+#include "engine/EffectRegistration.hpp"
+#include "engine/SubsetSelection.hpp"
+#include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 
@@ -408,47 +411,44 @@ namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem {
             return false;
         }
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             descriptorCopy,
             DescriptorCopyHook,
             originalDescriptorCopy
         );
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             descriptorPool,
             DescriptorPoolHook,
             originalDescriptorPool
         );
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             descriptorToEffect,
             DescriptorToEffectHook,
             originalDescriptorToEffect
         );
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             registerHandlers,
             RegisterHandlersHook,
             originalRegisterHandlers
         );
-        BNM::BasicHook(
-            registerForEffect,
-            RegisterForEffectHook,
-            originalRegisterForEffect
-        );
-        BNM::BasicHook(
+        Engine::EffectRegistration::Initialize();
+        originalRegisterForEffect=Engine::EffectRegistration::original;
+        CustomComponents::Core::Hooks::Install(
             processAbility,
             DrawSubsetAbilityHook,
             originalDrawSubsetAbility
         );
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             processSubset,
             ProcessSubsetHook,
             originalProcessSubset
         );
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             processDraw,
             ProcessDrawHook,
             originalProcessDraw
         );
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             pickRandomGuid,
             PickRandomGuidHook,
             originalPickRandomGuid
@@ -476,3 +476,4 @@ namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem {
     }
 
 } // namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem
+

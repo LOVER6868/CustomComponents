@@ -2,41 +2,26 @@
 
 | Path | Responsibility |
 | --- | --- |
-| `main.cpp` | Module startup and initialization order |
-| `config.ini`, `bloom.ini` | Runtime settings and Bloom manifest |
-| `inc/abilities/` | Armor, Charge, Thrash, and ability lifecycle |
-| `inc/effects/` | Managed descriptors and runtime effect definitions |
-| `inc/queries/` | Entity/database query implementations |
-| `inc/zones/` | Discard, return, and deck transfers |
-| `inc/triggers/` | Trigger components and model-specific dispatch |
-| `inc/pick3/` | Choices, transport, model transactions, and provenance |
-| `inc/presentation/` | Card views, picker, history presentation, and reconciliation |
-| `inc/core/` | Registration, serialization, shared lifecycle services |
-| `inc/diagnostics/` | Diagnostic switches and observations |
-| `examples/` | Card-data examples |
-| `tests/` | Behavioral regressions and retained historical source checks |
-| `tools/` | Validation utilities |
-| `docs/reference/` | Component usage guides |
-| `docs/history/` | Earlier patch notes, investigations, and changesets |
-| `.build/` | Ignored local test executables and generated files |
+| `main.cpp` | Registration and startup |
+| `bloom.ini`, `config.ini` | Module manifest and runtime settings |
+| `inc/CustomComponents.hpp` | Public component umbrella |
+| `inc/abilities/` | Grants, expiry and combat behavior |
+| `inc/effects/` | Descriptors, runtime effects and creation extensions |
+| `inc/zones/` | Discard, return, transfer and deck materialization |
+| `inc/queries/` | Zone, identity, position and placement predicates |
+| `inc/triggers/` | Trigger types, dispatch and return-origin filters |
+| `inc/pick3/` | Offers, transactions, routing and creation provenance |
+| `inc/pick3/submission/` | Private stock-handoff implementation pieces |
+| `inc/presentation/` | Picker, inspection, frames, heralds and icons |
+| `inc/engine/` | Shared stock adapters, queues and subset services |
+| `inc/core/` | Registration, ownership, lifetime and scheduling |
+| `inc/diagnostics/` | Optional trace support |
+| `src/` | Included generated assets and their sources |
+| `patches/` | Required dependency fix and installer |
+| `examples/` | Categorized card-data recipes |
+| `docs/` | Current public manual |
 
-The public umbrella headers are `inc/CustomComponents.hpp`,
-`inc/DiscardPileZoneEffects.hpp`, and `inc/DrawCardFromSubsetInDeck.hpp`.
-Header-only systems follow the module's existing build integration. `.inl`
-fragments are included inside their owning namespace and are not standalone units.
-
-## ReturnToLane
-
-`zones/DiscardPileTransferSystem.hpp` owns metadata and hooks. Its
-`detail/DiscardRevivePairLegality.inl` is the shared read-only feasibility check;
-`detail/DiscardToLane.inl` performs the transfer. `ReturnToLanePolicy.hpp` contains
-host-testable card-type and capacity rules.
-
-The runtime borrows `MoveCardToLanesEffect`, so
-`triggers/ReturnToLaneMoveFilter.hpp` distinguishes return-origin movement events.
-The existing `TriggeredEffectCollection.Add` hook in `SelectionTransactionRuntime`
-applies the filter before attaching a PF3 ticket. The owning trigger producer
-returns suppressed data to its stock pool. No second Add detour is installed.
-
-Keep simulation models separate from UI models. Preserve stock entity identity,
-trigger validation, history records, and queue ownership when changing a transfer.
+Most systems are header-based. Internal `.inl` files are included inside their
+owner's namespace, not compiled separately. Optional local `tests/`, `tools/`,
+`.build/` and `.local/` folders are excluded from the GitHub distribution and are
+not module dependencies.

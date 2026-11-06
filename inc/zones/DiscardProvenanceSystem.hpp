@@ -1,3 +1,5 @@
+#include "engine/Events.hpp"
+#include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 
@@ -180,23 +182,23 @@ namespace CustomComponents::Systems::DiscardedSystem {
         auto shiftMethod = queue.GetMethod("Shift", 0);
         auto processEffectsMethod = processor.GetMethod("ProcessEffects", 1);
         auto completeEffectMethod = processor.GetMethod("CompleteEffect", 1);
-        BNM::BasicHook(resolverMethod, ResolverHook, originalResolver);
-        BNM::BasicHook(hasNextMethod, QueueHasNextHook, originalQueueHasNext);
+        CustomComponents::Core::Hooks::Install(resolverMethod, ResolverHook, originalResolver);
+        CustomComponents::Core::Hooks::Install(hasNextMethod, QueueHasNextHook, originalQueueHasNext);
         // Shift is diagnostic-only and optional; the existing cleanup behavior
         // is unchanged if this entry point cannot be hooked.
         if (groupMetadataReady && shiftMethod.IsValid())
-            BNM::BasicHook(shiftMethod, QueueShiftHook, originalQueueShift);
-        BNM::BasicHook(processEffectsMethod, ProcessEffectsHook, originalProcessEffects);
+            CustomComponents::Core::Hooks::Install(shiftMethod, QueueShiftHook, originalQueueShift);
+        CustomComponents::Core::Hooks::Install(processEffectsMethod, ProcessEffectsHook, originalProcessEffects);
         // An optional *read-only* hook to expose the processor's completion
         // boundary. If unavailable the base v2 lifecycle still initializes.
         if (completeEffectMethod.IsValid())
-            BNM::BasicHook(completeEffectMethod, CompleteEffectHook, originalCompleteEffect);
+            CustomComponents::Core::Hooks::Install(completeEffectMethod, CompleteEffectHook, originalCompleteEffect);
         if (groupMetadataReady && startSystemModel.IsValid() && startMethod.IsValid())
-            BNM::BasicHook(startMethod, StartHandlerHook, originalStartHandler);
+            CustomComponents::Core::Hooks::Install(startMethod, StartHandlerHook, originalStartHandler);
         if (groupMetadataReady && buffSystemModel.IsValid() && buffMethod.IsValid())
-            BNM::BasicHook(buffMethod, BuffHandlerHook, originalBuffHandler);
+            CustomComponents::Core::Hooks::Install(buffMethod, BuffHandlerHook, originalBuffHandler);
         if (groupMetadataReady && endSystemModel.IsValid() && endMethod.IsValid())
-            BNM::BasicHook(endMethod, EndHandlerHook, originalEndHandler);
+            CustomComponents::Core::Hooks::Install(endMethod, EndHandlerHook, originalEndHandler);
         CC_DIAG("CustomComponents/Discarded/CHAIN: stock handlers START=%d BUFF=%d END=%d (read-only; RVAs 0x21FC764 / 0x21FD444 / 0x21F2034)",
             originalStartHandler ? 1 : 0,
             originalBuffHandler ? 1 : 0,

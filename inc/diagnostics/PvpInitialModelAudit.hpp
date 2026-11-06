@@ -1,3 +1,5 @@
+#include "diagnostics/DiagnosticLogging.hpp"
+#include "core/HookRegistry.hpp"
 #pragma once
 // Read-only audit of the PvP InitialGameState model returned by the custom server.
 // The server starts with GUID-only OrderedCardPool entries (EntityId == -1).
@@ -44,17 +46,17 @@ inline void ReportPool(Obj* model, int entityId) {
     Obj* deck = nullptr;
     const auto exception = BNM::TryInvoke([&] { deck = getEntityById[model](entityId); });
     if (exception.IsValid() || !deck) {
-        LOG_INFO("CustomComponents/PVP_INIT_AUDIT: poolEntity=%d found=0", entityId);
+        CC_SELECTION_DIAG("CustomComponents/PVP_INIT_AUDIT: poolEntity=%d found=0", entityId);
         return;
     }
     Obj* pool = FindOrderedPool(deck);
     if (!pool) {
-        LOG_INFO("CustomComponents/PVP_INIT_AUDIT: poolEntity=%d orderedPool=0", entityId);
+        CC_SELECTION_DIAG("CustomComponents/PVP_INIT_AUDIT: poolEntity=%d orderedPool=0", entityId);
         return;
     }
     auto* entries = orderedPoolEntries[pool].Get();
     if (!entries || !entries->items || entries->size < 0 || entries->size > 10000) {
-        LOG_INFO("CustomComponents/PVP_INIT_AUDIT: poolEntity=%d entriesInvalid=1", entityId);
+        CC_SELECTION_DIAG("CustomComponents/PVP_INIT_AUDIT: poolEntity=%d entriesInvalid=1", entityId);
         return;
     }
     int live = 0, virtualCards = 0, invalid = 0;
@@ -66,7 +68,7 @@ inline void ReportPool(Obj* model, int entityId) {
         else if (id == -1) ++virtualCards;
         else ++invalid;
     }
-    LOG_INFO("CustomComponents/PVP_INIT_AUDIT: poolEntity=%d entries=%d live=%d virtual=%d invalid=%d", entityId, entries->size, live, virtualCards, invalid);
+    CC_SELECTION_DIAG("CustomComponents/PVP_INIT_AUDIT: poolEntity=%d entries=%d live=%d virtual=%d invalid=%d", entityId, entries->size, live, virtualCards, invalid);
 }
 
 static void InitializeGameHook(Obj* self, Obj* response, const void* method) {
@@ -81,11 +83,11 @@ static void InitializeGameHook(Obj* self, Obj* response, const void* method) {
     Obj* model = responseEntityModel[self].Get();
     Obj* predictor = responseGamePredictor.IsValid() ? responseGamePredictor[self].Get() : nullptr;
     if (!model) {
-        LOG_INFO("CustomComponents/PVP_INIT_AUDIT: snapshot=%u model=0", snapshots);
+        CC_SELECTION_DIAG("CustomComponents/PVP_INIT_AUDIT: snapshot=%u model=0", snapshots);
         return;
     }
     auto* entities = modelEntities[model].Get();
-    LOG_INFO("CustomComponents/PVP_INIT_AUDIT: snapshot=%u model=%p predictor=%p entities=%d nextId=%d writes=0",
+    CC_SELECTION_DIAG("CustomComponents/PVP_INIT_AUDIT: snapshot=%u model=%p predictor=%p entities=%d nextId=%d writes=0",
              snapshots, model, predictor, entities ? entities->size : -1, modelNextId[model].Get());
     // These are the fixed deck IDs emitted by the referenced base server.
     // If a different server layout is used, a missing pool is only diagnostic.
@@ -116,9 +118,9 @@ inline bool Install() {
         !modelNextId.IsValid() || !entityComponents.IsValid() ||
         !orderedPoolEntries.IsValid() || !entryEntityId.IsValid() ||
         !getEntityById.IsValid() || !initializeGame.IsValid()) return false;
-    BNM::BasicHook(initializeGame, InitializeGameHook, originalInitializeGame);
+    CustomComponents::Core::Hooks::Install(initializeGame, InitializeGameHook, originalInitializeGame);
     const bool ok = originalInitializeGame != nullptr;
-    LOG_INFO("CustomComponents/PVP_INIT_AUDIT: install=%d readOnly=1 enabled=1", ok);
+    CC_SELECTION_DIAG("CustomComponents/PVP_INIT_AUDIT: install=%d readOnly=1 enabled=1", ok);
     return ok;
 }
 } // namespace CustomComponents::Diagnostics::PvpInitialModelAudit

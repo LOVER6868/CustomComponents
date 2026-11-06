@@ -1,3 +1,4 @@
+#include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 
@@ -347,12 +348,12 @@ namespace CustomComponents::Systems::DiscardFromDeckSystem {
             return false;
         }
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             descriptorToEffect,
             DestroyDescriptorToEffectHook,
             originalDestroyDescriptorToEffect
         );
-        BNM::BasicHook(process, ProcessEffectHook, originalProcessEffect);
+        CustomComponents::Core::Hooks::Install(process, ProcessEffectHook, originalProcessEffect);
 
         if (!originalDestroyDescriptorToEffect || !originalProcessEffect) {
             LOG_ERR("CustomComponents/DiscardFromDeck: hook installation failed");

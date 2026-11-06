@@ -1,3 +1,5 @@
+#include "diagnostics/DiagnosticLogging.hpp"
+#include "core/HookRegistry.hpp"
 #pragma once
 // Opt-in PvP boot-time stock prepopulation prototype.
 // This is an *experimental two-client laboratory mode*, NOT a network protocol.
@@ -185,7 +187,7 @@ inline bool ValidateMatchCardDefinitions(Obj* factory, const PoolInfo (&pools)[4
             if (cards!=1) return false;
         }
     }
-    LOG_INFO("CustomComponents/PVP_PREPOP: DECK_DEFINITIONS_OK distinctGuids=%d writes=0",count);
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: DECK_DEFINITIONS_OK distinctGuids=%d writes=0",count);
     return true;
 }
 
@@ -276,7 +278,7 @@ inline void InspectCreatedEntityIdentities(Obj* model, const PoolInfo (&original
     auto* entities=model?modelEntities[model].Get():nullptr;
     if (!entities || !entities->items || entities->size!=18 ||
         modelNextId[model].Get()!=18) {
-        LOG_INFO("CustomComponents/PVP_PREPOP: ENTITY_INSPECT skip=unexpected-model-shape count=%d nextId=%d readsOnly=1",
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: ENTITY_INSPECT skip=unexpected-model-shape count=%d nextId=%d readsOnly=1",
             entities?entities->size:-1,model?modelNextId[model].Get():-1);
         return;
     }
@@ -303,17 +305,17 @@ inline void InspectCreatedEntityIdentities(Obj* model, const PoolInfo (&original
             if (eid==-1) ++virtualEntries;
             if (eid>=kFirstCreated && eid<=kLastCreated) {
                 ++linkCount[eid-kFirstCreated];
-                LOG_INFO("CustomComponents/PVP_PREPOP: ENTITY_INSPECT POOL_LINK pool=%d index=%d guid=%d entityId=%d readsOnly=1",
+                CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: ENTITY_INSPECT POOL_LINK pool=%d index=%d guid=%d entityId=%d readsOnly=1",
                     kIds[n],i,cardGuid,eid);
             }
         }
         if (!poolComplete) break;
     }
     if (!poolComplete) {
-        LOG_INFO("CustomComponents/PVP_PREPOP: ENTITY_INSPECT skip=unreadable-pool readsOnly=1");
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: ENTITY_INSPECT skip=unreadable-pool readsOnly=1");
         return;
     }
-    LOG_INFO("CustomComponents/PVP_PREPOP: ENTITY_INSPECT POOL_SUMMARY hash=%016llx virtual=%d links16=%d links17=%d readsOnly=1",
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: ENTITY_INSPECT POOL_SUMMARY hash=%016llx virtual=%d links16=%d links17=%d readsOnly=1",
         static_cast<unsigned long long>(poolHash),virtualEntries,linkCount[0],linkCount[1]);
 
     std::uint64_t combinedHash=14695981039346656037ull;
@@ -326,14 +328,14 @@ inline void InspectCreatedEntityIdentities(Obj* model, const PoolInfo (&original
         Obj* created=nullptr;
         auto failure=BNM::TryInvoke([&]{ created=getEntity[model](id); });
         if (failure.IsValid() || !created) {
-            LOG_INFO("CustomComponents/PVP_PREPOP: ENTITY_INSPECT ENTITY_MISSING requestedId=%d exception=%d readsOnly=1",
+            CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: ENTITY_INSPECT ENTITY_MISSING requestedId=%d exception=%d readsOnly=1",
                 id,failure.IsValid()?1:0);
             complete=false;
             continue;
         }
         auto* components=entityComponents[created].Get();
         if (!components || !components->items || components->size<0 || components->size>128) {
-            LOG_INFO("CustomComponents/PVP_PREPOP: ENTITY_INSPECT ENTITY_UNREADABLE requestedId=%d readsOnly=1",id);
+            CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: ENTITY_INSPECT ENTITY_UNREADABLE requestedId=%d readsOnly=1",id);
             complete=false;
             continue;
         }
@@ -348,14 +350,14 @@ inline void InspectCreatedEntityIdentities(Obj* model, const PoolInfo (&original
         IdentityMix32(entityHash,static_cast<std::uint32_t>(listIndex));
         IdentityMix32(entityHash,static_cast<std::uint32_t>(components->size));
         IdentityMix32(entityHash,static_cast<std::uint32_t>(linkCount[id-kFirstCreated]));
-        LOG_INFO("CustomComponents/PVP_PREPOP: ENTITY_INSPECT ENTITY_BEGIN requestedId=%d actualId=%d listIndex=%d componentCount=%d poolLinks=%d readsOnly=1",
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: ENTITY_INSPECT ENTITY_BEGIN requestedId=%d actualId=%d listIndex=%d componentCount=%d poolLinks=%d readsOnly=1",
             id,actualId,listIndex,components->size,linkCount[id-kFirstCreated]);
         if (actualId!=id || listIndex<0) complete=false;
         for(int c=0;c<components->size;c++) {
             Obj* component=components->items->m_Items[c];
             if (!component || !component->klass || !component->klass->name ||
                 !component->klass->namespaze) {
-                LOG_INFO("CustomComponents/PVP_PREPOP: ENTITY_INSPECT COMPONENT_UNREADABLE id=%d index=%d readsOnly=1",id,c);
+                CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: ENTITY_INSPECT COMPONENT_UNREADABLE id=%d index=%d readsOnly=1",id,c);
                 complete=false;
                 continue;
             }
@@ -387,15 +389,15 @@ inline void InspectCreatedEntityIdentities(Obj* model, const PoolInfo (&original
             }
             IdentityMixText(entityHash,field);
             IdentityMix32(entityHash,static_cast<std::uint32_t>(hasValue?value:0));
-            LOG_INFO("CustomComponents/PVP_PREPOP: ENTITY_INSPECT COMPONENT id=%d index=%d namespace=%s type=%s field=%s value=%d hasValue=%d readsOnly=1",
+            CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: ENTITY_INSPECT COMPONENT id=%d index=%d namespace=%s type=%s field=%s value=%d hasValue=%d readsOnly=1",
                 id,c,ns,type,field,value,hasValue?1:0);
         }
-        LOG_INFO("CustomComponents/PVP_PREPOP: ENTITY_INSPECT ENTITY_END id=%d hash=%016llx complete=%d readsOnly=1",
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: ENTITY_INSPECT ENTITY_END id=%d hash=%016llx complete=%d readsOnly=1",
             id,static_cast<unsigned long long>(entityHash),complete?1:0);
         IdentityMix32(combinedHash,static_cast<std::uint32_t>(entityHash));
         IdentityMix32(combinedHash,static_cast<std::uint32_t>(entityHash>>32));
     }
-    LOG_INFO("CustomComponents/PVP_PREPOP: ENTITY_INSPECT SUMMARY complete=%d poolHash=%016llx combinedHash=%016llx links16=%d links17=%d readsOnly=1",
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: ENTITY_INSPECT SUMMARY complete=%d poolHash=%016llx combinedHash=%016llx links16=%d links17=%d readsOnly=1",
         complete?1:0,static_cast<unsigned long long>(poolHash),
         static_cast<unsigned long long>(combinedHash),linkCount[0],linkCount[1]);
 }
@@ -451,14 +453,14 @@ inline MaterializeInspection InspectMaterializedEntities(
         entities->size>40 || out.next!=entities->size ||
         (expectedCards!=1 && expectedCards!=2) ||
         (targetPoolIndex!=0 && targetPoolIndex!=2)) {
-        LOG_INFO("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT SKIP reason=unexpected-model-shape entries=%d nextId=%d readsOnly=1",
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT SKIP reason=unexpected-model-shape entries=%d nextId=%d readsOnly=1",
             entities?entities->size:-1,out.next);
         return out;
     }
     bool complete=true;
     int expectedOwner=-1;
     const bool ownerKnown=PoolOwnerId(originalPools[targetPoolIndex].entity,expectedOwner);
-    LOG_INFO("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT OWNER_BASELINE pool=%d known=%d expectedOwner=%d readsOnly=1",
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT OWNER_BASELINE pool=%d known=%d expectedOwner=%d readsOnly=1",
         kIds[targetPoolIndex],ownerKnown?1:0,expectedOwner);
     out.poolHash=14695981039346656037ull;
     int poolLive=0,poolVirtual=0,poolOther=0;
@@ -480,11 +482,11 @@ inline MaterializeInspection InspectMaterializedEntities(
                 guid==materializedGuids[i] && id>=16 && id<out.next) {
                 ++poolLive;
                 ++out.cardLinks;
-                LOG_INFO("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT POOL_LINK pool=%d index=%d guid=%d entityId=%d readsOnly=1",
+                CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT POOL_LINK pool=%d index=%d guid=%d entityId=%d readsOnly=1",
                     kIds[n],i,guid,id);
             } else {
                 ++poolOther;
-                LOG_INFO("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT UNEXPECTED_POOL_LINK pool=%d index=%d guid=%d entityId=%d readsOnly=1",
+                CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT UNEXPECTED_POOL_LINK pool=%d index=%d guid=%d entityId=%d readsOnly=1",
                     kIds[n],i,guid,id);
             }
         }
@@ -500,14 +502,14 @@ inline MaterializeInspection InspectMaterializedEntities(
         Obj* created=nullptr;
         auto error=BNM::TryInvoke([&]{ created=getEntity[model](id); });
         if (error.IsValid() || !created) {
-            LOG_INFO("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT ENTITY_MISSING id=%d exception=%d readsOnly=1",
+            CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT ENTITY_MISSING id=%d exception=%d readsOnly=1",
                 id,error.IsValid()?1:0);
             complete=false; continue;
         }
         auto* components=entityComponents[created].Get();
         if (!components || !components->items || components->size<0 || components->size>128) {
             complete=false;
-            LOG_INFO("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT ENTITY_UNREADABLE id=%d readsOnly=1",id);
+            CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT ENTITY_UNREADABLE id=%d readsOnly=1",id);
             continue;
         }
         const int actualId=entityObjectId[created].Get();
@@ -523,7 +525,7 @@ inline MaterializeInspection InspectMaterializedEntities(
         IdentityMix32(hash,static_cast<std::uint32_t>(components->size));
         int guid=-1,owner=-1,source=-1;
         int cardComponents=0,effectComponents=0;
-        LOG_INFO("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT ENTITY_BEGIN id=%d actualId=%d listIndex=%d components=%d readsOnly=1",
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT ENTITY_BEGIN id=%d actualId=%d listIndex=%d components=%d readsOnly=1",
             id,actualId,listIndex,components->size);
         for(int c=0;c<components->size;c++) {
             Obj* component=components->items->m_Items[c];
@@ -557,7 +559,7 @@ inline MaterializeInspection InspectMaterializedEntities(
             }
             IdentityMixText(hash,field);
             IdentityMix32(hash,static_cast<std::uint32_t>(hasValue?value:0));
-            LOG_INFO("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT COMPONENT id=%d index=%d namespace=%s type=%s field=%s value=%d hasValue=%d readsOnly=1",
+            CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT COMPONENT id=%d index=%d namespace=%s type=%s field=%s value=%d hasValue=%d readsOnly=1",
                 id,c,ns,type,field,value,hasValue?1:0);
         }
         const char* kind="unknown";
@@ -589,7 +591,7 @@ inline MaterializeInspection InspectMaterializedEntities(
         IdentityMix32(hash,static_cast<std::uint32_t>(source));
         IdentityMix32(out.combinedHash,static_cast<std::uint32_t>(hash));
         IdentityMix32(out.combinedHash,static_cast<std::uint32_t>(hash>>32));
-        LOG_INFO("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT ENTITY_END id=%d kind=%s guid=%d owner=%d source=%d hash=%016llx readsOnly=1",
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT ENTITY_END id=%d kind=%s guid=%d owner=%d source=%d hash=%016llx readsOnly=1",
             id,kind,guid,owner,source,static_cast<unsigned long long>(hash));
     }
     for(int j=0;j<expectedCards;j++) {
@@ -597,7 +599,7 @@ inline MaterializeInspection InspectMaterializedEntities(
         // GUID 711 was observed on both phones to have an associated effect.
         // A missing expected effect is not silently accepted as success.
         if (materializedGuids[j]==711 && effectLinksPerCard[j]<1) complete=false;
-        LOG_INFO("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT CARD_REL pool=%d slot=%d entityId=%d guid=%d cardFound=%d effectLinks=%d ownerKnown=%d ownerExpected=%d readsOnly=1",
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT CARD_REL pool=%d slot=%d entityId=%d guid=%d cardFound=%d effectLinks=%d ownerKnown=%d ownerExpected=%d readsOnly=1",
             kIds[targetPoolIndex],j,materializedIds[j],materializedGuids[j],
             observedCardsPerSlot[j],effectLinksPerCard[j],ownerKnown?1:0,expectedOwner);
     }
@@ -606,7 +608,7 @@ inline MaterializeInspection InspectMaterializedEntities(
         poolVirtual==88-expectedCards && poolOther==0 &&
         out.cards==expectedCards && out.unknown==0 && out.orphanEffects==0 &&
         out.next==16+out.cards+out.effects;
-    LOG_INFO("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT SUMMARY pool=%d complete=%d exact=%d expectedCards=%d cards=%d effects=%d unknown=%d orphanEffects=%d poolLinks=%d virtual=%d others=%d entities=%d nextId=%d poolHash=%016llx combinedHash=%016llx readsOnly=1",
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: MATERIALIZE_INSPECT SUMMARY pool=%d complete=%d exact=%d expectedCards=%d cards=%d effects=%d unknown=%d orphanEffects=%d poolLinks=%d virtual=%d others=%d entities=%d nextId=%d poolHash=%016llx combinedHash=%016llx readsOnly=1",
         kIds[targetPoolIndex],complete?1:0,out.exact?1:0,expectedCards,out.cards,out.effects,out.unknown,
         out.orphanEffects,out.cardLinks,poolVirtual,poolOther,entities->size,out.next,
         static_cast<unsigned long long>(out.poolHash),
@@ -783,7 +785,7 @@ inline FullDeckStepResult VerifyFullDeckStep(Obj* model,
         out.live==expectedLive &&
         out.virtualRemaining==88-expectedLive;
     if(out.exact) for(int j=0;j<kExpected[poolIndex];j++) snap.ids[poolIndex][j]=cardIds[j];
-    LOG_INFO("CustomComponents/PVP_PREPOP: FULL_DECK_POOL_RESULT pool=%d exact=%d cards=%d distinctGuids=%d effects=%d unknown=%d orphan=%d owner=%d live=%d virtual=%d nextId=%d entities=%d poolHash=%016llx entityHash=%016llx partialStatePossible=%d",
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: FULL_DECK_POOL_RESULT pool=%d exact=%d cards=%d distinctGuids=%d effects=%d unknown=%d orphan=%d owner=%d live=%d virtual=%d nextId=%d entities=%d poolHash=%016llx entityHash=%016llx partialStatePossible=%d",
         kIds[poolIndex],out.exact?1:0,out.cards,distinctGuids,out.effects,
         out.unknown,out.orphan,ownerObserved,out.live,out.virtualRemaining,
         out.nextId,out.entityCount,
@@ -807,7 +809,7 @@ inline void ExecuteFullDeckMaterialization(Obj* model,const PoolInfo (&pools)[4]
     IdentityMix32(combined,static_cast<std::uint32_t>(preflightHash>>32));
     int cards=0,effects=0,completed=0;
     bool success=true;
-    LOG_INFO("CustomComponents/PVP_PREPOP: FULL_DECK_BEGIN pools=4 totalCards=88 order=1,2,6,7 hash=%016llx privateLab=1",
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: FULL_DECK_BEGIN pools=4 totalCards=88 order=1,2,6,7 hash=%016llx privateLab=1",
         static_cast<unsigned long long>(preflightHash));
     for(int n=0;n<4;n++) {
         Obj* effect=n==0?firstEffect:effectClass.CreateNewInstance();
@@ -843,7 +845,7 @@ inline void ExecuteFullDeckMaterialization(Obj* model,const PoolInfo (&pools)[4]
             if(!ready) LOG_ERR("CustomComponents/PVP_PREPOP: FULL_DECK_ABORT pool=%d reason=precall-shape-mismatch partialStatePossible=%d",
                 kIds[n],completed>0?1:0);
             if(ready) {
-                LOG_INFO("CustomComponents/PVP_PREPOP: FULL_DECK_POOL_BEGIN pool=%d count=%d oldNext=%d",
+                CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: FULL_DECK_POOL_BEGIN pool=%d count=%d oldNext=%d",
                     kIds[n],kExpected[n],startNext);
                 auto err=BNM::TryInvoke([&]{processStockEffect[system](effect);});
                 if(err.IsValid()) {
@@ -872,7 +874,7 @@ inline void ExecuteFullDeckMaterialization(Obj* model,const PoolInfo (&pools)[4]
     const int next=modelNextId[model].Get();
     const bool exact=success && completed==4 && cards==88 &&
         entities && entities->size==next;
-    LOG_INFO("CustomComponents/PVP_PREPOP: FULL_DECK_RESULT exact=%d poolsCompleted=%d cards=%d effects=%d live=%d virtual=%d nextId=%d entities=%d combinedHash=%016llx partialStatePossible=%d",
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: FULL_DECK_RESULT exact=%d poolsCompleted=%d cards=%d effects=%d live=%d virtual=%d nextId=%d entities=%d combinedHash=%016llx partialStatePossible=%d",
         exact?1:0,completed,cards,effects,exact?88:-1,exact?0:-1,next,
         entities?entities->size:-1,static_cast<unsigned long long>(combined),exact?0:1);
     if (exact && Utilities::DeckMaterializer::pvpInsertRequested &&
@@ -892,15 +894,15 @@ static void SeedHook(Obj* self, Obj* response, const void* method) {
     PoolInfo pools[4]{};
     std::uint64_t hash=0;
     const bool eligible=Preflight(model,pools,hash);
-    LOG_INFO("CustomComponents/PVP_PREPOP: seq=%u mode=%d model=%p eligible=%d hash=%016llx nextId=%d expected=40/4/40/4",
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: seq=%u mode=%d model=%p eligible=%d hash=%016llx nextId=%d expected=40/4/40/4",
         observed,mode,model,eligible?1:0,static_cast<unsigned long long>(hash),
         model?modelNextId[model].Get():-1);
-    if (!eligible) { LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=initial-model-shape-mismatch writes=0"); return; }
-    if (mode==1) { LOG_INFO("CustomComponents/PVP_PREPOP: PREFLIGHT_OK virtual=88 writes=0"); return; }
-    if (!labConsent) { LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=lab-consent-disabled writes=0"); return; }
+    if (!eligible) { CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=initial-model-shape-mismatch writes=0"); return; }
+    if (mode==1) { CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: PREFLIGHT_OK virtual=88 writes=0"); return; }
+    if (!labConsent) { CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=lab-consent-disabled writes=0"); return; }
     // Avoid further GC allocations on later matches once one stock attempt ran.
     if (mutatingTrialModel==model && (executeOneCardLab || executeTwoCardLab || executeFullDeckLab)) {
-        LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=trial-already-attempted-this-model writes=0");
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=trial-already-attempted-this-model writes=0");
         return;
     }
 
@@ -914,57 +916,57 @@ static void SeedHook(Obj* self, Obj* response, const void* method) {
     if (!system && std::string(reason)=="stock-system-not-bound") {
         const char* factoryReason="unresolved";
         factory=ResolveBoundFactory(model,execInstances[self].Get(),factoryReason);
-        LOG_INFO("CustomComponents/PVP_PREPOP: FACTORY_PROBE result=%s modelMatch=%d instanceMatch=%d writes=0",
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: FACTORY_PROBE result=%s modelMatch=%d instanceMatch=%d writes=0",
             factoryReason,factory?1:0,factory?1:0);
         if (!factory) {
-            LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=%s writes=0",factoryReason);
+            CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=%s writes=0",factoryReason);
             return;
         }
         if (!constructStockSystemLab) {
-            LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=factory-ready-construct-disabled writes=0");
+            CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=factory-ready-construct-disabled writes=0");
             return;
         }
     } else if (!system) {
-        LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=%s writes=0",reason);
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=%s writes=0",reason);
         return;
     }
     if (!Core::SceneViewContext::newGCHandle || !Core::SceneViewContext::freeGCHandle) {
-        LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=gc-roots-unavailable writes=0"); return;
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=gc-roots-unavailable writes=0"); return;
     }
     // The stock PrepopulateCardPoolSystem::.ctor is a no-op on this game's
     // binary and calling it via BNM previously crashed two matches. Never
     // call it. Only allocate the system and assign its two injected fields.
     // No deck mutation can occur until the independent effect-execution gate.
-    LOG_INFO("CustomComponents/PVP_PREPOP: CRASH_PROBE stage=factory-root-enter writes=0");
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: CRASH_PROBE stage=factory-root-enter writes=0");
     // Root the DI factory before any managed allocations for the fallback.
     const auto factoryRoot=factory?Core::SceneViewContext::newGCHandle(factory,false):0;
     if (factory && !factoryRoot) {
-        LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=factory-gc-root-failed writes=0"); return;
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=factory-gc-root-failed writes=0"); return;
     }
-    LOG_INFO("CustomComponents/PVP_PREPOP: CRASH_PROBE stage=factory-root-ok handle=%u writes=0",
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: CRASH_PROBE stage=factory-root-ok handle=%u writes=0",
         static_cast<unsigned>(factoryRoot));
     if (!system) {
-        LOG_INFO("CustomComponents/PVP_PREPOP: CRASH_PROBE stage=system-allocate-enter writes=0");
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: CRASH_PROBE stage=system-allocate-enter writes=0");
         system=systemClass.CreateNewInstance();
         if (!system) {
             Core::SceneViewContext::freeGCHandle(factoryRoot);
-            LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=system-allocation-failed writes=0");
+            CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=system-allocation-failed writes=0");
             return;
         }
     }
-    LOG_INFO("CustomComponents/PVP_PREPOP: CRASH_PROBE stage=system-allocate-ok system=%p writes=0",system);
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: CRASH_PROBE stage=system-allocate-ok system=%p writes=0",system);
     const auto systemRoot=Core::SceneViewContext::newGCHandle(system,false);
     if (!systemRoot) {
         if (factoryRoot) Core::SceneViewContext::freeGCHandle(factoryRoot);
-        LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=system-gc-root-failed writes=0");
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=system-gc-root-failed writes=0");
         return;
     }
-    LOG_INFO("CustomComponents/PVP_PREPOP: CRASH_PROBE stage=system-root-ok handle=%u writes=0",
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: CRASH_PROBE stage=system-root-ok handle=%u writes=0",
         static_cast<unsigned>(systemRoot));
     if (!boundSystem) {
         // Skip constructSystem[system]() intentionally. Verified no-op by
         // disassembly; the previous TryInvoke call preceded both native crashes.
-        LOG_INFO("CustomComponents/PVP_PREPOP: CRASH_PROBE stage=ctor-skipped nativeNoop=1 writes=0");
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: CRASH_PROBE stage=ctor-skipped nativeNoop=1 writes=0");
         // The two injected fields are the complete dependency surface of
         // PrepopulateCardPoolSystem in this exact game's dump.cs.
         systemModel[system]=model;
@@ -974,37 +976,37 @@ static void SeedHook(Obj* self, Obj* response, const void* method) {
             factoryInstances[factory].Get()!=execInstances[self].Get()) {
             Core::SceneViewContext::freeGCHandle(systemRoot);
             Core::SceneViewContext::freeGCHandle(factoryRoot);
-            LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=constructed-system-validation-failed writes=0");
+            CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=constructed-system-validation-failed writes=0");
             return;
         }
-        LOG_INFO("CustomComponents/PVP_PREPOP: CRASH_PROBE stage=dependency-fields-validated modelMatched=1 instancesMatched=1 writes=0");
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: CRASH_PROBE stage=dependency-fields-validated modelMatched=1 instancesMatched=1 writes=0");
     }
     // Stage A: isolated creation of a genuine stock effect. Effect::.ctor is
     // NOT a no-op: it creates EffectData/EffectContext and sets default IDs.
     // The previous crash therefore does not justify skipping this ctor.
     if (!constructStockEffectLab) {
-        LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=stock-effect-construction-disabled writes=0");
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=stock-effect-construction-disabled writes=0");
         Core::SceneViewContext::freeGCHandle(systemRoot);
         if (factoryRoot) Core::SceneViewContext::freeGCHandle(factoryRoot);
         return;
     }
-    LOG_INFO("CustomComponents/PVP_PREPOP: EFFECT_PROBE stage=allocate-enter writes=0");
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: EFFECT_PROBE stage=allocate-enter writes=0");
     Obj* effect=effectClass.CreateNewInstance();
     if (!effect) {
-        LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=effect-allocation-failed writes=0");
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=effect-allocation-failed writes=0");
         Core::SceneViewContext::freeGCHandle(systemRoot);
         if (factoryRoot) Core::SceneViewContext::freeGCHandle(factoryRoot);
         return;
     }
-    LOG_INFO("CustomComponents/PVP_PREPOP: EFFECT_PROBE stage=allocate-ok effect=%p writes=0",effect);
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: EFFECT_PROBE stage=allocate-ok effect=%p writes=0",effect);
     const auto effectRoot=Core::SceneViewContext::newGCHandle(effect,false);
     if (!effectRoot) {
-        LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=effect-gc-root-failed writes=0");
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=effect-gc-root-failed writes=0");
         Core::SceneViewContext::freeGCHandle(systemRoot);
         if (factoryRoot) Core::SceneViewContext::freeGCHandle(factoryRoot);
         return;
     }
-    LOG_INFO("CustomComponents/PVP_PREPOP: EFFECT_PROBE stage=ctor-enter writes=0");
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: EFFECT_PROBE stage=ctor-enter writes=0");
     auto ctorError=BNM::TryInvoke([&]{ constructEffect[effect](); });
     if (ctorError.IsValid()) {
         LOG_ERR("CustomComponents/PVP_PREPOP: SKIP reason=effect-ctor-exception class=%s writes=0",
@@ -1016,7 +1018,7 @@ static void SeedHook(Obj* self, Obj* response, const void* method) {
     }
     const bool dataReady=effectData[effect].Get()!=nullptr;
     const bool contextReady=effectContext[effect].Get()!=nullptr;
-    LOG_INFO("CustomComponents/PVP_PREPOP: EFFECT_PROBE stage=ctor-ok dataReady=%d contextReady=%d writes=0",
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: EFFECT_PROBE stage=ctor-ok dataReady=%d contextReady=%d writes=0",
         dataReady?1:0,contextReady?1:0);
     if (!dataReady || !contextReady) {
         LOG_ERR("CustomComponents/PVP_PREPOP: SKIP reason=effect-construction-incomplete writes=0");
@@ -1033,7 +1035,7 @@ static void SeedHook(Obj* self, Obj* response, const void* method) {
     const int kTestPool=executeTwoCardLab?twoCardTargetPoolId:1;
     const int kTestPoolIndex=kTestPool==6?2:0;
     if (kTestPool!=1 && kTestPool!=6) {
-        LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=invalid-target-pool target=%d writes=0",kTestPool);
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=invalid-target-pool target=%d writes=0",kTestPool);
         Core::SceneViewContext::freeGCHandle(effectRoot);
         Core::SceneViewContext::freeGCHandle(systemRoot);
         if (factoryRoot) Core::SceneViewContext::freeGCHandle(factoryRoot);
@@ -1049,10 +1051,10 @@ static void SeedHook(Obj* self, Obj* response, const void* method) {
         if (factoryRoot) Core::SceneViewContext::freeGCHandle(factoryRoot);
         return;
     }
-    LOG_INFO("CustomComponents/PVP_PREPOP: EFFECT_PROBE stage=ready target=%d count=%d fingerprint=%016llx writes=0",
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: EFFECT_PROBE stage=ready target=%d count=%d fingerprint=%016llx writes=0",
         kTestPool,kTestCount,static_cast<unsigned long long>(hash));
     if (!executeOneCardLab && !executeTwoCardLab && !executeFullDeckLab) {
-        LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=card-execution-disabled writes=0");
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=card-execution-disabled writes=0");
         Core::SceneViewContext::freeGCHandle(effectRoot);
         Core::SceneViewContext::freeGCHandle(systemRoot);
         if (factoryRoot) Core::SceneViewContext::freeGCHandle(factoryRoot);
@@ -1066,14 +1068,14 @@ static void SeedHook(Obj* self, Obj* response, const void* method) {
     char hashText[17]{};
     std::snprintf(hashText,sizeof(hashText),"%016llx",static_cast<unsigned long long>(hash));
     if (requiredFingerprint.empty()) {
-        LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=deck-validation-mode-not-configured writes=0");
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=deck-validation-mode-not-configured writes=0");
         Core::SceneViewContext::freeGCHandle(effectRoot);
         Core::SceneViewContext::freeGCHandle(systemRoot);
         if (factoryRoot) Core::SceneViewContext::freeGCHandle(factoryRoot);
         return;
     }
     if (!PvpDeckPrepopulatePlan::AcceptFingerprint(requiredFingerprint,hash)) {
-        LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=expected-fingerprint-mismatch actual=%s writes=0",hashText);
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=expected-fingerprint-mismatch actual=%s writes=0",hashText);
         Core::SceneViewContext::freeGCHandle(effectRoot);
         Core::SceneViewContext::freeGCHandle(systemRoot);
         if (factoryRoot) Core::SceneViewContext::freeGCHandle(factoryRoot);
@@ -1106,10 +1108,10 @@ static void SeedHook(Obj* self, Obj* response, const void* method) {
         if (factoryRoot) Core::SceneViewContext::freeGCHandle(factoryRoot);
         return;
     }
-    LOG_INFO("CustomComponents/PVP_PREPOP: DECK_AUTHORIZATION mode=%s hash=%s writes=0",
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: DECK_AUTHORIZATION mode=%s hash=%s writes=0",
         requiredFingerprint=="auto"?"auto":"pinned",hashText);
     if (mutatingTrialModel==model) {
-        LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=trial-already-attempted-this-model writes=0");
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=trial-already-attempted-this-model writes=0");
         Core::SceneViewContext::freeGCHandle(effectRoot);
         Core::SceneViewContext::freeGCHandle(systemRoot);
         if (factoryRoot) Core::SceneViewContext::freeGCHandle(factoryRoot);
@@ -1127,7 +1129,7 @@ static void SeedHook(Obj* self, Obj* response, const void* method) {
     int expectedGuids[2]{-1,-1};
     Obj* targetPool=nullptr;
     if (!PoolOf(secondPools[kTestPoolIndex].entity,targetPool)) {
-        LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=target-pool-disappeared writes=0");
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=target-pool-disappeared writes=0");
         Core::SceneViewContext::freeGCHandle(effectRoot);
         Core::SceneViewContext::freeGCHandle(systemRoot);
         if (factoryRoot) Core::SceneViewContext::freeGCHandle(factoryRoot);
@@ -1136,7 +1138,7 @@ static void SeedHook(Obj* self, Obj* response, const void* method) {
     auto* beforeEntries=poolEntries[targetPool].Get();
     if (!beforeEntries || !beforeEntries->items ||
         beforeEntries->size!=kExpected[kTestPoolIndex]) {
-        LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=target-pool-entries-unavailable writes=0");
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=target-pool-entries-unavailable writes=0");
         Core::SceneViewContext::freeGCHandle(effectRoot);
         Core::SceneViewContext::freeGCHandle(systemRoot);
         if (factoryRoot) Core::SceneViewContext::freeGCHandle(factoryRoot);
@@ -1144,25 +1146,25 @@ static void SeedHook(Obj* self, Obj* response, const void* method) {
     }
     int deckOwner=-1;
     const bool deckOwnerKnown=PoolOwnerId(secondPools[kTestPoolIndex].entity,deckOwner);
-    LOG_INFO("CustomComponents/PVP_PREPOP: TARGET_BASELINE pool=%d ownerKnown=%d owner=%d entries=%d count=%d writes=0",
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: TARGET_BASELINE pool=%d ownerKnown=%d owner=%d entries=%d count=%d writes=0",
         kTestPool,deckOwnerKnown?1:0,deckOwner,beforeEntries->size,kTestCount);
     for(int i=0;i<kTestCount;i++) {
         Obj* beforeEntry=beforeEntries->items->m_Items[i];
         if (!beforeEntry || entryId[beforeEntry].Get()!=-1) {
-            LOG_INFO("CustomComponents/PVP_PREPOP: SKIP reason=target-entry-not-virtual writes=0");
+            CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: SKIP reason=target-entry-not-virtual writes=0");
             Core::SceneViewContext::freeGCHandle(effectRoot);
             Core::SceneViewContext::freeGCHandle(systemRoot);
             if (factoryRoot) Core::SceneViewContext::freeGCHandle(factoryRoot);
             return;
         }
         expectedGuids[i]=entryGuid[beforeEntry].Get();
-        LOG_INFO("CustomComponents/PVP_PREPOP: TARGET_ENTRY pool=%d slot=%d guid=%d virtual=1 writes=0",
+        CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: TARGET_ENTRY pool=%d slot=%d guid=%d virtual=1 writes=0",
             kTestPool,i,expectedGuids[i]);
     }
     // Claim before invoking stock code; if it partially fails, no retry.
     mutatingTrialModel=model;
     const char* trial=kTestCount==2?"TWO_CARD":"ONE_CARD";
-    LOG_INFO("CustomComponents/PVP_PREPOP: %s_BEGIN pool=%d count=%d nextId=16 initialHash=%016llx privateLab=1",
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: %s_BEGIN pool=%d count=%d nextId=16 initialHash=%016llx privateLab=1",
         trial,kTestPool,kTestCount,static_cast<unsigned long long>(hash));
     auto processError=BNM::TryInvoke([&]{ processStockEffect[system](effect); });
     if (processError.IsValid()) {
@@ -1210,7 +1212,7 @@ static void SeedHook(Obj* self, Obj* response, const void* method) {
     const bool exact=!processError.IsValid() && !unreadable && inspection.exact &&
         preservedGuids && live==kTestCount && virtualRemaining==88-kTestCount &&
         otherNonVirtual==0;
-    LOG_INFO("CustomComponents/PVP_PREPOP: %s_RESULT pool=%d exact=%d live=%d virtual=%d others=%d firstId=%d secondId=%d nextId=%d entities=%d exception=%d cardEntities=%d effectEntities=%d inspectionComplete=%d partialStatePossible=%d",
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: %s_RESULT pool=%d exact=%d live=%d virtual=%d others=%d firstId=%d secondId=%d nextId=%d entities=%d exception=%d cardEntities=%d effectEntities=%d inspectionComplete=%d partialStatePossible=%d",
         trial,kTestPool,exact?1:0,live,virtualRemaining,otherNonVirtual,
         materializedIds[0],materializedIds[1],next,count,
         processError.IsValid()?1:0,inspection.cards,inspection.effects,
@@ -1326,10 +1328,10 @@ inline bool Install(int requestedMode, bool allowLab, bool allowConstruction,
                      !factoryInstances.IsValid() || !factoryDatabase.IsValid() ||
                      !factoryDataProvider.IsValid() || !factoryDefaultOwner.IsValid() ||
                      !factoryAbilityCreator.IsValid()))) return false;
-    BNM::BasicHook(seed,SeedHook,originalSeed);
-    LOG_INFO("CustomComponents/PVP_PREPOP: install=%d mode=%d labConsent=%d constructStockSystemLab=%d stockOnly=1",
+    CustomComponents::Core::Hooks::Install(seed,SeedHook,originalSeed);
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: install=%d mode=%d labConsent=%d constructStockSystemLab=%d stockOnly=1",
         originalSeed?1:0,mode,labConsent?1:0,constructStockSystemLab?1:0);
-    LOG_INFO("CustomComponents/PVP_PREPOP: labGates effectConstruct=%d oneCardExecute=%d twoCardExecute=%d twoCardTargetPool=%d fullDeckExecute=%d conflict=%d (peerCompatibilityNotVerified=1)",
+    CC_SELECTION_DIAG("CustomComponents/PVP_PREPOP: labGates effectConstruct=%d oneCardExecute=%d twoCardExecute=%d twoCardTargetPool=%d fullDeckExecute=%d conflict=%d (peerCompatibilityNotVerified=1)",
         constructStockEffectLab?1:0,executeOneCardLab?1:0,
         executeTwoCardLab?1:0,twoCardTargetPoolId,executeFullDeckLab?1:0,incompatibleLabs?1:0);
     return originalSeed!=nullptr;

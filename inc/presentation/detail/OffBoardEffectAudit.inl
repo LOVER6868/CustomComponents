@@ -1,3 +1,4 @@
+#include "core/HookRegistry.hpp"
 // Internal implementation fragment for ZoneTriggeredAbilityPresentationSystem.
 // Effect audit / diagnostic stock effect callbacks and registration.
 // Included at its original declaration position inside the owning namespace.
@@ -75,6 +76,7 @@
     template<class CallOriginal>
     inline void AuditOwnedEffect(int index, void* self, Obj* effect,
                                  CallOriginal&& invoke) {
+        if constexpr (!CustomComponents::Diagnostics::kVerbose) { invoke();return; }
         const auto seen = ++auditSeen[index];
         Obj* model = self && auditSystemModel[index].IsValid()
             ? auditSystemModel[index][static_cast<Obj*>(self)].Get() : nullptr;
@@ -105,42 +107,6 @@
         ++auditReported[index];
         const AuditStats after = entityExists[model](target)
             ? CaptureAuditStats(getEntityById[model](target)) : AuditStats{};
-        // Record changes only if the handler entered in Deck/Discard.
-        // A repeated off-board visit starts a new epoch after presentation.
-        if (auto* delta = FindOffboardDelta(model, target, true)) {
-            if (delta->compared) {
-                const Obj* oldModel = delta->model;
-                const int oldId = delta->cardId;
-                *delta = {};
-                delta->model = const_cast<Obj*>(oldModel);
-                delta->cardId = oldId;
-            }
-            auto addValid = [&](int a, int b, int& accumulator) {
-                if (a == -99999 || b == -99999) {
-                    ++delta->invalidFields;
-                    return;
-                }
-                const std::int64_t total = static_cast<std::int64_t>(accumulator) +
-                    static_cast<std::int64_t>(b) - a;
-                if (total < -100000 || total > 100000) {
-                    ++delta->invalidFields;
-                    return;
-                }
-                accumulator = static_cast<int>(total);
-            };
-            if (delta->events == 0) delta->firstSignature = before.componentSignature;
-            addValid(before.attack, after.attack, delta->attack);
-            addValid(before.maxHealth, after.maxHealth, delta->health);
-            addValid(before.cost, after.cost, delta->cost);
-            if (before.componentSignature != after.componentSignature)
-                ++delta->traitObservations;
-            delta->lastSignature = after.componentSignature;
-            ++delta->events;
-            if (delta->events <= 12)
-                CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/OFFBOARD_DELTA: ACCUMULATE model=%p card=%d zone=%s event=%u attack=%d health=%d cost=%d traitsChanged=%u (read-only)",
-                    model, target, zone, delta->events, delta->attack,
-                    delta->health, delta->cost, delta->traitObservations);
-        }
         static constexpr const char* names[] = {
             "Buff", "ModifySunCost", "GrantAbility", "RemoveGrantAbility",
             "RemoveBuff", "RemoveModifySunCost"
@@ -212,10 +178,11 @@
                 continue;
             }
             if (ownedElsewhere) continue;
-            BNM::BasicHook(method, hooks[i], originalAuditProcess[i]);
+            CustomComponents::Core::Hooks::Install(method, hooks[i], originalAuditProcess[i]);
             CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/OFFBOARD_AUDIT: %s hooked=%d rva=0x%llx",
                 systems[i], int(originalAuditProcess[i] != nullptr),
                 (unsigned long long)expectedRvas[i]);
         }
     }
+
 

@@ -96,53 +96,35 @@
         return true;
     }
 
-    inline void RememberStockTriggerCandidate(Obj* triggerSystem) {
-        if (!triggerSystem)
-            return;
-
-        // The DI container assigns TriggerSystem<T>'s injected fields through
-        // generated setters. RegisterEffectHandlers can run before Finder is
-        // assigned in this build, so keep the TriggerSystem object itself and
-        // resolve its injected fields lazily when an event is fired.
-        for (std::size_t i = 0; i < stockTriggerContextCount; ++i) {
-            if (stockTriggerContexts[i].triggerSystem != triggerSystem)
-                continue;
-
-            StockTriggerContext refreshed = stockTriggerContexts[i];
-            RefreshStockTriggerContext(refreshed);
-
-            for (std::size_t j = i + 1; j < stockTriggerContextCount; ++j)
-                stockTriggerContexts[j - 1] = stockTriggerContexts[j];
-
-            stockTriggerContexts[stockTriggerContextCount - 1] = refreshed;
-            return;
+    inline std::vector<StockTriggerContext> SnapshotStockTriggerContexts() {
+        std::vector<std::shared_ptr<Core::ManagedRuntime::Root>> references;
+        {
+            std::lock_guard<std::mutex> guard(producerLock);
+            producerReferences.erase(std::remove_if(producerReferences.begin(),producerReferences.end(),
+                [](const auto& reference){return !reference->Get();}),producerReferences.end());
+            references=producerReferences;
         }
-
-        StockTriggerContext candidate{};
-        candidate.triggerSystem = triggerSystem;
-        RefreshStockTriggerContext(candidate);
-
-        if (stockTriggerContextCount < stockTriggerContexts.size()) {
-            stockTriggerContexts[stockTriggerContextCount++] = candidate;
-        } else {
-            // Only evict once the large recency window is genuinely full.
-            // This preserves all producer systems from the current match and
-            // its prediction models under normal play.
-            for (std::size_t i = 1; i < stockTriggerContexts.size(); ++i)
-                stockTriggerContexts[i - 1] = stockTriggerContexts[i];
-            stockTriggerContexts[stockTriggerContexts.size() - 1] = candidate;
+        std::vector<StockTriggerContext> contexts;
+        for(const auto& reference:references) {
+            auto lifetime=std::make_shared<Core::ManagedRuntime::Root>(reference->Get());
+            StockTriggerContext candidate;
+            candidate.lifetime=lifetime;candidate.triggerSystem=lifetime->Get();
+            if(RefreshStockTriggerContext(candidate)) contexts.push_back(std::move(candidate));
         }
-
-        if constexpr (CustomComponents::Diagnostics::kVerbose) CC_DIAG(
-            "CustomComponents/CustomTrigger: captured TriggerSystem candidate system=%p instances=%p triggered=%p finder=%p model=%p count=%zu",
-            candidate.triggerSystem,
-            candidate.instances,
-            candidate.triggeredEffects,
-            candidate.finder,
-            candidate.model,
-            stockTriggerContextCount
-        );
+        return contexts;
     }
+    inline StockTriggerContext* SelectedStockTriggerContext(const StockTriggerContext& context) {
+        thread_local StockTriggerContext selected;
+        selected=context;return &selected;
+    }
+    inline void RememberStockTriggerCandidate(Obj* triggerSystem) {
+        if(!triggerSystem) return;
+        std::lock_guard<std::mutex> guard(producerLock);
+        for(const auto& reference:producerReferences) if(reference->Get()==triggerSystem) return;
+        auto reference=std::make_shared<Core::ManagedRuntime::Root>(triggerSystem,true);
+        if(reference->Get()) producerReferences.push_back(reference);
+    }
+
 
     static void TriggerSystemRegisterEffectHandlersHook(
         void* self,
@@ -180,6 +162,8 @@
         Obj* effect,
         Obj* preferredInstances = nullptr
     ) {
+        auto stockTriggerContexts=SnapshotStockTriggerContexts();
+        const auto stockTriggerContextCount=stockTriggerContexts.size();
         if (!effect)
             return nullptr;
 
@@ -213,7 +197,7 @@
                     context.triggeredEffects,
                     context.finder
                 );
-                return &context;
+                return SelectedStockTriggerContext(context);
             }
 
             // Do not fall back to recycled entity-id matching when a concrete
@@ -250,7 +234,7 @@
                         stockTriggerContexts[i].finder,
                         effectEntityId
                     );
-                    return &stockTriggerContexts[i];
+                    return SelectedStockTriggerContext(stockTriggerContexts[i]);
                 }
             }
         }
@@ -265,7 +249,7 @@
                         stockTriggerContexts[i].finder,
                         targetId
                     );
-                    return &stockTriggerContexts[i];
+                    return SelectedStockTriggerContext(stockTriggerContexts[i]);
                 }
             }
         }
@@ -280,7 +264,7 @@
                         stockTriggerContexts[i].finder,
                         sourceId
                     );
-                    return &stockTriggerContexts[i];
+                    return SelectedStockTriggerContext(stockTriggerContexts[i]);
                 }
             }
         }
@@ -303,6 +287,8 @@
         Obj* expectedModel,
         Obj* preferredInstances = nullptr
     ) {
+        auto stockTriggerContexts=SnapshotStockTriggerContexts();
+        const auto stockTriggerContextCount=stockTriggerContexts.size();
         if (!expectedModel)
             return nullptr;
 
@@ -313,7 +299,7 @@
                 continue;
             if (preferredInstances && candidate.instances != preferredInstances)
                 continue;
-            return &candidate;
+            return SelectedStockTriggerContext(candidate);
         }
 
         LOG_ERR(

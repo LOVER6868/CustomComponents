@@ -1,9 +1,0 @@
-{
-  "$type": "PvZCards.Engine.Components.GrantAbilityEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
-  "$data": {
-    "GrantableAbilityType": "TestArmor",
-    "Duration": "EndOfTurn",
-    "AbilityValue": 2,
-    "ModifyOperation": "Set"
-  }
-}

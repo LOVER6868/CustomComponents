@@ -1,3 +1,6 @@
+#include "core/Performance.hpp"
+#include "core/HookRegistry.hpp"
+#include "core/Observers.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 
@@ -17,6 +20,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <unordered_map>
 
 #include "diagnostics/DiagnosticLogging.hpp"
 #include "log.h"
@@ -55,7 +59,12 @@ namespace CustomComponents::Systems::CustomFieldBridgeSystem {
     };
 
     inline std::vector<Schema> schemas;
+    inline std::unordered_map<BNM::IL2CPP::Il2CppClass*,std::size_t> schemaIndices;
     inline bool initialized = false;
+    inline Core::Observers<Obj*,Obj*> afterProperties;
+    inline Core::Observers<Obj*,Obj*> beforeProperties;
+    inline Core::Observers<Obj*,Obj*> afterDeserialize;
+    inline bool ResolveSchemas();
 
     inline bool Register(
         const char* namespaze,
@@ -85,6 +94,7 @@ namespace CustomComponents::Systems::CustomFieldBridgeSystem {
             schema.fields.push_back({field.name, field.kind, 0});
         }
         schemas.push_back(std::move(schema));
+        if(initialized && !ResolveSchemas()){schemas.pop_back();return false;}
         return true;
     }
 
@@ -94,10 +104,8 @@ namespace CustomComponents::Systems::CustomFieldBridgeSystem {
         auto* klass = BNM::Class(object).GetClass();
         if (!klass)
             return nullptr;
-        for (auto& schema : schemas) {
-            if (schema.klass == klass)
-                return &schema;
-        }
+        const auto found=schemaIndices.find(klass);
+        if(found!=schemaIndices.end())return &schemas[found->second];
         return nullptr;
     }
 
@@ -219,6 +227,7 @@ namespace CustomComponents::Systems::CustomFieldBridgeSystem {
     }
 
     static void SetObjectPropertiesHook(void* self, Obj* instance, Obj* properties, const void* method) {
+        beforeProperties.Notify(instance,properties);
         if (instance && properties && objectBox && int32Class) {
             Schema* schema = FindSchema(instance);
             if (schema && schema->namespaze == "PvZCards.Engine.Queries" &&
@@ -250,6 +259,7 @@ namespace CustomComponents::Systems::CustomFieldBridgeSystem {
             delegatedSetObjectProperties(self, instance, properties, method);
         else
             originalSetObjectProperties(self, instance, properties, method);
+        afterProperties.Notify(instance,properties);
     }
 
     inline bool ReadSerializedField(Obj* properties, const Schema& schema, const ResolvedField& field, CapturedValue& out) {
@@ -352,6 +362,7 @@ namespace CustomComponents::Systems::CustomFieldBridgeSystem {
         Schema* schema = FindSchema(object);
         if (!schema) {
             originalRefDeserializeInto(self, objectToPopulate, serializedObject, method);
+            afterDeserialize.Notify(object,static_cast<Obj*>(serializedObject));
             return;
         }
 
@@ -375,6 +386,7 @@ namespace CustomComponents::Systems::CustomFieldBridgeSystem {
         }
 
         ApplySerializedFields(object, static_cast<Obj*>(serializedObject), "existing");
+        afterDeserialize.Notify(object,static_cast<Obj*>(serializedObject));
         if constexpr (CustomComponents::Diagnostics::kVerbose) CC_DIAG(
             "CustomComponents/CustomFieldBridge: deserialized %s.%s customFields=%zu",
             schema->namespaze.c_str(),
@@ -430,6 +442,7 @@ namespace CustomComponents::Systems::CustomFieldBridgeSystem {
             }
         }
         ApplySerializedFields(result, serializedObject, "new");
+        afterDeserialize.Notify(result,serializedObject);
         return result;
     }
     inline bool ResolveSchemas() {
@@ -462,6 +475,8 @@ namespace CustomComponents::Systems::CustomFieldBridgeSystem {
                 }
             }
         }
+        schemaIndices.clear();
+        for(std::size_t i=0;i<schemas.size();++i)schemaIndices.emplace(schemas[i].klass,i);
         return true;
     }
 
@@ -500,6 +515,7 @@ namespace CustomComponents::Systems::CustomFieldBridgeSystem {
         Obj* instances,
         const void* method
     ) {
+        Core::Performance::Scope totalCost(Core::Performance::Area::EntityCopy);
         auto* target = static_cast<Obj*>(self);
 
         // Capture registered custom fields from the source BEFORE stock copying.
@@ -508,36 +524,43 @@ namespace CustomComponents::Systems::CustomFieldBridgeSystem {
         // fields.
         struct PendingSchemaCopy {
             Schema* schema = nullptr;
+            Obj* target = nullptr;
             std::vector<CapturedValue> values;
         };
 
         std::vector<PendingSchemaCopy> pending;
-        if (source) {
-            for (auto& schema : schemas) {
-                Obj* sourceComponent = FindExactSchemaComponent(source, schema);
-                if (!sourceComponent)
-                    continue;
-
-                PendingSchemaCopy entry;
-                entry.schema = &schema;
-                entry.values.reserve(schema.fields.size());
-
-                for (const auto& field : schema.fields)
-                    entry.values.push_back(ReadValue(sourceComponent, field));
-
-                pending.push_back(std::move(entry));
+        if(source && entityComponents.IsValid()) {
+            auto field=entityComponents;auto* list=field[source].Get();
+            if(list && list->items && list->size>=0 && list->size<=int(list->items->capacity)) {
+                for(int i=0;i<list->size;++i) {
+                    Obj* component=list->items->m_Items[i];if(!component)continue;
+                    const auto found=schemaIndices.find(component->klass);
+                    if(found==schemaIndices.end())continue;
+                    auto& schema=schemas[found->second];
+                    if(std::any_of(pending.begin(),pending.end(),[&](const auto& item){return item.schema==&schema;}))continue;
+                    PendingSchemaCopy entry;entry.schema=&schema;
+                    entry.values.reserve(schema.fields.size());
+                    for(const auto& value:schema.fields)entry.values.push_back(ReadValue(component,value));
+                    pending.push_back(std::move(entry));
+                }
             }
         }
 
-        originalEntityDeepCopy(self, source, instances, method);
+        {Core::Performance::Scope stockCost(Core::Performance::Area::StockEntityCopy);originalEntityDeepCopy(self, source, instances, method);}
 
+        if(pending.empty())return;
+        auto targetField=entityComponents;
+        auto* components=target && targetField.IsValid()?targetField[target].Get():nullptr;
+        if(components && components->items && components->size>=0 && components->size<=int(components->items->capacity))
+            for(int i=0;i<components->size;++i)if(auto* component=components->items->m_Items[i])
+                for(auto& item:pending)if(!item.target && item.schema->klass==component->klass)item.target=component;
         // Stock has now created/copied the destination Components list.
         // Repair ONLY exact registered custom component types.
         for (auto& entry : pending) {
             if (!entry.schema)
                 continue;
 
-            Obj* targetComponent = FindExactSchemaComponent(target, *entry.schema);
+            Obj* targetComponent=entry.target;
             if (!targetComponent)
                 continue;
 
@@ -634,25 +657,25 @@ namespace CustomComponents::Systems::CustomFieldBridgeSystem {
             return false;
         }
 
-        BNM::BasicHook(setProperties, SetObjectPropertiesHook, originalSetObjectProperties);
+        CustomComponents::Core::Hooks::Install(setProperties, SetObjectPropertiesHook, originalSetObjectProperties);
         if (!originalSetObjectProperties) {
             LOG_ERR("CustomComponents/CustomFieldBridge: SetObjectProperties hook failed");
             return false;
         }
 
-        BNM::BasicHook(deserializeNew, RefDeserializeNewHook, originalRefDeserializeNew);
+        CustomComponents::Core::Hooks::Install(deserializeNew, RefDeserializeNewHook, originalRefDeserializeNew);
         if (!originalRefDeserializeNew) {
             LOG_ERR("CustomComponents/CustomFieldBridge: new-object Deserialize hook failed");
             return false;
         }
 
-        BNM::BasicHook(deserialize, RefDeserializeIntoHook, originalRefDeserializeInto);
+        CustomComponents::Core::Hooks::Install(deserialize, RefDeserializeIntoHook, originalRefDeserializeInto);
         if (!originalRefDeserializeInto) {
             LOG_ERR("CustomComponents/CustomFieldBridge: Deserialize hook failed");
             return false;
         }
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             entityDeepCopy,
             EntityDeepCopyHook,
             originalEntityDeepCopy

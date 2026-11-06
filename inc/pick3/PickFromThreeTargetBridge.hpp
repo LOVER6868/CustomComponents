@@ -1,3 +1,5 @@
+#include "core/HookRegistry.hpp"
+#include "pick3/AdditionalSelectionRuntime.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 #include "diagnostics/Pf3RepairTrace.hpp"
@@ -91,8 +93,10 @@ inline bool ValidateAutomaticRecipient(Obj* model, int entityId) {
 // The result is a managed List<Entity>, not a live match entity list. The
 // subtype/has-component/not/composite JSON is evaluated by the game here.
 // Do not infer database GUIDs from a numeric range or from a live deck.
-inline std::vector<Candidate> EnumerateCardDatabase(Obj* query, int effectId) {
+inline std::vector<Candidate> EnumerateCardDatabase(Obj* query,int effectId,Obj* model=nullptr,int lane=-1) {
     std::vector<Candidate> candidates;
+    Obj* effect=model?Engine::EntityAccess::Find(model,effectId):nullptr;
+    Engine::PlacementQueryContext::Scope placement({model,effect,nullptr,lane});
     if (!query || !getDatabaseInstance.IsValid() || !findDatabaseEntities.IsValid())
         return candidates;
     Obj* database = resolveMatchDatabase ? resolveMatchDatabase() : nullptr;
@@ -107,6 +111,8 @@ inline std::vector<Candidate> EnumerateCardDatabase(Obj* query, int effectId) {
     }
     CC_DIAG("CustomComponents/Pick3/DB5: DATABASE_SOURCE effect=%d bound=%d", effectId, injected ? 1 : 0);
     Obj* found = nullptr;
+    // Preserve the database finder's own definition context, as in 6.3.
+    // Placement queries read the live board through PlacementQueryContext.
     auto findEx = BNM::TryInvoke([&] { found = findDatabaseEntities[database](query); });
     if (findEx.IsValid() || !found) {
         LOG_ERR("CustomComponents/Pick3/DB5: QUERY_EXCEPTION effect=%d", effectId);
@@ -204,7 +210,7 @@ inline void PruneExpiredPendingOffersLocked() {
         const auto age=std::chrono::duration_cast<std::chrono::seconds>(now-it->cachedAt).count();
         const long long lifetime=it->suspended?60:180;
         if(age<=lifetime) {++it;continue;}
-        LOG_INFO("CustomComponents/Pick3/HANDOFF_REPAIR: CACHE_EXPIRED effect=%d group=%d suspended=%d age=%lld",
+        CC_SELECTION_DIAG("CustomComponents/Pick3/HANDOFF_REPAIR: CACHE_EXPIRED effect=%d group=%d suspended=%d age=%lld",
                  it->request.effectEntityId,it->request.effectGroupId,it->suspended?1:0,static_cast<long long>(age));
         it=pendingOffers.erase(it);
     }
@@ -271,7 +277,7 @@ inline Obj* CachedModelForHolderChoice(int effectId, int groupId, int expectedOw
                         int(candidate.suspended),candidate.request.sourceCardGuid);
             }
 #endif
-            LOG_INFO("CustomComponents/Pick3/DiscoverUI: OFFER_MODEL_AMBIGUOUS effect=%d group=%d owner=%d presentationDeferred=1",effectId,groupId,expectedOwner);
+            CC_SELECTION_DIAG("CustomComponents/Pick3/DiscoverUI: OFFER_MODEL_AMBIGUOUS effect=%d group=%d owner=%d presentationDeferred=1",effectId,groupId,expectedOwner);
             return nullptr;
         }
         found=it->model;
@@ -300,7 +306,7 @@ inline Obj* VerifiedCachedModelForActivePve(int effectId,int groupId,int owner) 
            offer.request.options.empty()) continue;
         bool valid=false;
         if(offer.request.mode==SelectionMode::CardDatabase) {
-            valid=ValidateAutomaticRecipient(offer.model,offer.databaseProxy);
+            valid=offer.databaseProxy>=0?ValidateAutomaticRecipient(offer.model,offer.databaseProxy):!offer.eligible.empty() && std::all_of(offer.eligible.begin(),offer.eligible.end(),[&](int id){return ValidateAutomaticRecipient(offer.model,id);});
         } else {
             valid=true;
             for(const auto& option:offer.request.options) {
@@ -352,7 +358,7 @@ inline bool PublishForActiveEffect(int effectId,int groupId,Obj* liveModel,int e
     // its targets again before reopening, even if the EntityModel is identical.
     const auto validOnLiveModel=[&](const PendingOffer& offer) {
         if(offer.request.mode==SelectionMode::CardDatabase)
-            return ValidateAutomaticRecipient(liveModel,offer.databaseProxy);
+            return offer.databaseProxy>=0?ValidateAutomaticRecipient(liveModel,offer.databaseProxy):!offer.eligible.empty() && std::all_of(offer.eligible.begin(),offer.eligible.end(),[&](int id){return ValidateAutomaticRecipient(liveModel,id);});
         if(!getEntityById.IsValid() || !cardGuid.IsValid() || offer.request.options.empty())
             return false;
         for(const auto& candidate:offer.request.options) {
@@ -451,7 +457,7 @@ inline bool PublishForActiveEffect(int effectId,int groupId,Obj* liveModel,int e
     ownerEffect=effectId;ownerGroup=groupId;
     completedOffers.insert(OfferKey(effectId,groupId));
     lastOfferedEffect=effectId;lastOfferedGroup=groupId;
-    LOG_INFO("CustomComponents/Pick3/IDENTITY: ACTIVATE effect=%d group=%d cachedRemaining=%zu verifiedClone=%d resumed=%d",effectId,groupId,pendingOffers.size(),verifiedClone?1:0,resumed?1:0);
+    CC_SELECTION_DIAG("CustomComponents/Pick3/IDENTITY: ACTIVATE effect=%d group=%d cachedRemaining=%zu verifiedClone=%d resumed=%d",effectId,groupId,pendingOffers.size(),verifiedClone?1:0,resumed?1:0);
     return true;
 }
 
@@ -475,6 +481,40 @@ struct DatabaseQueryOverride {
     std::uint32_t filterRoot, queryRoot;
 };
 inline std::vector<DatabaseQueryOverride> databaseQueryOverrides;
+inline int LogicalSelectionMode(Obj* filter) {
+    if(!filter || !selectionType.IsValid())return -1;
+    if(Core::SceneViewContext::getGCHandle) {
+        for(const auto& item:runtimeOverrides)
+            if(Core::SceneViewContext::getGCHandle(item.filterHandle)==filter)return item.originalSelectionType;
+        for(const auto& item:databaseQueryOverrides)
+            if(Core::SceneViewContext::getGCHandle(item.filterRoot)==filter)return EnumModes::kPickFromThreeCardDatabase;
+    }
+    return selectionType[filter].Get();
+}
+// Prediction/model copies must contain the authored filter, not a popup's
+// temporary Manual mode or recipient proxy. Reuse the existing copy owner.
+inline void CopyLogicalFilter(Obj* self,Obj* source,Obj* instances,const void* method) {
+    if(!source || !selectionType.IsValid() || !targetFilterQuery.IsValid() || !Core::SceneViewContext::getGCHandle) {
+        AdditionalSelection::originalCopy(self,source,instances,method);return;
+    }
+    const int savedMode=selectionType[source].Get();
+    Obj* savedQuery=targetFilterQuery[source].Get();
+    int logicalMode=LogicalSelectionMode(source);Obj* logicalQuery=savedQuery;
+    for(const auto& item:databaseQueryOverrides)
+        if(Core::SceneViewContext::getGCHandle(item.filterRoot)==source){
+            logicalQuery=Core::SceneViewContext::getGCHandle(item.queryRoot);
+            logicalMode=EnumModes::kPickFromThreeCardDatabase;break;
+        }
+    if(logicalMode==savedMode && logicalQuery==savedQuery) {
+        AdditionalSelection::originalCopy(self,source,instances,method);return;
+    }
+    struct Restore {
+        Obj* source;int mode;Obj* query;
+        ~Restore(){selectionType[source].Set(mode);targetFilterQuery[source].Set(query);}
+    } restore{source,savedMode,savedQuery};
+    selectionType[source].Set(logicalMode);targetFilterQuery[source].Set(logicalQuery);
+    AdditionalSelection::originalCopy(self,source,instances,method);
+}
 inline void RestoreDatabaseOverride(const DatabaseQueryOverride& item, const char* reason) {
     Obj* filter = Core::SceneViewContext::getGCHandle(item.filterRoot);
     Obj* originalQuery = Core::SceneViewContext::getGCHandle(item.queryRoot);
@@ -529,6 +569,14 @@ inline bool RedirectDatabaseTargetQuery(Obj* filter, int effectId, int groupId) 
     Obj* original = targetFilterQuery[filter].Get();
     Obj* recipientQuery = additionalTargetQuery[filter].Get();
     if (!original || !recipientQuery || original == recipientQuery) return false;
+    // This proxy only keeps the stock blocking phase alive. The real dependent
+    // lane query is evaluated by BeginAdditional after the player picks a card.
+    std::shared_ptr<Core::ManagedRuntime::Root> deferredProxy;
+    if(AdditionalSelection::DefersPickedLane(filter)) {
+        deferredProxy=AdditionalSelection::LaneProxy();
+        if(!deferredProxy)return false;
+        recipientQuery=deferredProxy->Get();
+    }
     auto root = Core::SceneViewContext::newGCHandle;
     auto release = Core::SceneViewContext::freeGCHandle;
     if (!root || !release || !Core::SceneViewContext::getGCHandle) return false;
@@ -647,7 +695,7 @@ inline bool SuspendUnsubmittedOffer(const PreviewRequest& request, Obj* liveMode
     // Success remains non-rearmable. Only this pre-dispatch suspension clears
     // the offer reservation; no stock service/DTO is invoked here.
     CompleteLocalSelection(request.effectEntityId,request.effectGroupId,true);
-    LOG_INFO("CustomComponents/Pick3/HANDOFF_REPAIR: SUSPENDED effect=%d group=%d options=%zu noSubmission=1 rearm=1",
+    CC_SELECTION_DIAG("CustomComponents/Pick3/HANDOFF_REPAIR: SUSPENDED effect=%d group=%d options=%zu noSubmission=1 rearm=1",
              request.effectEntityId,request.effectGroupId,request.options.size());
     return true;
 }
@@ -655,6 +703,10 @@ inline bool SuspendUnsubmittedOffer(const PreviewRequest& request, Obj* liveMode
 // The game must create a stock blocking selection for our new enum. When
 // checking if a manual choose phase is required, interpret 3 as Manual=1 only
 // for the duration of this original call. No targets are selected here.
+inline void CancelEmptyBlocking(void* blocking,int effect,int group) {
+    auto cancel=BNM::Class("PvZCards.Engine","Effect").GetMethod("Cancel",0).cast<void>();
+    if(blocking && cancel.IsValid()) {cancel[blocking]();LOG_INFO("CustomComponents/Pick3: canceled empty blocking choice effect=%d group=%d",effect,group);}
+}
 static bool ShouldPrimaryHook(void* self, void* filter, void* candidates, const void* method) {
     if (!originalShouldPrimary) return false;
     if (!enabled || !filter || !EnumModes::IsPickFromThree(selectionType[filter].Get()))
@@ -679,6 +731,13 @@ static bool ShouldPrimaryHook(void* self, void* filter, void* candidates, const 
                  value ? 1 : 0, valid ? 1 : 0);
         return valid; // No live Fruit target is needed to show database choices.
     }
+    // UniqueGuid's one-definition offer must use our normal command handoff,
+    // including a single physical copy, so query/trigger binding is identical.
+    if(originalValue==EnumModes::kPickFromThreeUniqueGuidTargets && candidates &&
+       numberOfTargets.IsValid() && numberOfTargets[filter].Get()==1) {
+        const auto* ids=reinterpret_cast<const List<int>*>(candidates);
+        if(ids->size>0 && ids->items)return true;
+    }
     // Restore the stock one-target optimization.  The original game has
     // already evaluated the primary candidates with SelectionType temporarily
     // normalized to Manual above.  If it says a blocking selection is NOT
@@ -689,7 +748,7 @@ static bool ShouldPrimaryHook(void* self, void* filter, void* candidates, const 
     if (!value && EnumModes::IsLivePickFromThree(originalValue) && candidates) {
         const auto* ids=reinterpret_cast<const List<int>*>(candidates);
         if (ids->size==1 && ids->items && ids->items->m_Items[0]>=0) {
-            LOG_INFO("CustomComponents/Pick3/PICK3_AUTO_PRIMARY: action=STOCK_SOLE_OPTIMIZATION mode=%d candidate=%d stockDecision=0 noForcedPhase0=1",
+            CC_SELECTION_DIAG("CustomComponents/Pick3/PICK3_AUTO_PRIMARY: action=STOCK_SOLE_OPTIMIZATION mode=%d candidate=%d stockDecision=0 noForcedPhase0=1",
                      originalValue,ids->items->m_Items[0]);
         }
     }
@@ -710,7 +769,7 @@ static bool ShouldSecondaryHook(void* self, int primary, void* filter, void* can
     const auto* ids=reinterpret_cast<const List<int>*>(candidates);
     const int count=ids ? ids->size : -1;
     if (count >= 0 && count <= 3)
-        LOG_INFO("CustomComponents/Pick3/PICK3_SECONDARY_STOCK_DECISION: mode=%d primary=%d candidates=%d manualRequired=%d nativeAutoCandidate=%d",
+        CC_SELECTION_DIAG("CustomComponents/Pick3/PICK3_SECONDARY_STOCK_DECISION: mode=%d primary=%d candidates=%d manualRequired=%d nativeAutoCandidate=%d",
                  originalValue,primary,count,int(value),int(count==1 && !value));
     return value;
 }
@@ -767,7 +826,7 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
         static int lastLoggedEffect = -1, lastLoggedGroup = -1;
         if (lastLoggedEffect != effectId || lastLoggedGroup != groupId) {
             lastLoggedEffect = effectId; lastLoggedGroup = groupId;
-            LOG_INFO("CustomComponents/Pick3/PVP_OWNER: REMOTE_POPUP_SUPPRESSED effect=%d group=%d owner=%d local=%d",
+            CC_SELECTION_DIAG("CustomComponents/Pick3/PVP_OWNER: REMOTE_POPUP_SUPPRESSED effect=%d group=%d owner=%d local=%d",
                      effectId, groupId, effectOwner, thisPlayer);
         }
         // A non-owning PvP simulation must NOT show a popup, but it still
@@ -805,7 +864,7 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
                     auto* recipients=reinterpret_cast<List<int>*>(result);
                     const int count=recipients && recipients->items ? recipients->size : -1;
                     const int recipient=count==1 ? recipients->items->m_Items[0] : kNoEntity;
-                    if (count!=1 || !ValidateAutomaticRecipient(model,recipient)) {
+                    if ((AdditionalSelection::Get(filter).mode==AdditionalSelection::Inherit && count!=1) || count<=0 || (count==1 && !ValidateAutomaticRecipient(model,recipient))) {
                         LOG_ERR("CustomComponents/Pick3/DB5_PVP: FOREIGN_RECIPIENT_INVALID effect=%d group=%d count=%d id=%d",
                                 effectId,groupId,count,recipient);
                         CancelDatabaseOverrideForFilter(filter,effectId,groupId,"foreign-invalid-recipient");
@@ -837,7 +896,7 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
         if (bridge && bridge->effect == effectId && bridge->group == groupId &&
             bridge->owner == effectOwner && bridge->sourceCard > 0 &&
             std::find(bridge->validated.begin(), bridge->validated.end(), bridge->chosen) != bridge->validated.end()) {
-            LOG_INFO("CustomComponents/Pick3/STOCK_VALIDATION_BRIDGE: FIND_ENTER effect=%d group=%d owner=%d chosen=%d validated=%zu",effectId,groupId,effectOwner,bridge->chosen,bridge->validated.size());
+            CC_SELECTION_DIAG("CustomComponents/Pick3/STOCK_VALIDATION_BRIDGE: FIND_ENTER effect=%d group=%d owner=%d chosen=%d validated=%zu",effectId,groupId,effectOwner,bridge->chosen,bridge->validated.size());
             Obj* result = originalFindValid(self, blocking, method);
             auto* list = reinterpret_cast<List<int>*>(result);
             Obj* ef = finderEntityFinder[finderObject].Get();
@@ -845,7 +904,7 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
             const int stockCount=list && list->items && list->size>=0 && list->size<=4096 ? list->size : -1;
             const int stockFirst=stockCount>0 ? list->items->m_Items[0] : -1;
             const int stockContainsChosen=stockCount>=0 && std::find(list->items->m_Items,list->items->m_Items+stockCount,bridge->chosen)!=list->items->m_Items+stockCount;
-            LOG_INFO("CustomComponents/Pick3/STOCK_VALIDATION_BRIDGE: STOCK_FIND effect=%d group=%d count=%d first=%d hasChosen=%d model=%p",effectId,groupId,stockCount,stockFirst,stockContainsChosen,(void*)model);
+            CC_SELECTION_DIAG("CustomComponents/Pick3/STOCK_VALIDATION_BRIDGE: STOCK_FIND effect=%d group=%d count=%d first=%d hasChosen=%d model=%p",effectId,groupId,stockCount,stockFirst,stockContainsChosen,(void*)model);
             std::vector<int> safe;
             if (model && BNM::IsA(model, entityModelClass)) {
                 for (int id : bridge->validated) {
@@ -862,19 +921,19 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
             const bool valid = list && list->items && list->size >= 0 && list->size <= 4096 &&
                 list->items->GetCapacity() >= safe.size() && !safe.empty() &&
                 std::find(safe.begin(),safe.end(),bridge->chosen)!=safe.end();
-            LOG_INFO("CustomComponents/Pick3/STOCK_VALIDATION_BRIDGE: VERIFIED effect=%d group=%d chosen=%d safe=%zu containsChosen=%d capacity=%zu",effectId,groupId,bridge->chosen,safe.size(),int(std::find(safe.begin(),safe.end(),bridge->chosen)!=safe.end()),list && list->items ? static_cast<size_t>(list->items->GetCapacity()) : size_t(0));
+            CC_SELECTION_DIAG("CustomComponents/Pick3/STOCK_VALIDATION_BRIDGE: VERIFIED effect=%d group=%d chosen=%d safe=%zu containsChosen=%d capacity=%zu",effectId,groupId,bridge->chosen,safe.size(),int(std::find(safe.begin(),safe.end(),bridge->chosen)!=safe.end()),list && list->items ? static_cast<size_t>(list->items->GetCapacity()) : size_t(0));
             if (valid) {
                 const int oldCount=list->size;
                 for (size_t i=0;i<safe.size();++i) list->items->m_Items[i]=safe[i];
                 list->size=static_cast<int>(safe.size());
-                LOG_INFO("CustomComponents/Pick3/STOCK_VALIDATION_BRIDGE: APPLIED effect=%d group=%d owner=%d chosen=%d oldCount=%d newCount=%d cap=%zu",
+                CC_SELECTION_DIAG("CustomComponents/Pick3/STOCK_VALIDATION_BRIDGE: APPLIED effect=%d group=%d owner=%d chosen=%d oldCount=%d newCount=%d cap=%zu",
                     effectId,groupId,effectOwner,bridge->chosen,oldCount,list->size,static_cast<size_t>(list->items->GetCapacity()));
-            } else LOG_INFO("CustomComponents/Pick3/STOCK_VALIDATION_BRIDGE: SKIP effect=%d group=%d chosen=%d verified=%zu capacity=%zu",
+            } else CC_SELECTION_DIAG("CustomComponents/Pick3/STOCK_VALIDATION_BRIDGE: SKIP effect=%d group=%d chosen=%d verified=%zu capacity=%zu",
                 effectId,groupId,bridge->chosen,safe.size(),list && list->items ? static_cast<size_t>(list->items->GetCapacity()) : size_t(0));
             return result;
         }
 
-        LOG_INFO("CustomComponents/UnearthTrace: REPEAT_FIND effect=%d group=%d owner=%d local=%d path=stock unchanged=1",
+        CC_SELECTION_DIAG("CustomComponents/PickFromThreeTrace: REPEAT_FIND effect=%d group=%d owner=%d local=%d path=stock unchanged=1",
                  effectId, groupId, effectOwner, thisPlayer);
         return originalFindValid(self, blocking, method);
     }
@@ -912,10 +971,12 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
     static thread_local unsigned pairContextSamples = 0;
     if (++pairContextSamples <= 48) {
         Obj* primaryQuery = targetFilterQuery.IsValid() ? targetFilterQuery[filter].Get() : nullptr;
-        LOG_INFO("CustomComponents/Pick3/PICK3_PAIR_CONTEXT: phase=SELECTION_FINDER effect=%d group=%d owner=%d local=%d model=%p finder=%p primaryFilter=%p primaryQuery=%p selectionType=%d primaryIds=not-captured secondaryPairs=not-proven stockUnchanged=1",
+        CC_SELECTION_DIAG("CustomComponents/Pick3/PICK3_PAIR_CONTEXT: phase=SELECTION_FINDER effect=%d group=%d owner=%d local=%d model=%p finder=%p primaryFilter=%p primaryQuery=%p selectionType=%d primaryIds=not-captured secondaryPairs=not-proven stockUnchanged=1",
                  effectId,groupId,effectOwner,thisPlayer,(void*)model,(void*)finderObject,(void*)filter,(void*)primaryQuery,jsonSelectionType);
     }
     const SelectionMode jsonMode = EnumModes::Resolve(jsonSelectionType, SelectionMode::RandomTargets);
+    Obj* placementPrimary=OriginalDatabaseQuery(filter,effectId,groupId);
+    Engine::PlacementQueryContext::Scope placementQuery({model,effectEntity,nullptr,-1,placementPrimary,jsonMode!=SelectionMode::CardDatabase});
     Obj* databaseQuery = nullptr;
     if (jsonMode == SelectionMode::CardDatabase) {
         if (!RedirectDatabaseTargetQuery(filter, effectId, groupId)) {
@@ -927,7 +988,7 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
     // Read-only boundary diagnostic: the call below may already apply stock
     // target count/randomization. This records the filter state before it runs.
     if (jsonMode == SelectionMode::UniqueGuidTargets) {
-        LOG_INFO("CustomComponents/Pick3/POOL_BOUNDARY: BEFORE_STOCK effect=%d group=%d mode=%d numTargets=%d lastOffered=%d requestReady=%d overrideCount=%zu",
+        CC_SELECTION_DIAG("CustomComponents/Pick3/POOL_BOUNDARY: BEFORE_STOCK effect=%d group=%d mode=%d numTargets=%d lastOffered=%d requestReady=%d overrideCount=%zu",
                  effectId, groupId, jsonSelectionType,
                  numberOfTargets.IsValid() ? numberOfTargets[filter].Get() : -1,
                  previouslyOffered ? 1 : 0, requestReady ? 1 : 0,
@@ -941,7 +1002,7 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
         resolveRemoteSession && !resolveRemoteSession()) {
         const int repaired = Utilities::DeckMaterializer::RepairSameModelDeckEntries(model);
         if (repaired > 0)
-            LOG_INFO("CustomComponents/Pick3/LIVE_DECK_REPAIRED: effect=%d group=%d created=%d",effectId,groupId,repaired);
+            CC_SELECTION_DIAG("CustomComponents/Pick3/LIVE_DECK_REPAIRED: effect=%d group=%d created=%d",effectId,groupId,repaired);
     }
     Obj* result = originalFindValid(self, blocking, method);
     if (!result) {
@@ -956,7 +1017,7 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
         const int stockCount = stockRecipients && stockRecipients->items ? stockRecipients->size : -1;
         const int soleId = stockCount == 1 ? stockRecipients->items->m_Items[0] : -1;
         if (stockCount >= 0 && stockCount <= 3)
-            LOG_INFO("CustomComponents/UnearthTrace: FIND_RESULT effect=%d group=%d model=%p owner=%d local=%d mode=%d stockCount=%d soleId=%d behavior=observed-only",
+            CC_SELECTION_DIAG("CustomComponents/PickFromThreeTrace: FIND_RESULT effect=%d group=%d model=%p owner=%d local=%d mode=%d stockCount=%d soleId=%d behavior=observed-only",
                      effectId, groupId, (void*)model, effectOwner, thisPlayer,
                      jsonSelectionType, stockCount, soleId);
     }
@@ -980,12 +1041,12 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
     // Read-only diagnostic for UniqueGuidTargets. Preserve every stock ID, including
     // zero and negative values, before the existing candidate filter excludes them.
     // Bounded logging prevents a busy predictive finder from flooding logcat.
-    if (jsonMode == SelectionMode::UniqueGuidTargets) {
+    if (Diagnostics::kSelectionTrace && jsonMode == SelectionMode::UniqueGuidTargets) {
         static int poolInspectCalls = 0;
         if (poolInspectCalls < 32) {
             ++poolInspectCalls;
             const int inspectCount = std::min(source->size, 12);
-            LOG_INFO("CustomComponents/Pick3/POOL_ID_TRACE: BEGIN effect=%d group=%d call=%d count=%d inspected=%d model=%p",
+            CC_SELECTION_DIAG("CustomComponents/Pick3/POOL_ID_TRACE: BEGIN effect=%d group=%d call=%d count=%d inspected=%d model=%p",
                      effectId, groupId, poolInspectCalls, source->size, inspectCount, (void*)model);
             for (int i = 0; i < inspectCount; ++i) {
                 const int id = source->items->m_Items[i];
@@ -1009,7 +1070,7 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
                     const auto check = BNM::TryInvoke([&] { guid = cardGuid(entity); });
                     guidException = check.IsValid();
                 }
-                LOG_INFO("CustomComponents/Pick3/POOL_ID_TRACE: ITEM effect=%d group=%d index=%d rawId=%d entity=%p lookupException=%d cardComponent=%d componentException=%d guid=%d guidException=%d stockFilterWouldKeep=%d",
+                CC_SELECTION_DIAG("CustomComponents/Pick3/POOL_ID_TRACE: ITEM effect=%d group=%d index=%d rawId=%d entity=%p lookupException=%d cardComponent=%d componentException=%d guid=%d guidException=%d stockFilterWouldKeep=%d",
                          effectId, groupId, i, id, (void*)entity, lookupException ? 1 : 0,
                          card ? 1 : 0, componentException ? 1 : 0,
                          guid, guidException ? 1 : 0,
@@ -1026,21 +1087,26 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
         // Exactly one is required for this experimental PvE completion bridge;
         // it is selected automatically, never offered to the player.
         const int autoRecipient = source->size == 1 ? source->items->m_Items[0] : kNoEntity;
-        const bool recipientValid = source->size == 1 &&
-            ValidateAutomaticRecipient(model, autoRecipient);
+        const auto additional=AdditionalSelection::Get(filter);
+        const bool interactiveRecipient=AdditionalSelection::Interactive(additional.mode);
+        const bool recipientValid = (source->size == 1 && ValidateAutomaticRecipient(model, autoRecipient)) ||
+            ((interactiveRecipient || additional.mode==AdditionalSelection::All || additional.mode==AdditionalSelection::Random) && source->size>0);
         CC_DIAG("CustomComponents/Pick3/DB5: AUTO_RECIPIENT effect=%d count=%d entityId=%d valid=%d (no user targeting)",
                  effectId, source->size, autoRecipient, recipientValid ? 1 : 0);
         if (!recipientValid) {
             LOG_ERR("CustomComponents/Pick3/DB5: AUTO_RECIPIENT_UNAVAILABLE effect=%d count=%d id=%d",
                     effectId, source->size, autoRecipient);
             CancelDatabaseOverride(effectId, groupId, "no-auto-recipient");
+            if(source->size==0)CancelEmptyBlocking(blocking,effectId,groupId);
             return result;
         }
-        candidates = EnumerateCardDatabase(databaseQuery, effectId);
-        if (candidates.size() < 3) {
+        candidates = EnumerateCardDatabase(databaseQuery,effectId,model);
+        if (candidates.empty()) {
             LOG_ERR("CustomComponents/Pick3/DB5: DATABASE_QUERY_EMPTY effect=%d entries=%zu",
                     effectId, candidates.size());
+            AdditionalSelection::RetainOnly(result,-1); // No lane-only fallback without a card choice.
             CancelDatabaseOverride(effectId, groupId, "database-query-empty");
+            CancelEmptyBlocking(blocking,effectId,groupId);
             return result;
         }
     } else {
@@ -1076,7 +1142,7 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
             ex=BNM::TryInvoke([&] {guid=cardGuid(entity);});
             if (!ex.IsValid() && guid>0) candidates.push_back({id,guid});
         }
-        LOG_INFO("CustomComponents/Pick3/PRIMARY_SOURCE: effect=%d group=%d source=%d guid=%d cached=%zu verified=%zu stockLanes=%d stockListUnchanged=1",
+        CC_SELECTION_DIAG("CustomComponents/Pick3/PRIMARY_SOURCE: effect=%d group=%d source=%d guid=%d cached=%zu verified=%zu stockLanes=%d stockListUnchanged=1",
             effectId,groupId,sourceCard,sourceGuid,ids.size(),candidates.size(),source->size);
     }
     if (candidates.empty()) {
@@ -1101,8 +1167,9 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
     std::vector<Candidate> offerEligiblePairs;
     int offerProxy = -1;
     if(jsonMode == SelectionMode::CardDatabase) {
-        offerProxy=source->items->m_Items[0];
-        offerEligible.push_back(offerProxy);
+        const auto additional=AdditionalSelection::Get(filter);
+        offerProxy=AdditionalSelection::Interactive(additional.mode)?-1:source->items->m_Items[0];
+        for(int i=0;i<source->size;++i)offerEligible.push_back(source->items->m_Items[i]);
     } else {
         offerEligiblePairs=candidates;
         for(const auto& candidate:candidates) offerEligible.push_back(candidate.entityId);
@@ -1120,7 +1187,7 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
     // LIVE deck identity audit.  Compare the physical OrderedCardPool entries
     // with the stock finder output on the SAME simulation model.  This never
     // adds targets and never changes deck order or the game's validation.
-    if (jsonMode == SelectionMode::UniqueGuidTargets && model &&
+    if (Diagnostics::kSelectionTrace && jsonMode == SelectionMode::UniqueGuidTargets && model &&
         Queries::inDeckModelEntities.IsValid() &&
         Queries::inDeckEntityComponents.IsValid() &&
         Queries::inDeckOrderedPoolEntries.IsValid() &&
@@ -1174,7 +1241,7 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
                     }
                 }
             }
-            LOG_INFO("CustomComponents/Pick3/LIVE_DECK_AUDIT: effect=%d group=%d physicalEntries=%d liveEntries=%d staleEntries=%d missingIds=%d duplicateIds=%d stockEligible=%zu poolMatched=%d",
+            CC_SELECTION_DIAG("CustomComponents/Pick3/LIVE_DECK_AUDIT: effect=%d group=%d physicalEntries=%d liveEntries=%d staleEntries=%d missingIds=%d duplicateIds=%d stockEligible=%zu poolMatched=%d",
                      effectId,groupId,deckEntries,liveEntries,staleEntries,negativeIds,duplicateIds,stockIds.size(),stockMatchedEntries);
             // These counts are per OrderedCardPool-bearing ENTITY, not per
             // player ID. Never invent an owner from the physical GUID list.
@@ -1190,7 +1257,7 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
                 Utilities::DeckMaterializer::cardFactoryEntityModel.IsValid() &&
                 Utilities::DeckMaterializer::cardFactoryEntityModel[materializerFactory].Get()==model;
             for(const auto& [deckId,pool]:byDeckEntity) {
-                LOG_INFO("CustomComponents/Pick3/DECK_MODEL_BOUNDARY: effect=%d group=%d model=%p initializerModel=%p sameFactoryModel=%d remote=%d deckEntity=%d total=%d live=%d virtual=%d stale=%d stockMatched=%d readOnly=1",
+                CC_SELECTION_DIAG("CustomComponents/Pick3/DECK_MODEL_BOUNDARY: effect=%d group=%d model=%p initializerModel=%p sameFactoryModel=%d remote=%d deckEntity=%d total=%d live=%d virtual=%d stale=%d stockMatched=%d readOnly=1",
                     effectId,groupId,(void*)model,(void*)materializerModel,sameFactoryModel?1:0,
                     resolveRemoteSession && resolveRemoteSession()?1:0,deckId,pool.entries,pool.live,pool.missing,pool.stale,pool.stockMatched);
             }
@@ -1209,11 +1276,11 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
                     matchedBreakdown=pool;
                 }
             }
-            LOG_INFO("CustomComponents/Pick3/DECK_TARGET_POOL: effect=%d group=%d matchedDeck=%d matchingPools=%d unique=%d selectedPoolTotal=%d selectedPoolLive=%d selectedPoolVirtual=%d selectedPoolStale=%d selectedPoolStockTargets=%d virtualSelectable=0 protocol=DEK1_REQUIRED",
+            CC_SELECTION_DIAG("CustomComponents/Pick3/DECK_TARGET_POOL: effect=%d group=%d matchedDeck=%d matchingPools=%d unique=%d selectedPoolTotal=%d selectedPoolLive=%d selectedPoolVirtual=%d selectedPoolStale=%d selectedPoolStockTargets=%d virtualSelectable=0 protocol=DEK1_REQUIRED",
                 effectId,groupId,matchedDeck,matchedDeckPools,matchedDeckPools==1?1:0,
                 matchedBreakdown.entries,matchedBreakdown.live,matchedBreakdown.missing,
                 matchedBreakdown.stale,matchedDeckCount);
-            LOG_INFO("CustomComponents/Pick3/PHYSICAL_POOL: effect=%d group=%d copies=%d virtualCopies=%d distinctGuids=%zu liveEligible=%zu transport=stock-entity-only",
+            CC_SELECTION_DIAG("CustomComponents/Pick3/PHYSICAL_POOL: effect=%d group=%d copies=%d virtualCopies=%d distinctGuids=%zu liveEligible=%zu transport=stock-entity-only",
                      effectId, groupId, deckEntries, virtualCopies, physicalGuidCounts.size(), stockIds.size());
             std::unordered_map<int,int> stockGuidCounts;
             for(const auto& c:candidates) if(c.cardGuid>0 && c.entityId>0) ++stockGuidCounts[c.cardGuid];
@@ -1224,34 +1291,34 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
                 excludedCopies+=excluded;
                 if(excluded) ++excludedGuids;
                 if(excluded)
-                    LOG_INFO("CustomComponents/Pick3/PHYSICAL_GAP: effect=%d group=%d guid=%d physical=%d stockVisible=%d difference=%d eligibilityUnknown=1",
+                    CC_SELECTION_DIAG("CustomComponents/Pick3/PHYSICAL_GAP: effect=%d group=%d guid=%d physical=%d stockVisible=%d difference=%d eligibilityUnknown=1",
                         effectId,groupId,kv.first,kv.second,visible,excluded);
             }
-            LOG_INFO("CustomComponents/Pick3/PHYSICAL_SUMMARY: effect=%d group=%d excludedCopies=%d affectedGuids=%d stockLive=%zu virtualTransport=DISABLED requiresReceiverContract=1",
+            CC_SELECTION_DIAG("CustomComponents/Pick3/PHYSICAL_SUMMARY: effect=%d group=%d excludedCopies=%d affectedGuids=%d stockLive=%zu virtualTransport=DISABLED requiresReceiverContract=1",
                 effectId,groupId,excludedCopies,excludedGuids,stockIds.size());
         }
     }
     if (jsonMode == SelectionMode::UniqueGuidTargets) {
-        LOG_INFO("CustomComponents/Pick3/POOL_BOUNDARY: AFTER_STOCK effect=%d group=%d returned=%d resolved=%zu required=%d",
+        CC_SELECTION_DIAG("CustomComponents/Pick3/POOL_BOUNDARY: AFTER_STOCK effect=%d group=%d returned=%d resolved=%zu required=%d",
                  effectId, groupId, source->size, candidates.size(), required);
         std::unordered_map<int, int> counts;
         std::unordered_set<int> uniqueEntities;
         for (const auto& card : candidates)
             if (card.entityId > 0 && card.cardGuid > 0 && uniqueEntities.insert(card.entityId).second)
                 ++counts[card.cardGuid];
-        LOG_INFO("CustomComponents/Pick3/WEIGHTED_POOL: effect=%d group=%d raw=%d valid=%zu distinctEntities=%zu guidStacks=%zu targetSlots=3",
+        CC_SELECTION_DIAG("CustomComponents/Pick3/WEIGHTED_POOL: effect=%d group=%d raw=%d valid=%zu distinctEntities=%zu guidStacks=%zu targetSlots=3",
                  effectId, blockingGroupId[blocking].Get(), source->size, candidates.size(),
                  uniqueEntities.size(), counts.size());
         // Log the post-stock GUID distribution so a stock-side truncation is
         // distinguishable from duplicate-GUID removal in our sampler.
         for (const auto& count : counts)
-            LOG_INFO("CustomComponents/Pick3/POOL_STACK: effect=%d group=%d guid=%d eligibleCopies=%d",
+            CC_SELECTION_DIAG("CustomComponents/Pick3/POOL_STACK: effect=%d group=%d guid=%d eligibleCopies=%d",
                      effectId, groupId, count.first, count.second);
         // Three slots are filled with distinct ENTITY copies when there are
         // fewer than three distinct GUIDs, even if two options share a GUID.
         // Never fabricate a card when fewer than three physical copies exist.
         if (counts.size() < kMaximumChoices)
-            LOG_INFO("CustomComponents/Pick3/WEIGHTED_POOL: GUID_FALLBACK effect=%d guidStacks=%zu liveEntities=%zu expectedSlots=%zu",
+            CC_SELECTION_DIAG("CustomComponents/Pick3/WEIGHTED_POOL: GUID_FALLBACK effect=%d guidStacks=%zu liveEntities=%zu expectedSlots=%zu",
                      effectId, counts.size(), uniqueEntities.size(),
                      std::min(kMaximumChoices, uniqueEntities.size()));
     }
@@ -1262,14 +1329,14 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
             "server validation and remote GUID transport still required",
             effectId, request.effectGroupId, request.options.size(), networkSelection ? 1 : 0);
     if (jsonMode == SelectionMode::UniqueGuidTargets) {
-        LOG_INFO("CustomComponents/Pick3/WEIGHTED_OFFER: effect=%d group=%d offered=%zu first=%d second=%d third=%d",
+        CC_SELECTION_DIAG("CustomComponents/Pick3/WEIGHTED_OFFER: effect=%d group=%d offered=%zu first=%d second=%d third=%d",
                  effectId, request.effectGroupId, request.options.size(),
                  request.options.size() > 0 ? request.options[0].cardGuid : -1,
                  request.options.size() > 1 ? request.options[1].cardGuid : -1,
                  request.options.size() > 2 ? request.options[2].cardGuid : -1);
     }
     if (source->size == 1 || request.options.size() == 1) {
-        LOG_INFO("CustomComponents/UnearthTrace: OFFER_DECISION effect=%d group=%d model=%p owner=%d stockCount=%d candidates=%zu options=%zu required=%d soleEntity=%d note=not-a-completion-signal",
+        CC_SELECTION_DIAG("CustomComponents/PickFromThreeTrace: OFFER_DECISION effect=%d group=%d model=%p owner=%d stockCount=%d candidates=%zu options=%zu required=%d soleEntity=%d note=not-a-completion-signal",
                  effectId, groupId, (void*)model, effectOwner, source->size,
                  candidates.size(), request.options.size(), required,
                  candidates.size() == 1 ? candidates[0].entityId : -1);
@@ -1293,7 +1360,7 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
     // Never override Effect.SourceId with a recently played card. A phase
     // trigger may happen immediately after an unrelated card play, especially
     // in PvE, and the last-play timestamp does not prove effect ownership.
-    LOG_INFO("CustomComponents/Pick3/UI: SOURCE_PROVENANCE effect=%d sourceEntity=%d effectGuid=%d playedGuid=%d trusted=effect-source",
+    CC_SELECTION_DIAG("CustomComponents/Pick3/UI: SOURCE_PROVENANCE effect=%d sourceEntity=%d effectGuid=%d playedGuid=%d trusted=effect-source",
              effectId, blockingSourceId.IsValid()
                  ? blockingSourceId[static_cast<Obj*>(blocking)].Get() : -1,
              request.sourceCardGuid, lastPlayedCardGuid);
@@ -1302,7 +1369,7 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
                 required, request.options.size(), effectId);
         // Read-only evidence needed to distinguish empty discard piles from
         // filters dropping eligible candidates. Do not manufacture targets.
-        LOG_INFO("CustomComponents/Pick3/UNEARCH_OFFER_AUDIT: effect=%d group=%d required=%d sourceCandidates=%zu resolved=%zu offered=%zu mode=%d owner=%d",effectId,groupId,required,static_cast<std::size_t>(source->size),candidates.size(),request.options.size(),static_cast<int>(jsonMode),effectOwner);
+        CC_SELECTION_DIAG("CustomComponents/Pick3/PICK_FROM_THREE_OFFER_AUDIT: effect=%d group=%d required=%d sourceCandidates=%zu resolved=%zu offered=%zu mode=%d owner=%d",effectId,groupId,required,static_cast<std::size_t>(source->size),candidates.size(),request.options.size(),static_cast<int>(jsonMode),effectOwner);
         if (jsonMode == SelectionMode::CardDatabase)
             CancelDatabaseOverride(effectId, groupId, "insufficient-options");
         return result;
@@ -1328,15 +1395,40 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
             offer.cachedAt=std::chrono::steady_clock::now();
             pendingOffers.push_back(std::move(offer));
             if(pendingOffers.size()>kMaxPendingOffers) {
-                LOG_INFO("CustomComponents/Pick3/IDENTITY: CACHE_BOUND evict=%d/%d",
+                CC_SELECTION_DIAG("CustomComponents/Pick3/IDENTITY: CACHE_BOUND evict=%d/%d",
                     pendingOffers.front().request.effectEntityId,pendingOffers.front().request.effectGroupId);
                 pendingOffers.pop_front();
             }
-            LOG_INFO("CustomComponents/Pick3/IDENTITY: CACHED effect=%d group=%d count=%zu activeOwner=%d/%d",
+            CC_SELECTION_DIAG("CustomComponents/Pick3/IDENTITY: CACHED effect=%d group=%d count=%zu activeOwner=%d/%d",
                 effectId,groupId,pendingOffers.size(),ownerEffect,ownerGroup);
         }
     }
     return result;
+}
+
+inline Obj*(*originalCreateByMethod)(Obj*,Obj*,Obj*,Obj*,Obj*,const void*)=nullptr;
+static Obj* CreateByMethod(Obj* self,Obj* effect,Obj* context,Obj* targets,Obj* filter,const void* method) {
+    const int mode=filter && selectionType.IsValid()?selectionType[filter].Get():-1;
+    if(!EnumModes::IsPickFromThree(mode) || !additionalTargetType.IsValid() || additionalTargetType[filter].Get()!=1)return originalCreateByMethod(self,effect,context,targets,filter,method);
+    // Creation uses its stock placement/failure path after choosing the card.
+    if(Engine::EntityAccess::Component(effect,"CreateCardFromSubsetEffectDescriptor") ||
+       Engine::EntityAccess::Component(effect,"CreateCardEffectDescriptor") ||
+       Engine::EntityAccess::Component(effect,"CopyCardEffectDescriptor"))return originalCreateByMethod(self,effect,context,targets,filter,method);
+    Obj* model=Engine::BoardPlacement::Model(context);Obj* query=targetFilterQuery[filter].Get();
+    Engine::PlacementQueryContext::Scope placement({model,effect,nullptr,-1,query,mode!=5});
+    bool any=false;
+    const auto cards=Engine::BoardPlacement::Cards(query,context,mode!=5);
+    for(Obj* card:cards) {
+        const int primary=mode==5?Engine::BoardPlacement::Player(model,card,context):Engine::Match::Id(card);
+        if(!AdditionalSelection::Enumerate(model,Engine::Match::Id(effect),primary,card).empty()){any=true;break;}
+    }
+    if(any)return originalCreateByMethod(self,effect,context,targets,filter,method);
+    auto clear=targets?BNM::Class(targets).GetMethod("Clear",0).cast<void>():BNM::Method<void>{};
+    if(!clear.IsValid())return originalCreateByMethod(self,effect,context,targets,filter,method);
+    clear[targets]();selectionType[filter].Set(EnumModes::kStockAll);
+    struct Restore {Obj* filter;int mode;~Restore(){selectionType[filter].Set(mode);}} restore{filter,mode};
+    LOG_INFO("CustomComponents/Pick3: no legal primary/additional pair; skipping effect=%d",Engine::Match::Id(effect));
+    return originalCreateByMethod(self,effect,context,targets,filter,method);
 }
 
 // A queued popup already owns the manual choice, even before UGUI has had
@@ -1374,9 +1466,15 @@ inline bool HasQueuedChoice() {
 inline int SoleDatabaseRecipientAfterCardChoice(int effectId,int groupId) {
     std::lock_guard<std::mutex> lock(snapshotMutex);
     if (latestEffect!=effectId || latestGroup!=groupId ||
-        latestEligible.size()!=1 || latestEligible[0]!=latestDatabaseProxy)
+        latestDatabaseProxy<0 || std::find(latestEligible.begin(),latestEligible.end(),latestDatabaseProxy)==latestEligible.end())
         return kNoEntity;
     return latestDatabaseProxy;
+}
+inline bool ChooseDatabaseRecipient(int effect,int group,int recipient) {
+    std::lock_guard<std::mutex> lock(snapshotMutex);
+    if(latestEffect!=effect || latestGroup!=group ||
+       std::find(latestEligible.begin(),latestEligible.end(),recipient)==latestEligible.end())return false;
+    latestDatabaseProxy=recipient;return true;
 }
 inline bool StillEligible(int effectId, int groupId, int entityId) {
     std::lock_guard<std::mutex> lock(snapshotMutex);
@@ -1425,6 +1523,7 @@ inline void Clear() {
 inline bool Initialize(bool requested, bool useStockManualRuntime = false) {
     normalizeGameplayFilter = useStockManualRuntime;
     if (!requested) return true;
+    if(!AdditionalSelection::InitializeRuntime())return false;
     auto chooser = BNM::Class("PvZCards.Core.Systems.Utilities", "ChooseTargetEffectCreator");
     auto finder = BNM::Class("PvZCards.Core.Systems.Utilities", "TargetEntityFinder");
     auto modelClass = BNM::Class("PvZCards.Engine", "EntityModel");
@@ -1482,10 +1581,12 @@ inline bool Initialize(bool requested, bool useStockManualRuntime = false) {
         LOG_ERR("CustomComponents/Pick3/STEP2: binding preflight FAILED; no hooks installed");
         return false;
     }
-    BNM::BasicHook(shouldPrimary, ShouldPrimaryHook, originalShouldPrimary);
-    BNM::BasicHook(shouldSecondary, ShouldSecondaryHook, originalShouldSecondary);
-    BNM::BasicHook(findValid, FindValidHook, originalFindValid);
-    enabled = originalFindValid && originalShouldPrimary && originalShouldSecondary;
+    CustomComponents::Core::Hooks::Install(shouldPrimary, ShouldPrimaryHook, originalShouldPrimary);
+    CustomComponents::Core::Hooks::Install(shouldSecondary, ShouldSecondaryHook, originalShouldSecondary);
+    CustomComponents::Core::Hooks::Install(findValid, FindValidHook, originalFindValid);
+    const bool pairGuard=Core::Hooks::Install(BNM::Class("PvZCards.Core.Systems.Utilities","PrimaryTargetEffectCreator").GetMethod("CreateEffectsBasedOnTargetMethod",4),CreateByMethod,originalCreateByMethod);
+    AdditionalSelection::copyLogicalFilter=&CopyLogicalFilter;
+    enabled = pairGuard && originalFindValid && originalShouldPrimary && originalShouldSecondary;
     CC_DIAG("CustomComponents/Pick3/STEP2: candidate bridge=%d mode=%d gameplayManual=%d", enabled ? 1 : 0, -1, normalizeGameplayFilter ? 1 : 0);
     return enabled;
 }

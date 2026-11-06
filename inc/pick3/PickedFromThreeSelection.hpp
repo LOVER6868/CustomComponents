@@ -1,4 +1,5 @@
 #pragma once
+#include "diagnostics/DiagnosticLogging.hpp"
 // Scoped selection results shared by PickFromThree submission and downstream
 // EntityQuery.Matches. CardDatabase GUIDs are NOT live Entity.Id values.
 // No winner is exposed until an actual UI selection has been validated.
@@ -12,7 +13,7 @@
 #include "log.h"
 
 #ifndef CUSTOMCOMPONENTS_PF3_SNAPSHOT_TRACE
-#define CUSTOMCOMPONENTS_PF3_SNAPSHOT_TRACE 1
+#define CUSTOMCOMPONENTS_PF3_SNAPSHOT_TRACE CUSTOMCOMPONENTS_SELECTION_DIAGNOSTICS
 #endif
 
 namespace CustomComponents::Pick3::Picked {
@@ -91,11 +92,11 @@ inline bool Enqueue(int listener, int source, int target, int guid,
        selectionEffect<=0 || selectionGroup<0) return false;
     std::lock_guard<std::mutex> guard(lock);
     if(pending.size()>=capacity) {
-        LOG_INFO("CustomComponents/Pick3/PATCH2_ENTITY_LINK: phase=LINK_CAPACITY_REJECT listener=%d",listener);
+        CC_SELECTION_DIAG("CustomComponents/Pick3/PATCH2_ENTITY_LINK: phase=LINK_CAPACITY_REJECT listener=%d",listener);
         return false;
     }
     pending.push_back({listener,source,target,guid,selectionEffect,selectionGroup});
-    LOG_INFO("CustomComponents/Pick3/PATCH2_ENTITY_LINK: phase=LINK_QUEUED listener=%d source=%d target=%d guid=%d pickedEffect=%d pickedGroup=%d",listener,source,target,guid,selectionEffect,selectionGroup);
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PATCH2_ENTITY_LINK: phase=LINK_QUEUED listener=%d source=%d target=%d guid=%d pickedEffect=%d pickedGroup=%d",listener,source,target,guid,selectionEffect,selectionGroup);
     return true;
 }
 struct ScopedExecution {
@@ -112,15 +113,15 @@ struct ScopedExecution {
             if(pending[i].listener==listener && pending[i].source==source &&
                pending[i].target==target) {++count;index=i;}
         if(count!=1) {
-            if(count>1) LOG_INFO("CustomComponents/Pick3/PATCH2_ENTITY_LINK: phase=LINK_AMBIGUOUS listener=%d source=%d target=%d count=%zu fallback=LEGACY",listener,source,target,count);
+            if(count>1) CC_SELECTION_DIAG("CustomComponents/Pick3/PATCH2_ENTITY_LINK: phase=LINK_AMBIGUOUS listener=%d source=%d target=%d count=%zu fallback=LEGACY",listener,source,target,count);
             return;
         }
         active=pending[index];activeValid=true;bound=true;
         pending.erase(pending.begin()+static_cast<std::ptrdiff_t>(index));
-        LOG_INFO("CustomComponents/Pick3/PATCH2_ENTITY_LINK: phase=LINK_EXECUTION_BOUND listener=%d source=%d target=%d guid=%d",listener,source,target,active.guid);
+        CC_SELECTION_DIAG("CustomComponents/Pick3/PATCH2_ENTITY_LINK: phase=LINK_EXECUTION_BOUND listener=%d source=%d target=%d guid=%d",listener,source,target,active.guid);
     }
     ~ScopedExecution() {
-        if(bound) LOG_INFO("CustomComponents/Pick3/PATCH2_ENTITY_LINK: phase=LINK_EXPIRED listener=%d",active.listener);
+        if(bound) CC_SELECTION_DIAG("CustomComponents/Pick3/PATCH2_ENTITY_LINK: phase=LINK_EXPIRED listener=%d",active.listener);
         active=prior;activeValid=priorValid;
     }
     ScopedExecution(const ScopedExecution&)=delete;
@@ -179,7 +180,7 @@ inline const char* SnapshotObservationName(SnapshotObservation observation) {
 inline void LogSnapshotLocked(const char* phase, const SelectionSnapshot& snapshot) {
 #if CUSTOMCOMPONENTS_PF3_SNAPSHOT_TRACE
     const auto& sel = snapshot.selection;
-    LOG_INFO("CustomComponents/Pick3/PATCH2_HISTORY: phase=%s seq=%llu effect=%d group=%d status=%s origin=%s stageCalls=%u cards=%zu firstEntity=%d firstGuid=%d history=%zu dropped=%llu (NOT_MODEL_COMMIT_PROOF)",
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PATCH2_HISTORY: phase=%s seq=%llu effect=%d group=%d status=%s origin=%s stageCalls=%u cards=%zu firstEntity=%d firstGuid=%d history=%zu dropped=%llu (NOT_MODEL_COMMIT_PROOF)",
         phase, (unsigned long long)snapshot.sequence, sel.effectEntityId, sel.effectGroupId,
         SnapshotObservationName(snapshot.observation), snapshot.firstOrigin, snapshot.stageCalls, sel.cards.size(),
         sel.cards.empty() ? -1 : sel.cards.front().entityId,
@@ -218,7 +219,7 @@ inline void ObserveCompletion(int effectId, int groupId, bool success) {
     auto* entry = LatestSnapshotLocked(effectId, groupId);
     if (!entry || entry->observation != SnapshotObservation::Staged) {
 #if CUSTOMCOMPONENTS_PF3_SNAPSHOT_TRACE
-        LOG_INFO("CustomComponents/Pick3/PATCH2_HISTORY: phase=CALLBACK_UNMATCHED effect=%d group=%d success=%d history=%zu latestState=%s", effectId, groupId, int(success), snapshotHistory.size(), entry ? SnapshotObservationName(entry->observation) : "MISSING");
+        CC_SELECTION_DIAG("CustomComponents/Pick3/PATCH2_HISTORY: phase=CALLBACK_UNMATCHED effect=%d group=%d success=%d history=%zu latestState=%s", effectId, groupId, int(success), snapshotHistory.size(), entry ? SnapshotObservationName(entry->observation) : "MISSING");
 #endif
         return;
     }
@@ -234,7 +235,7 @@ inline void ObserveStockModelBoundary(int effect, int group, bool returned,
     auto* entry=LatestSnapshotLocked(effect,group);
     if (!entry || effect<=0 || group<0) {
 #if CUSTOMCOMPONENTS_PF3_SNAPSHOT_TRACE
-        LOG_INFO("CustomComponents/Pick3/PATCH2_HISTORY: phase=STOCK_BOUNDARY_MISSING effect=%d group=%d returned=%d reason=NO_HISTORY_FOR_STOCK_EFFECT",effect,group,int(returned));
+        CC_SELECTION_DIAG("CustomComponents/Pick3/PATCH2_HISTORY: phase=STOCK_BOUNDARY_MISSING effect=%d group=%d returned=%d reason=NO_HISTORY_FOR_STOCK_EFFECT",effect,group,int(returned));
 #endif
         return;
     }
@@ -242,13 +243,34 @@ inline void ObserveStockModelBoundary(int effect, int group, bool returned,
     else ++entry->stockEnterObserved;
     if(cancellationKnown && cancelled) ++entry->cancellationObserved;
 #if CUSTOMCOMPONENTS_PF3_SNAPSHOT_TRACE
-    LOG_INFO("CustomComponents/Pick3/PATCH2_HISTORY: phase=STOCK_%s effect=%d group=%d seq=%llu state=%s entries=%u returns=%u cancellationKnown=%d cancelled=%d commitProven=0",returned?"RETURN_OBSERVED":"ENTER_OBSERVED",effect,group,(unsigned long long)entry->sequence,SnapshotObservationName(entry->observation),entry->stockEnterObserved,entry->stockReturnObserved,int(cancellationKnown),int(cancelled));
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PATCH2_HISTORY: phase=STOCK_%s effect=%d group=%d seq=%llu state=%s entries=%u returns=%u cancellationKnown=%d cancelled=%d commitProven=0",returned?"RETURN_OBSERVED":"ENTER_OBSERVED",effect,group,(unsigned long long)entry->sequence,SnapshotObservationName(entry->observation),entry->stockEnterObserved,entry->stockReturnObserved,int(cancellationKnown),int(cancelled));
 #endif
 }
 
 inline std::vector<SelectionSnapshot> CopySnapshotHistory() {
     std::lock_guard<std::mutex> guard(mutex);
     return snapshotHistory;
+}
+struct FinderHistory {
+    unsigned matches=0;std::uint64_t sequence=0,newerSequence=0;int newerGroup=-1;
+};
+// Metadata only: finder scopes must not clone every selection's card vector.
+inline FinderHistory InspectFinderHistory(int effect,int group) {
+    FinderHistory result;
+    std::lock_guard<std::mutex> guard(mutex);
+    for(const auto& entry:snapshotHistory)if(entry.selection.effectEntityId==effect && entry.selection.effectGroupId==group){++result.matches;result.sequence=entry.sequence;}
+    if(result.matches!=1){result.sequence=0;return result;}
+    for(const auto& entry:snapshotHistory)if(entry.selection.effectEntityId==effect && entry.sequence>result.sequence && entry.sequence>result.newerSequence){result.newerSequence=entry.sequence;result.newerGroup=entry.selection.effectGroupId;}
+    return result;
+}
+inline std::uint64_t UniqueObservedSequence(int effect,int group,unsigned* count=nullptr) {
+    std::lock_guard<std::mutex> guard(mutex);
+    unsigned matches=0;std::uint64_t sequence=0;
+    for(const auto& entry:snapshotHistory) if(entry.selection.effectEntityId==effect && entry.selection.effectGroupId==group) {
+        ++matches;sequence=entry.sequence;
+    }
+    if(count) *count=matches;
+    return matches==1?sequence:0;
 }
 
 // Exact snapshot lookups are separate from legacy Matches()/MatchesLatestLiveCard().
@@ -331,7 +353,7 @@ inline void TraceLedger(const char* phase, int effectId, int groupId, int candid
         }
     }
     const auto* last = selections.empty() ? nullptr : &selections.back();
-    LOG_INFO("CustomComponents/Pick3/PATCH2_SNAPSHOT: phase=%s effect=%d group=%d candidate=%d remembered=%zu sameEffect=%d exactGroup=%d latestEffect=%d latestGroup=%d latestCount=%zu latestFirstEntity=%d latestFirstGuid=%d (OBSERVATION_ONLY)",
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PATCH2_SNAPSHOT: phase=%s effect=%d group=%d candidate=%d remembered=%zu sameEffect=%d exactGroup=%d latestEffect=%d latestGroup=%d latestCount=%zu latestFirstEntity=%d latestFirstGuid=%d (OBSERVATION_ONLY)",
         phase, effectId, groupId, candidateId, selections.size(), sameEffect, exactGroup,
         last ? last->effectEntityId : -1, last ? last->effectGroupId : -1,
         last ? last->cards.size() : 0,
@@ -378,7 +400,7 @@ inline bool Store(int effectId, int groupId, const std::vector<SelectedCard>& ca
             if (stagedSequence) *stagedSequence=last.sequence;
             LogSnapshotLocked("REUSE_STAGED", last);
 #if CUSTOMCOMPONENTS_PF3_SNAPSHOT_TRACE
-            LOG_INFO("CustomComponents/Pick3/PATCH2_HISTORY: phase=REUSE_ORIGIN seq=%llu origin=%s firstOrigin=%s effect=%d group=%d",
+            CC_SELECTION_DIAG("CustomComponents/Pick3/PATCH2_HISTORY: phase=REUSE_ORIGIN seq=%llu origin=%s firstOrigin=%s effect=%d group=%d",
                 (unsigned long long)last.sequence, safeOrigin, last.firstOrigin, effectId, groupId);
 #endif
             return true;
@@ -388,7 +410,7 @@ inline bool Store(int effectId, int groupId, const std::vector<SelectedCard>& ca
     // The status is observational; no model commit is inferred here.
     if (snapshotHistory.size() >= kMaxSnapshotHistory) {
 #if CUSTOMCOMPONENTS_PF3_SNAPSHOT_TRACE
-        LOG_INFO("CustomComponents/Pick3/PATCH2_HISTORY: phase=EVICT_OLDEST seq=%llu effect=%d group=%d capacity=%zu",
+        CC_SELECTION_DIAG("CustomComponents/Pick3/PATCH2_HISTORY: phase=EVICT_OLDEST seq=%llu effect=%d group=%d capacity=%zu",
             (unsigned long long)snapshotHistory.front().sequence,
             snapshotHistory.front().selection.effectEntityId,
             snapshotHistory.front().selection.effectGroupId, kMaxSnapshotHistory);
@@ -556,7 +578,7 @@ inline void ResetMatch() {
     nextSnapshotSequence = 1;
     droppedSnapshots = 0;
 #if CUSTOMCOMPONENTS_PF3_SNAPSHOT_TRACE
-    LOG_INFO("CustomComponents/Pick3/PATCH2_HISTORY: phase=RESET_MATCH history=0 current=0");
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PATCH2_HISTORY: phase=RESET_MATCH history=0 current=0");
 #endif
 }
 

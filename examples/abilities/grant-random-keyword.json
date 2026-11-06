@@ -1,0 +1,4 @@
+{
+  "$type": "PvZCards.Engine.Components.GrantAbilityEffectDescriptor, EngineLib",
+  "$data": { "GrantableAbilityType": "RandomKeyword", "AbilityValue": 0, "Duration": "Permanent" }
+}

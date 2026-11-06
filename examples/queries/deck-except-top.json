@@ -1,0 +1,36 @@
+{
+  "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "queries": [
+      {
+        "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "queries": [
+            {
+              "$type": "PvZCards.Engine.Queries.InDeckQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+              "$data": {}
+            },
+            {
+              "$type": "PvZCards.Engine.Queries.SameFactionQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+              "$data": {}
+            }
+          ]
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Queries.NotQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "Query": {
+            "$type": "PvZCards.Engine.Queries.ListPositionQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {
+              "Pool": "Deck",
+              "Position": 0,
+              "FromEnd": false,
+              "ComparisonOperator": "Equal"
+            }
+          }
+        }
+      }
+    ]
+  }
+}

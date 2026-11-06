@@ -404,6 +404,7 @@
             originalBuffHandler(self, effect, method);
         });
         if (count) EndHandlerProbes("BUFF", probes, count);
+        Engine::Events::afterBuff.Notify({static_cast<Obj*>(self),model,effect});
     }
 
     static void EndHandlerHook(void* self, Obj* effect, const void* method) {

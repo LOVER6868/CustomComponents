@@ -1,3 +1,6 @@
+#include "diagnostics/DiagnosticLogging.hpp"
+#include "core/HookRegistry.hpp"
+#include "pick3/AutomaticChoicePolicy.hpp"
 #pragma once
 // Discover v1.0b UI port for PickFromThree. Only presentation code was ported.
 // PF3 target finding, ChooseTargetBlockingEffect, submission, replication and
@@ -27,13 +30,14 @@
 #include "presentation/detail/Pick3VisualQueueGate.hpp"
 #include "presentation/detail/Pick3CardMetadata.hpp"
 #include "core/FrontendTickDispatcher.hpp"
+#include "core/PresentationRefreshPolicy.hpp"
 namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
     using Obj=BNM::IL2CPP::Il2CppObject;
     struct Vec3 { float x=0,y=0,z=0; Vec3()=default; Vec3(float a,float b,float c):x(a),y(b),z(c){} };
     struct Vec2 { float x=0,y=0; Vec2()=default; Vec2(float a,float b):x(a),y(b){} };
     template<typename T>using MonoList=BNM::Structures::Mono::List<T>;
     inline std::atomic<int> logBudget{1100};
-#define PICK3_DISCOVER_LOG(...) do {if(::CustomComponents::Presentation::PickFromThreeDiscoverPresentation::logBudget.fetch_sub(1)>0) LOG_INFO(__VA_ARGS__);}while(0)
+#define PICK3_DISCOVER_LOG(...) do {if(::CustomComponents::Presentation::PickFromThreeDiscoverPresentation::logBudget.fetch_sub(1)>0) CC_SELECTION_DIAG(__VA_ARGS__);}while(0)
     inline constexpr int kMaxOptions=3;
     inline int currentPromptGuid=-1;
     inline bool promptBehindCards=false, suppressStockHint=false;
@@ -47,6 +51,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         int from=0;
         std::vector<int> ids;
         std::vector<int> guids;
+        std::vector<InspectionStats::Snapshot> stats;
         bool open=false;
         int picked=-1;
     };
@@ -62,6 +67,14 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         std::lock_guard<std::mutex> l(groupsMutex);
         for(const auto& g:groups) if(g.source==source&&g.serial==serial)return g.open;
         return false;
+    }
+    inline void CaptureGroupStats(Group& group,Obj* model) {
+        group.stats.clear();group.stats.reserve(group.ids.size());
+        for(std::size_t i=0;i<group.ids.size();++i) {
+            Obj* entity=Engine::EntityAccess::Find(model,group.ids[i]);
+            const bool exact=entity && i<group.guids.size() && InspectionStats::Guid(entity)==group.guids[i];
+            group.stats.push_back(exact?InspectionStats::Capture(entity,model):InspectionStats::Snapshot{group.guids[i]});
+        }
     }
     inline void Publish(const Group& g) {
         std::lock_guard<std::mutex> l(groupsMutex);
@@ -169,7 +182,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         inline BNM::MonoType *animatorType = nullptr, *canvasGroupType = nullptr, *promptViewType = nullptr;
         inline BNM::Field<Obj*> factoryOfMapper, binderOfFactory;  // CardViewMapper.<CardViewFactory>, CardViewFactory.<Binder>
         // Set by DiscardPileViewer: the card-info overlay (ShowCardInspectionOverlaySignal) over a list of cards.
-        inline bool (*showCards)(Obj* signal, const int* ids, const int* guids, int count, int initial) = nullptr;
+        inline bool (*showCards)(Obj* signal, const int* ids, const int* guids, int count, int initial, const InspectionStats::Snapshot* stats) = nullptr;
         inline BNM::MonoType* showSignalType = nullptr;
         inline BNM::MonoType *mulliganViewType = nullptr, *tmpType = nullptr, *tmpUguiType = nullptr, *canvasType = nullptr;
         inline BNM::Method<void> gameObjectSetLayer;
@@ -194,6 +207,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             int id = -1;                 // Gameplay entity ID, -1 for CardDatabase cards.
             int renderId = -1;           // Unique CardViewMapper key; NEVER sent to gameplay.
             int guid = -1;
+            InspectionStats::Snapshot stats;
             Obj* callback = nullptr;      // our Action<CardView>
             uintptr_t callbackHandle = 0; // pin pending async callback until it fires or closes
             Obj* view = nullptr;          // CardViewComponent
@@ -726,7 +740,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
                 tmpSetText[label](BNM::CreateMonoString(WrapTargetText(text)));
             state.localizedPrompt=localized;
             state.promptMapperVersion=Pick3CardMetadata::localizationVersion;
-            if(localized) LOG_INFO("CustomComponents/Pick3/DiscoverUI: TARGETING_LOC guid=%d key=%s",currentPromptGuid,key.c_str());
+            if(localized) CC_SELECTION_DIAG("CustomComponents/Pick3/DiscoverUI: TARGETING_LOC guid=%d key=%s",currentPromptGuid,key.c_str());
         }
 
         // The mulligan's own draw-in values (MulliganViewComponent.DrawCardAnimProperties), with safe fallbacks.
@@ -1029,14 +1043,16 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             }
             if (card >= 0) {
                 int ids[kMaxOptions], guids[kMaxOptions], n = 0, initial = 0;
+                InspectionStats::Snapshot stats[kMaxOptions];
                 for (int i = 0; i < state.count; i++) {
                     if (state.slots[i].guid <= 0) continue;
                     if (i == card) initial = n;
                     ids[n] = state.slots[i].id;
                     guids[n] = state.slots[i].guid;
+                    stats[n] = state.slots[i].stats;
                     n++;
                 }
-                const bool shown = showCards && showCards(ShowSignal(), ids, guids, n, initial);
+                const bool shown = showCards && showCards(ShowSignal(), ids, guids, n, initial, stats);
                 if (!shown) PICK3_DISCOVER_LOG("CustomComponents/Pick3/DiscoverUI: card info could not be opened (no inspection signal)");
                 else {
                     state.inspecting = true;
@@ -1147,7 +1163,11 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
                 if (slot.callback != self || slot.loaded) continue;
                 slot.loaded = true;
                 slot.view = Pin(view, slot.handle);
-                if (view) cardViewShowInHand[view]();
+                if (view) {
+                    cardViewShowInHand[view]();
+                    auto frame=BNM::Class(view).GetField("Frame").cast<Obj*>();
+                    if(frame.IsValid()) CardStats::Apply(frame[view].Get(),slot.stats.stats);
+                }
                 state.loaded++;
                 PICK3_DISCOVER_LOG("CustomComponents/Pick3/DiscoverUI: VIEW_LOADED gameplayId=%d renderId=%d guid=%d loaded=%d/%d view=%p",
                                    slot.id, slot.renderId, slot.guid, state.loaded, state.count, static_cast<void*>(view));
@@ -1196,6 +1216,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
                 Slot& slot = state.slots[i];
                 slot.id = group.ids[i];
                 slot.guid = group.guids[i];
+                if(std::size_t(i)<group.stats.size()) slot.stats=group.stats[i];
                 slot.renderId = AllocateVirtualRenderId(); // Never reserve the real card's view-map key.
                 slot.callback = Pin(MakeCallback(),slot.callbackHandle);
                 Obj* data = cardIdDataClass.CreateNewObjectParameters(slot.renderId, slot.guid);
@@ -1497,7 +1518,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
 
             auto start = task.GetMethod("Start", 0);
             if (!start.IsValid()) { LOG_ERR("CustomComponents/Pick3/DiscoverUI: LoadCardsTask.Start missing"); return false; }
-            BNM::BasicHook(start, StartHook, originalStart);
+            CustomComponents::Core::Hooks::Install(start, StartHook, originalStart);
             if (!originalStart) { LOG_ERR("CustomComponents/Pick3/DiscoverUI: LoadCardsTask.Start hook failed"); return false; }
             ready = true;
             return true;
@@ -1520,6 +1541,14 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
     }
     inline bool hasRequest=false, awaitingResult=false, autoSolePending=false;
     inline bool awaitingStockCommand=false;
+    inline bool awaitingAdditionalBoard=false,choosingAdditionalCards=false;
+    inline bool selectingAdditionalFirst=false;
+    inline int firstAdditionalTarget=-1;
+    inline std::vector<Pick3::Candidate> firstPrimaryCandidates;
+    inline std::vector<int> additionalEligible;
+    inline std::vector<Pick3::Candidate> additionalOptions;
+    inline int lastLightsEffect=-1,lastLightsGroup=-1,lastLightsStage=-1;
+    inline unsigned lightsRetryTicks=0;
     inline unsigned stockCommandWaitTicks=0;
     inline unsigned autoSoleWaitTicks=0;
     inline std::vector<int> chosenIndices;
@@ -1539,25 +1568,222 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         CloseGroup(activeRequest.effectEntityId,activeRequest.effectGroupId,-1);
         if (!accepted || (!Ui::state.exiting && !Ui::state.deferredExit))
             Ui::Hide(accepted?"stock selection completed":"selection failed");
-        LOG_INFO("CustomComponents/Pick3/DiscoverUI: FINISH effect=%d group=%d accepted=%d",
+        CC_SELECTION_DIAG("CustomComponents/Pick3/DiscoverUI: FINISH effect=%d group=%d accepted=%d",
                  activeRequest.effectEntityId,activeRequest.effectGroupId,accepted?1:0);
         activeRequest={};hasRequest=false;awaitingResult=false;awaitingStockCommand=false;
+        awaitingAdditionalBoard=choosingAdditionalCards=selectingAdditionalFirst=false;firstAdditionalTarget=-1;firstPrimaryCandidates.clear();additionalEligible.clear();additionalOptions.clear();
         ReleaseActiveOfferModel();
         autoSolePending=false;chosenIndices.clear();currentPromptGuid=-1;
     }
+    inline void ResetMatchView() {
+        Ui::Hide("match changed");
+        ReleaseActiveOfferModel();
+        hasRequest=awaitingResult=autoSolePending=awaitingStockCommand=false;
+        awaitingAdditionalBoard=choosingAdditionalCards=selectingAdditionalFirst=false;firstAdditionalTarget=-1;firstPrimaryCandidates.clear();additionalEligible.clear();additionalOptions.clear();
+        activeRequest={};chosenIndices.clear();currentPromptGuid=-1;
+        lastLightsEffect=lastLightsGroup=lastLightsStage=-1;
+        stockCommandWaitTicks=autoSoleWaitTicks=0;
+        lastCaptureEffect=lastCaptureGroup=-1;
+        {std::lock_guard<std::mutex> lock(groupsMutex);groups.clear();}
+    }
     inline bool ExactTurn(const Pick3::PreviewRequest& request,bool remote);
+    inline Obj* PrimaryCard(int index) {
+        if(index<0 || index>=int(activeRequest.options.size()))return nullptr;
+        const auto& option=activeRequest.options[index];
+        return activeRequest.mode==Pick3::SelectionMode::CardDatabase?Engine::BoardPlacement::Definition(option.cardGuid,Engine::EntityAccess::Find(activeOfferModel,activeRequest.effectEntityId)):Engine::EntityAccess::Find(activeOfferModel,option.entityId);
+    }
+    using LightsFn=void(*)(Obj*,Obj*,Obj*,const void*);
+    inline LightsFn originalTargetLights=nullptr;
+    inline BNM::Method<void> activateTargetLight;
+
+    // The stock recipient proxy is an execution bridge, never a UI offer.
+    static void TargetLights(Obj* command,Obj* blocking,Obj* game,const void* method) {
+        const auto& h=Systems::TargetingPresentationRefreshSystem::observedTargetingIdentity;
+        const auto identity=Systems::TargetingPresentationRefreshSystem::ReadIdentity(h.holder,h.state,blocking);
+        const bool exact=hasRequest && identity.valid && identity.phase==0 &&
+            identity.effectEntityId==activeRequest.effectEntityId && identity.effectGroupId==activeRequest.effectGroupId &&
+            ExactTurn(activeRequest,Pick3::Submission::Remote());
+        if(exact) {
+            if(awaitingAdditionalBoard && activateTargetLight.IsValid()) {
+                Obj* effect=Engine::EntityAccess::Find(activeOfferModel,activeRequest.effectEntityId);
+                for(int id:additionalEligible)activateTargetLight[command](id,identity.sourceId,effect,game);
+            }
+            return; // Card popups never expose the additional board targets.
+        }
+        // Commands can run before the holder observer publishes the popup.
+        Obj* model=Pick3::Submission::Target(Pick3::Submission::boundEntityModelRoot);
+        Obj* filter=Engine::EntityAccess::Component(Engine::EntityAccess::Find(model,identity.effectEntityId),"PrimaryTargetFilter");
+        if(identity.valid && identity.phase==0 && Pick3::EnumModes::IsPickFromThree(Pick3::TargetBridge::LogicalSelectionMode(filter)))return;
+        originalTargetLights(command,blocking,game,method);
+    }
+    inline void RefreshStageLights() {
+        if(!hasRequest || awaitingStockCommand || awaitingResult || !ExactTurn(activeRequest,Pick3::Submission::Remote()))return;
+        const int stage=awaitingAdditionalBoard?(selectingAdditionalFirst?2:1):0;
+        if(lastLightsEffect==activeRequest.effectEntityId && lastLightsGroup==activeRequest.effectGroupId && lastLightsStage==stage)return;
+        if(lightsRetryTicks){--lightsRetryTicks;return;}
+        lightsRetryTicks=30; // Bound retries if a frontend dependency is temporarily unavailable.
+        namespace S=Pick3::Submission;
+        Obj* binder=S::Target(S::binderRoot);Obj* injector=nullptr;Obj* clear=nullptr;
+        if(!binder || !S::getInjectionBinder.IsValid() || !S::getInjectedInstance.IsValid())return;
+        static auto type=BNM::Class("PvZCards.Game","DeactivateHighlightSignal");
+        static auto dispatch=type.GetMethod("Dispatch",0).cast<void>();
+        const auto error=BNM::TryInvoke([&]{
+            injector=S::getInjectionBinder[binder]();
+            if(injector)clear=S::getInjectedInstance[injector](type.GetMonoType(),static_cast<Obj*>(nullptr));
+            if(clear && dispatch.IsValid())dispatch[clear]();
+        });
+        if(error.IsValid() || !clear || !dispatch.IsValid())return;
+        const auto h=Systems::TargetingPresentationRefreshSystem::observedTargetingIdentity;
+        if(!Systems::TargetingPresentationRefreshSystem::RefreshStockPresentation(h.holder,h.state))return;
+        lightsRetryTicks=0;
+        lastLightsEffect=activeRequest.effectEntityId;lastLightsGroup=activeRequest.effectGroupId;lastLightsStage=stage;
+    }
+    inline bool CompleteFirstAdditional(int target);
+    inline bool StageAdditional(int target,int* result) {
+        if(!hasRequest || chosenIndices.size()!=1 || !ExactTurn(activeRequest,Pick3::Submission::Remote()) ||
+           std::find(additionalEligible.begin(),additionalEligible.end(),target)==additionalEligible.end())return false;
+        const int primary=activeRequest.mode==Pick3::SelectionMode::CardDatabase?target:activeRequest.options[chosenIndices[0]].entityId;
+        if(!Pick3::AdditionalSelection::Authorize(activeOfferModel,activeRequest.effectEntityId,activeRequest.effectGroupId,primary,target,PrimaryCard(chosenIndices[0])))return false;
+        if(activeRequest.mode==Pick3::SelectionMode::CardDatabase && !Pick3::TargetBridge::ChooseDatabaseRecipient(activeRequest.effectEntityId,activeRequest.effectGroupId,target))return false;
+        activeRequest.additionalTargetId=target;
+        const int recipient=Pick3::Submission::StockTapRecipient(activeRequest,chosenIndices[0]);
+        if(recipient<0 || !Pick3::Submission::StageStockHandoff(activeRequest,chosenIndices))return false;
+        awaitingAdditionalBoard=choosingAdditionalCards=false;awaitingStockCommand=true;stockCommandWaitTicks=0;
+        if(result)*result=recipient;
+        return true;
+    }
+    inline bool AdditionalBoardTap(Obj*,Obj* overlaps,int* result) {
+        if(!awaitingAdditionalBoard || !hasRequest || !ExactTurn(activeRequest,Pick3::Submission::Remote()))return false;
+        // Stock can resolve an overlapped fighter to its lane. Prefer that
+        // validated board target before inspecting the raw overlap identities.
+        const int stockTarget=result?*result:-1;
+        if(result)*result=-1;
+        if(selectingAdditionalFirst){if(stockTarget>=0 && CompleteFirstAdditional(stockTarget))return true;}
+        else if(stockTarget>=0 && StageAdditional(stockTarget,result))return true;
+        auto* ids=reinterpret_cast<MonoList<int>*>(overlaps);
+        if(!ids || !ids->items || ids->size<0 || ids->size>4096 || ids->items->capacity<size_t(ids->size))return true;
+        for(int i=0;i<ids->size;++i)if(selectingAdditionalFirst?CompleteFirstAdditional(ids->items->m_Items[i]):StageAdditional(ids->items->m_Items[i],result))break;
+        return true;
+    }
+    inline bool BeginAdditional(int index) {
+        Obj* entity=Engine::EntityAccess::Find(activeOfferModel,activeRequest.effectEntityId);
+        Obj* filter=Engine::EntityAccess::Component(entity,"PrimaryTargetFilter");
+        const auto setting=Pick3::AdditionalSelection::Get(filter);
+        if(!Pick3::AdditionalSelection::Interactive(setting.mode))return false;
+        if(activeRequest.requiredTargets!=1){LOG_ERR("CustomComponents/AdditionalSelection: interactive additional choice requires NumTargets=1");chosenIndices.clear();return true;}
+        const int primary=activeRequest.mode==Pick3::SelectionMode::CardDatabase?activeRequest.ownerPlayerId:activeRequest.options[index].entityId;
+        additionalEligible=Pick3::AdditionalSelection::Enumerate(activeOfferModel,activeRequest.effectEntityId,primary,PrimaryCard(index));
+        if(additionalEligible.empty()){LOG_ERR("CustomComponents/AdditionalSelection: no legal additional targets");chosenIndices.clear();return true;}
+        Ui::BeginExit(index);
+        if(setting.mode==Pick3::AdditionalSelection::Manual) {
+            awaitingAdditionalBoard=true;Pick3::Submission::SetPopupInputCapture(false);return true;
+        }
+        std::vector<Pick3::Candidate> cards;
+        for(int id:additionalEligible) {
+            Obj* card=Engine::EntityAccess::Find(activeOfferModel,id);const int guid=InspectionStats::Guid(card);
+            if(guid>0)cards.push_back({id,guid});
+        }
+        if(cards.empty()){LOG_ERR("CustomComponents/AdditionalSelection: PF3 additional targets must be cards");chosenIndices.clear();return true;}
+        const auto mode=setting.mode==Pick3::AdditionalSelection::UniqueGuid?Pick3::SelectionMode::UniqueGuidTargets:Pick3::SelectionMode::RandomTargets;
+        auto request=Pick3::MakeStableNetworkPreviewRequest(activeRequest.effectEntityId,activeRequest.effectGroupId,mode,cards,1);
+        additionalOptions=request.options;
+        if(Pick3::IsAutomaticUniqueChoice(request) && StageAdditional(additionalOptions[0].entityId,nullptr)) {
+            // StageAdditional prepares the request; dispatch through the normal signal.
+            Pick3::Submission::ClearStockHandoff();
+            awaitingStockCommand=Pick3::Submission::DispatchAutomaticTap(activeRequest,chosenIndices);
+            if(awaitingStockCommand)return true;
+        }
+        choosingAdditionalCards=true;
+        Group group;group.source=activeRequest.effectEntityId;group.serial=activeRequest.effectGroupId;group.open=true;
+        for(auto option:additionalOptions){group.ids.push_back(option.entityId);group.guids.push_back(option.cardGuid);}
+        CaptureGroupStats(group,activeOfferModel);Publish(group);return true;
+    }
+    inline void PublishPrimaryChoices() {
+        Group group;group.source=activeRequest.effectEntityId;group.serial=activeRequest.effectGroupId;group.open=true;
+        for(const auto& option:activeRequest.options){group.ids.push_back(option.entityId);group.guids.push_back(option.cardGuid);}
+        CaptureGroupStats(group,activeOfferModel);Publish(group);
+    }
+    inline bool CompleteFirstAdditional(int target) {
+        if(!selectingAdditionalFirst || !ExactTurn(activeRequest,Pick3::Submission::Remote()) || std::find(additionalEligible.begin(),additionalEligible.end(),target)==additionalEligible.end())return false;
+        Obj* effect=Engine::EntityAccess::Find(activeOfferModel,activeRequest.effectEntityId);
+        Obj* filter=Engine::EntityAccess::Component(effect,"PrimaryTargetFilter");
+        Obj* query=Pick3::TargetBridge::OriginalDatabaseQuery(filter,activeRequest.effectEntityId,activeRequest.effectGroupId);
+        std::vector<Pick3::Candidate> candidates;
+        Engine::PlacementQueryContext::Scope placement({activeOfferModel,effect,nullptr,target});
+        auto context=Engine::BoardPlacement::Context(activeOfferModel,effect,target);
+        if(!context)return false;
+        for(const auto& candidate:firstPrimaryCandidates) {
+            Obj* card=activeRequest.mode==Pick3::SelectionMode::CardDatabase?Engine::BoardPlacement::Definition(candidate.cardGuid,effect):Engine::EntityAccess::Find(activeOfferModel,candidate.entityId);
+            if(!card || !Engine::BoardPlacement::Matches(query,card,context->Get()))continue;
+            const int primary=activeRequest.mode==Pick3::SelectionMode::CardDatabase?activeRequest.ownerPlayerId:candidate.entityId;
+            const auto additional=Pick3::AdditionalSelection::Enumerate(activeOfferModel,activeRequest.effectEntityId,primary,card);
+            if(std::find(additional.begin(),additional.end(),target)!=additional.end())candidates.push_back(candidate);
+        }
+        if(candidates.empty())return false; // First-stage input remains available; no orphaned PF3.
+        auto offer=Pick3::MakeStableNetworkPreviewRequest(activeRequest.effectEntityId,activeRequest.effectGroupId,activeRequest.mode,candidates,activeRequest.requiredTargets);
+        if(offer.options.empty())return false;
+        activeRequest.options=std::move(offer.options);activeRequest.additionalTargetId=target;firstAdditionalTarget=target;
+        if(activeRequest.mode==Pick3::SelectionMode::CardDatabase && !Pick3::TargetBridge::ChooseDatabaseRecipient(activeRequest.effectEntityId,activeRequest.effectGroupId,target))return false;
+        awaitingAdditionalBoard=choosingAdditionalCards=selectingAdditionalFirst=false;chosenIndices.clear();
+        if(Pick3::IsAutomaticUniqueChoice(activeRequest)) {
+            chosenIndices={0};
+            if(StageAdditional(target,nullptr)) {
+                Pick3::Submission::ClearStockHandoff();
+                if(Pick3::Submission::DispatchAutomaticTap(activeRequest,chosenIndices))return true;
+            }
+            awaitingStockCommand=false;chosenIndices.clear();
+        }
+        PublishPrimaryChoices();return true;
+    }
+    inline bool BeginFirstAdditional() {
+        Obj* effect=Engine::EntityAccess::Find(activeOfferModel,activeRequest.effectEntityId);Obj* filter=Engine::EntityAccess::Component(effect,"PrimaryTargetFilter");
+        const auto setting=Pick3::AdditionalSelection::Get(filter);
+        if(!setting.first || !Pick3::AdditionalSelection::Interactive(setting.mode) || activeRequest.requiredTargets!=1)return false;
+        Obj* query=Pick3::TargetBridge::OriginalDatabaseQuery(filter,activeRequest.effectEntityId,activeRequest.effectGroupId);
+        if(activeRequest.mode==Pick3::SelectionMode::CardDatabase)firstPrimaryCandidates=Pick3::TargetBridge::EnumerateCardDatabase(query,activeRequest.effectEntityId,activeOfferModel);
+        else {std::lock_guard<std::mutex> lock(Pick3::TargetBridge::snapshotMutex);firstPrimaryCandidates=Pick3::TargetBridge::latestEligiblePairs;}
+        additionalEligible.clear();
+        for(auto candidate:firstPrimaryCandidates) {
+            Obj* card=activeRequest.mode==Pick3::SelectionMode::CardDatabase?Engine::BoardPlacement::Definition(candidate.cardGuid,effect):Engine::EntityAccess::Find(activeOfferModel,candidate.entityId);
+            const int primary=activeRequest.mode==Pick3::SelectionMode::CardDatabase?activeRequest.ownerPlayerId:candidate.entityId;
+            for(int id:Pick3::AdditionalSelection::Enumerate(activeOfferModel,activeRequest.effectEntityId,primary,card))if(std::find(additionalEligible.begin(),additionalEligible.end(),id)==additionalEligible.end())additionalEligible.push_back(id);
+        }
+        if(additionalEligible.empty())return false;
+        selectingAdditionalFirst=true;
+        if(setting.mode==Pick3::AdditionalSelection::Manual){awaitingAdditionalBoard=true;Pick3::Submission::SetPopupInputCapture(false);return true;}
+        std::vector<Pick3::Candidate> cards;
+        for(int id:additionalEligible){Obj* card=Engine::EntityAccess::Find(activeOfferModel,id);int guid=InspectionStats::Guid(card);if(guid>0)cards.push_back({id,guid});}
+        const auto mode=setting.mode==Pick3::AdditionalSelection::UniqueGuid?Pick3::SelectionMode::UniqueGuidTargets:Pick3::SelectionMode::RandomTargets;
+        auto offer=Pick3::MakeStableNetworkPreviewRequest(activeRequest.effectEntityId,activeRequest.effectGroupId,mode,cards,1);
+        additionalOptions=offer.options;
+        if(additionalOptions.empty()){selectingAdditionalFirst=false;return false;}
+        if(Pick3::IsAutomaticUniqueChoice(offer) && CompleteFirstAdditional(additionalOptions[0].entityId))return true;
+        choosingAdditionalCards=true;Group group;group.source=activeRequest.effectEntityId;group.serial=activeRequest.effectGroupId;group.open=true;
+        for(auto option:additionalOptions){group.ids.push_back(option.entityId);group.guids.push_back(option.cardGuid);}
+        CaptureGroupStats(group,activeOfferModel);Publish(group);return true;
+    }
     inline bool PickTap(Obj* command,int* result) {
         if(!enabled || useStockTargeting)return false;
         if(!hasRequest || autoSolePending)return false;
         // Only intercept this exact phase-0 PF3 choice. Revive's later lane
         // targeting and every unrelated stock input must remain untouched.
         if(!ExactTurn(activeRequest,Pick3::Submission::Remote()))return false;
+        if(awaitingAdditionalBoard)return false;
+        if(Ui::state.exiting || Ui::state.deferredExit){if(result)*result=-1;return true;}
         if(awaitingResult || awaitingStockCommand) { if(result)*result=-1; return true; }
         int index=-1;
         if(!Ui::PickAt(command,&index)) {
             // If the presentation hasn't completed Show yet, still do not
             // allow picking a board hero or lane through the unfinished UI.
             if(result)*result=-1;
+            return true;
+        }
+        if(result)*result=-1;
+        if(choosingAdditionalCards) {
+            if(index>=0 && index<int(additionalOptions.size())) {
+                if(selectingAdditionalFirst){Ui::BeginExit(index);CompleteFirstAdditional(additionalOptions[index].entityId);}
+                else if(StageAdditional(additionalOptions[index].entityId,result))Ui::BeginExit(index);
+            }
             return true;
         }
         if(result)*result=-1; // swallowed; never synthesize a stock board target
@@ -1567,13 +1793,15 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         PICK3_DISCOVER_LOG("CustomComponents/Pick3/DiscoverUI: CHOOSE index=%d selected=%zu required=%d",
              index,chosenIndices.size(),activeRequest.requiredTargets);
         if(static_cast<int>(chosenIndices.size())<std::max(1,activeRequest.requiredTargets))return true;
+        if(firstAdditionalTarget>=0){StageAdditional(firstAdditionalTarget,result);return true;}
+        if(BeginAdditional(index))return true;
         if (Pick3::Submission::preferStockCommandHandoff) {
             const int recipient=Pick3::Submission::StockTapRecipient(activeRequest,index);
             if (recipient>=0 && Pick3::Submission::StageStockHandoff(activeRequest,chosenIndices)) {
                 awaitingStockCommand=true;
                 stockCommandWaitTicks=0;
                 if(result)*result=recipient; // STOCK EntityTappedSignal drives SelectTargetCommand.
-                LOG_INFO("CustomComponents/Pick3/STOCK_HANDOFF: PICKER_TO_STOCK effect=%d group=%d recipient=%d",
+                CC_SELECTION_DIAG("CustomComponents/Pick3/STOCK_HANDOFF: PICKER_TO_STOCK effect=%d group=%d recipient=%d",
                          activeRequest.effectEntityId,activeRequest.effectGroupId,recipient);
             } else {
                 LOG_ERR("CustomComponents/Pick3/STOCK_HANDOFF: STAGE_REJECTED effect=%d group=%d recipient=%d",
@@ -1593,7 +1821,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             chosenIndices.clear();
             Group group;group.source=activeRequest.effectEntityId;group.serial=activeRequest.effectGroupId;
             for(auto& o:activeRequest.options){group.ids.push_back(o.entityId);group.guids.push_back(o.cardGuid);}
-            group.open=true;Publish(group);
+            group.open=true;CaptureGroupStats(group,activeOfferModel);Publish(group);
         } else {
             // A service-entered failure needs stock completion, not a reroll.
             awaitingResult=true;
@@ -1617,7 +1845,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         if(hasRequest && activeRequest.effectEntityId==effect && activeRequest.effectGroupId==group &&
            !chosenIndices.empty()) {
             Ui::BeginExit(chosenIndices.back());
-            LOG_INFO("CustomComponents/Pick3/DiscoverUI: EXIT_TRIGGERED_BY_DISPATCH effect=%d group=%d",
+            CC_SELECTION_DIAG("CustomComponents/Pick3/DiscoverUI: EXIT_TRIGGERED_BY_DISPATCH effect=%d group=%d",
                      effect,group);
         }
     }
@@ -1633,7 +1861,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         identity.effectGroupId=group;
         const auto queue=remote?Pick3::Submission::InspectBoundBlockingQueue(identity):
             Pick3::Submission::InspectBlockingQueue(identity,Pick3::Submission::Target(Pick3::Submission::serviceRoot));
-        LOG_INFO("CustomComponents/Pick3/DiscoverUI: HOLDER_QUEUE_CROSSCHECK effect=%d group=%d queueState=%d holderIsAuthority=1 readOnly=1",
+        CC_SELECTION_DIAG("CustomComponents/Pick3/DiscoverUI: HOLDER_QUEUE_CROSSCHECK effect=%d group=%d queueState=%d holderIsAuthority=1 readOnly=1",
             effect,group,static_cast<int>(queue));
     }
     // The model injected into SelectTargetService is the live EntityModel used
@@ -1641,21 +1869,22 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
     // old, now-quarantined post-submit dependency resolver and stays null.
     // Resolve via ALREADY captured BNM fields: no binder invoke, no new hooks.
     inline Obj* LiveSelectionEntityModel() {
-        Obj* model=Pick3::Submission::Target(Pick3::Submission::boundEntityModelRoot);
-        if(model) return model;
+        Obj* fallback=Pick3::Submission::Target(Pick3::Submission::boundEntityModelRoot);
         Obj* service=Pick3::Submission::Target(Pick3::Submission::serviceRoot);
         if(!service || !Pick3::Submission::localClass.IsValid() ||
            !BNM::IsA(service,Pick3::Submission::localClass) ||
            !Pick3::Submission::localServiceFinder.IsValid() ||
            !Pick3::TargetBridge::finderEntityFinder.IsValid() ||
-           !Pick3::TargetBridge::entityFinderModel.IsValid()) return nullptr;
+           !Pick3::TargetBridge::entityFinderModel.IsValid())return fallback;
         Obj* finder=Pick3::Submission::localServiceFinder[service].Get();
-        Obj* entityFinder=finder ? Pick3::TargetBridge::finderEntityFinder[finder].Get() : nullptr;
-        return entityFinder ? Pick3::TargetBridge::entityFinderModel[entityFinder].Get() : nullptr;
+        Obj* entityFinder=finder?Pick3::TargetBridge::finderEntityFinder[finder].Get():nullptr;
+        Obj* current=entityFinder?Pick3::TargetBridge::entityFinderModel[entityFinder].Get():nullptr;
+        return current?current:fallback;
     }
     inline void Tick() {
         if(!enabled)return;
         Ui::TickExit();
+        RefreshStageLights();
         const auto& h=Systems::TargetingPresentationRefreshSystem::observedTargetingIdentity;
 
 #if CUSTOMCOMPONENTS_PF3_REPAIR_TRACE
@@ -1693,7 +1922,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             if (h.state==6 && (h.phase!=0 || holderLeftPicker)) {
                 static int lastPromptEffect=-1,lastPromptGroup=-1,lastPromptPhase=-1;
                 if (lastPromptEffect!=h.effectEntityId || lastPromptGroup!=h.effectGroupId || lastPromptPhase!=h.phase) {
-                    LOG_INFO("CustomComponents/Pick3/DiscoverUI: STOCK_SECONDARY_PROMPT_RESTORED effect=%d group=%d phase=%d previous=%d/%d",
+                    CC_SELECTION_DIAG("CustomComponents/Pick3/DiscoverUI: STOCK_SECONDARY_PROMPT_RESTORED effect=%d group=%d phase=%d previous=%d/%d",
                              h.effectEntityId,h.effectGroupId,h.phase,Ui::state.source,Ui::state.serial);
                     lastPromptEffect=h.effectEntityId;lastPromptGroup=h.effectGroupId;lastPromptPhase=h.phase;
                 }
@@ -1708,7 +1937,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         if (holderFrames==1 || h.state!=lastState || h.effectEntityId!=lastEffect ||
             h.effectGroupId!=lastGroup || h.phase!=lastPhase ||
             (h.valid && holderFrames%180==0)) {
-            LOG_INFO("CustomComponents/Pick3/DiscoverUI: HOLDER_TICK frame=%u valid=%d state=%d phase=%d effect=%d group=%d local=%d remote=%d pending=%d queued=%d", 
+            CC_SELECTION_DIAG("CustomComponents/Pick3/DiscoverUI: HOLDER_TICK frame=%u valid=%d state=%d phase=%d effect=%d group=%d local=%d remote=%d pending=%d queued=%d", 
                 holderFrames, h.valid?1:0, h.state, h.phase, h.effectEntityId, h.effectGroupId,
                 Pick3::Submission::Local()?1:0, Pick3::Submission::Remote()?1:0,
                 Pick3::TargetBridge::HasPendingOffer()?1:0, Pick3::TargetBridge::HasQueuedChoice()?1:0);
@@ -1723,6 +1952,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         const bool remote=Pick3::Submission::Remote()&&Pick3::Submission::allowPvp;
         const bool local=Pick3::Submission::Local()&&Pick3::Submission::allowPve;
         const bool matching=hasRequest && (remote||local) && ExactTurn(activeRequest,remote);
+        if(awaitingAdditionalBoard && matching)return;
         if (awaitingStockCommand) {
             using H=Pick3::Submission::StockHandoffState;
             if (Pick3::Submission::stockHandoffState==H::Dispatched) {
@@ -1744,6 +1974,15 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
                 Pick3::Submission::ClearStockHandoff();
                 chosenIndices.clear();
                 awaitingStockCommand=false;
+                if(matching && !useStockTargeting) {
+                    // Armed means no stock selection command was entered. Return
+                    // control to the user without replaying a gameplay action.
+                    awaitingAdditionalBoard=choosingAdditionalCards=false;
+                    activeRequest.additionalTargetId=-1;
+                    Group group;group.source=activeRequest.effectEntityId;group.serial=activeRequest.effectGroupId;group.open=true;
+                    for(const auto& option:activeRequest.options){group.ids.push_back(option.entityId);group.guids.push_back(option.cardGuid);}
+                    CaptureGroupStats(group,activeOfferModel);Publish(group);
+                }
             }
             return;
         }
@@ -1777,7 +2016,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             // for a later return to this stock blocking choice.
             const bool suspended=activeOfferModelHandle && activeOfferModel &&
                 Pick3::TargetBridge::SuspendUnsubmittedOffer(activeRequest,activeOfferModel);
-            LOG_INFO("CustomComponents/Pick3/REPAIR1719: UNDISPATCHED_INTERRUPTED effect=%d group=%d next=%d/%d suspended=%d submitted=0",
+            CC_SELECTION_DIAG("CustomComponents/Pick3/REPAIR1719: UNDISPATCHED_INTERRUPTED effect=%d group=%d next=%d/%d suspended=%d submitted=0",
                 activeRequest.effectEntityId,activeRequest.effectGroupId,
                 h.effectEntityId,h.effectGroupId,int(suspended));
             if(!suspended) {
@@ -1789,6 +2028,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             CloseGroup(activeRequest.effectEntityId,activeRequest.effectGroupId,-1);
             Pick3::Submission::SetPopupInputCapture(false);
             hasRequest=false;autoSolePending=false;chosenIndices.clear();activeRequest={};currentPromptGuid=-1;
+            awaitingAdditionalBoard=choosingAdditionalCards=selectingAdditionalFirst=false;firstAdditionalTarget=-1;firstPrimaryCandidates.clear();additionalEligible.clear();additionalOptions.clear();
             ReleaseActiveOfferModel();
         }
         if(!(remote||local) || !h.valid || h.state!=6 || h.phase!=0){Ui::OnUpdate(h.holder,false,-1,-1);return;}
@@ -1814,14 +2054,14 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             static int lastFallbackEffect=-1,lastFallbackGroup=-1;
             if(lastFallbackEffect!=h.effectEntityId || lastFallbackGroup!=h.effectGroupId) {
                 lastFallbackEffect=h.effectEntityId;lastFallbackGroup=h.effectGroupId;
-                LOG_INFO("CustomComponents/Pick3/DiscoverUI: OFFER_MODEL_FALLBACK effect=%d group=%d owner=%d model=%p source=stock-finder-cache presentationOnly=1",
+                CC_SELECTION_DIAG("CustomComponents/Pick3/DiscoverUI: OFFER_MODEL_FALLBACK effect=%d group=%d owner=%d model=%p source=stock-finder-cache presentationOnly=1",
                          h.effectEntityId,h.effectGroupId,localOwner,static_cast<void*>(model));
             }
         }
         static int missingModelEffect=-1,missingModelGroup=-1;
         if(!model && (h.effectEntityId!=missingModelEffect || h.effectGroupId!=missingModelGroup)) {
             missingModelEffect=h.effectEntityId;missingModelGroup=h.effectGroupId;
-            LOG_INFO("CustomComponents/Pick3/DiscoverUI: WAIT_LIVE_MODEL effect=%d group=%d service=%p finderField=%d entityFinderField=%d entityModelField=%d boundModel=%p pending=%d",
+            CC_SELECTION_DIAG("CustomComponents/Pick3/DiscoverUI: WAIT_LIVE_MODEL effect=%d group=%d service=%p finderField=%d entityFinderField=%d entityModelField=%d boundModel=%p pending=%d",
                 h.effectEntityId,h.effectGroupId,
                 Pick3::Submission::Target(Pick3::Submission::serviceRoot),
                 Pick3::Submission::localServiceFinder.IsValid()?1:0,
@@ -1844,7 +2084,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
                     lastCaptureEffect=h.effectEntityId;lastCaptureGroup=h.effectGroupId;
                     LogQueueEvidence(h.effectEntityId,h.effectGroupId,remote);
                     const auto c=Pick3VisualBarrierTracker::CaptureOffer(h.effectEntityId,h.effectGroupId);
-                    LOG_INFO("CustomComponents/Pick3/VISUAL_BARRIER: event=BARRIER_CAPTURE effect=%d group=%d candidateQueue=%p deps=%d ownership=UNKNOWN policy=OBSERVE_ONLY",h.effectEntityId,h.effectGroupId,reinterpret_cast<void*>(c.queue),c.dependencies);
+                    CC_SELECTION_DIAG("CustomComponents/Pick3/VISUAL_BARRIER: event=BARRIER_CAPTURE effect=%d group=%d candidateQueue=%p deps=%d ownership=UNKNOWN policy=OBSERVE_ONLY",h.effectEntityId,h.effectGroupId,reinterpret_cast<void*>(c.queue),c.dependencies);
                 }
                 bool published=Pick3::TargetBridge::PublishForActiveEffect(h.effectEntityId,h.effectGroupId,const_cast<Obj*>(model),localOwner);
                 // Start-of-tricks PvE effects may advance their stock holder
@@ -1857,25 +2097,25 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
                     Obj* cached=Pick3::TargetBridge::VerifiedCachedModelForActivePve(
                         h.effectEntityId,h.effectGroupId,localOwner);
                     if(cached && cached!=model) {
-                        LOG_INFO("CustomComponents/Pick3/PVE_START_TRICKS: phase=RETRY effect=%d group=%d owner=%d serviceModel=%p cachedModel=%p holderExact=1",
+                        CC_SELECTION_DIAG("CustomComponents/Pick3/PVE_START_TRICKS: phase=RETRY effect=%d group=%d owner=%d serviceModel=%p cachedModel=%p holderExact=1",
                             h.effectEntityId,h.effectGroupId,localOwner,(void*)model,(void*)cached);
                         published=Pick3::TargetBridge::PublishForActiveEffect(
                             h.effectEntityId,h.effectGroupId,cached,localOwner);
-                        LOG_INFO("CustomComponents/Pick3/PVE_START_TRICKS: phase=RETRY_RESULT effect=%d group=%d accepted=%d",
+                        CC_SELECTION_DIAG("CustomComponents/Pick3/PVE_START_TRICKS: phase=RETRY_RESULT effect=%d group=%d accepted=%d",
                             h.effectEntityId,h.effectGroupId,int(published));
                         if(published) model=cached;
                     } else {
                         static int lastMissEffect=-1,lastMissGroup=-1;
                         if(lastMissEffect!=h.effectEntityId || lastMissGroup!=h.effectGroupId) {
                             lastMissEffect=h.effectEntityId;lastMissGroup=h.effectGroupId;
-                            LOG_INFO("CustomComponents/Pick3/PVE_START_TRICKS: phase=NO_VERIFIED_CACHE effect=%d group=%d owner=%d fallback=blocked",
+                            CC_SELECTION_DIAG("CustomComponents/Pick3/PVE_START_TRICKS: phase=NO_VERIFIED_CACHE effect=%d group=%d owner=%d fallback=blocked",
                                 h.effectEntityId,h.effectGroupId,localOwner);
                         }
                     }
                 }
                 static int lastPublishEffect=-1,lastPublishGroup=-1;
                 if(lastPublishEffect!=h.effectEntityId || lastPublishGroup!=h.effectGroupId || published) {
-                    LOG_INFO("CustomComponents/Pick3/DiscoverUI: HOLDER_PUBLISH effect=%d group=%d accepted=%d queued=%d pending=%d owner=%d model=%p",
+                    CC_SELECTION_DIAG("CustomComponents/Pick3/DiscoverUI: HOLDER_PUBLISH effect=%d group=%d accepted=%d queued=%d pending=%d owner=%d model=%p",
                         h.effectEntityId,h.effectGroupId,published?1:0,
                         Pick3::TargetBridge::HasQueuedChoice()?1:0,Pick3::TargetBridge::HasPendingOffer()?1:0,
                         localOwner,const_cast<Obj*>(model));
@@ -1895,8 +2135,18 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
                 activeOfferModel=Ui::Pin(model,activeOfferModelHandle);
                 PF3_REPAIR_TRACE("CustomComponents/Pick3/REPAIR1719: OFFER_MODEL_PIN effect=%d group=%d model=%p pinned=%d",
                     activeRequest.effectEntityId,activeRequest.effectGroupId,(void*)model,int(activeOfferModelHandle!=0));
+                if(BeginFirstAdditional())return;
+                if(Pick3::IsAutomaticUniqueChoice(activeRequest)) {
+                    chosenIndices={0};
+                    if(!BeginAdditional(0)) {
+                        awaitingStockCommand=true;stockCommandWaitTicks=0;
+                        if(Pick3::Submission::DispatchAutomaticTap(activeRequest,chosenIndices))return;
+                        awaitingStockCommand=false;chosenIndices.clear();
+                        LOG_WARN("CustomComponents/Pick3: automatic choice dependencies unavailable; showing the sole choice");
+                    } else if(awaitingAdditionalBoard || choosingAdditionalCards || awaitingStockCommand)return;
+                }
                 if(activeRequest.requiredTargets==1 && activeRequest.options.size()==1) {
-                    LOG_INFO("CustomComponents/Pick3/DiscoverUI: SOLE_STOCK_CHOICE effect=%d group=%d mode=%d entity=%d manualFallback=1 directSubmit=0",
+                    CC_SELECTION_DIAG("CustomComponents/Pick3/DiscoverUI: SOLE_STOCK_CHOICE effect=%d group=%d mode=%d entity=%d manualFallback=1 directSubmit=0",
                         activeRequest.effectEntityId,activeRequest.effectGroupId,
                         static_cast<int>(activeRequest.mode),activeRequest.options[0].entityId);
                     // Safety-first: stock command must own this selection.
@@ -1905,8 +2155,8 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
                 if(!useStockTargeting){
                     Group group;group.source=activeRequest.effectEntityId;group.serial=activeRequest.effectGroupId;
                     for(const auto& item:activeRequest.options){group.ids.push_back(item.entityId);group.guids.push_back(item.cardGuid);}
-                    group.open=true;Publish(group);
-                    LOG_INFO("CustomComponents/Pick3/DiscoverUI: PRESENT effect=%d group=%d options=%zu mode=%d",
+                    group.open=true;CaptureGroupStats(group,activeOfferModel);Publish(group);
+                    CC_SELECTION_DIAG("CustomComponents/Pick3/DiscoverUI: PRESENT effect=%d group=%d options=%zu mode=%d",
                              group.source,group.serial,group.ids.size(),static_cast<int>(activeRequest.mode));
                 }
             }
@@ -1914,20 +2164,54 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         Ui::OnUpdate(h.holder,hasRequest && !useStockTargeting && ExactTurn(activeRequest,remote),
                      hasRequest?activeRequest.effectEntityId:-1,hasRequest?activeRequest.effectGroupId:-1);
     }
-    inline void OnStockHolderUpdated(Obj* holder) {
-        // Called after the submission observer, without any extra native hook.
-        const auto& identity=Systems::TargetingPresentationRefreshSystem::observedTargetingIdentity;
-        if (identity.holder && holder && identity.holder!=holder) return;
+    inline BNM::Method<int> frameCount;
+    inline Core::PresentationRefresh::FrameGate presentationFrames;
+    inline void TickOncePerFrame() {
+        if(frameCount.IsValid()) {
+            if(!presentationFrames.Enter(frameCount()))return;
+        }
         Tick();
+    }
+    inline void OnStockHolderUpdated(Obj* holder) {
+        const auto& identity=Systems::TargetingPresentationRefreshSystem::observedTargetingIdentity;
+        if(identity.holder && holder && identity.holder!=holder)return;
+        TickOncePerFrame();
+    }
+    inline void OnFrontendTick() {
+        if(!enabled || useStockTargeting)return;
+        namespace S=Systems::TargetingPresentationRefreshSystem;
+        Obj* holder=Pick3::Submission::Target(Pick3::Submission::matchHolderRoot);
+        const auto previous=S::observedTargetingIdentity;
+        if(!holder || previous.holder!=holder || !S::gameInputState.IsValid() || !S::getFirstEffectInQueue.IsValid())return;
+        Obj* front=S::getFirstEffectInQueue[holder]();
+        const auto next=S::ReadIdentity(holder,S::kSelectTriggeredEffectPrimaryTarget,front);
+        Obj* model=LiveSelectionEntityModel();
+        Obj* filter=next.valid?Engine::EntityAccess::Component(Engine::EntityAccess::Find(model,next.effectEntityId),"PrimaryTargetFilter"):nullptr;
+        const int owner=front && next.valid && Pick3::TargetBridge::blockingPlayerId.IsValid()?Pick3::TargetBridge::blockingPlayerId[front].Get():-1;
+        const int local=Pick3::TargetBridge::LocalPlayerId();
+        const bool ownPrimary=next.valid && next.phase==0 && local>=0 && owner==local &&
+            Pick3::EnumModes::IsPickFromThree(Pick3::TargetBridge::LogicalSelectionMode(filter));
+        const bool changed=Core::PresentationRefresh::NeedsRefresh(ownPrimary,
+            {previous.effect,previous.state,previous.phase,previous.effectEntityId,previous.effectGroupId},
+            {front,next.state,next.phase,next.effectEntityId,next.effectGroupId});
+        if(changed && S::originalUpdate) {
+            // Refresh only stock frontend state for the rooted holder's actual
+            // local blocking choice. Never simulate a tap or submit a Play.
+            S::UpdateHook(holder,nullptr);
+            return;
+        }
+        if(hasRequest || Ui::state.shown || Ui::state.exiting || Ui::state.deferredExit ||
+           Pick3::TargetBridge::HasPendingOffer() || Pick3::TargetBridge::HasQueuedChoice())TickOncePerFrame();
     }
     inline bool Initialize(bool requested,bool stockTarget,bool maskStock) {
         if(!requested)return true;
+        Pick3::Submission::onMatchReset=&ResetMatchView;
         useStockTargeting=stockTarget;maskStockTargetUI=maskStock;
         suppressStockHint=maskStock;
         if(useStockTargeting) {
             // No Discover UI hooks in stock-only presentation mode.
             enabled=true;
-            LOG_INFO("CustomComponents/Pick3/DiscoverUI: stock-only input selected; no Discover UI hooks");
+            CC_SELECTION_DIAG("CustomComponents/Pick3/DiscoverUI: stock-only input selected; no Discover UI hooks");
             return true;
         }
         Pick3CardMetadata::Initialize();
@@ -1938,12 +2222,18 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         if(!Pick3CardMetadata::InstallMapperCapture())
             LOG_WARN("CustomComponents/Pick3/DiscoverUI: CardDataMapper snapshot hook unavailable; generic prompt fallback active");
         if(!Ui::Initialize())return false;
+        frameCount=BNM::Class("UnityEngine","Time").GetMethod("get_frameCount",0).cast<int>();
+        if(!frameCount.IsValid() || !Core::FrontendTickDispatcher::RegisterPresentationTick(&OnFrontendTick))return false;
+        auto lights=BNM::Class("PvZCards.Game","HighlightTriggeredEffectTargetsCommand");
+        activateTargetLight=lights.GetMethod("ActivateLightForTarget",4).cast<void>();
+        if(!activateTargetLight.IsValid() || !Core::Hooks::Install(lights.GetMethod("ActivateLightsForChooseTargetEffect",2),TargetLights,originalTargetLights))return false;
         if (!Pick3CardMetadata::InstallLocalizationCapture(Ui::gcNew,Ui::gcFree))
             LOG_WARN("CustomComponents/Pick3/DiscoverUI: stock localization capture unavailable; generic prompt safe fallback (no scene scan)");
         Ui::showCards = &Utilities::DiscardPileViewer::ShowCardGuidList;
         Ui::showSignalType = BNM::Class("PvZCards.CardInspection", "ShowCardInspectionOverlaySignal").GetMonoType();
-        LOG_INFO("CustomComponents/Pick3/DiscoverUI: INSPECTION_BRIDGE installed=%d signalType=%d", Ui::showCards?1:0, Ui::showSignalType?1:0);
+        CC_SELECTION_DIAG("CustomComponents/Pick3/DiscoverUI: INSPECTION_BRIDGE installed=%d signalType=%d", Ui::showCards?1:0, Ui::showSignalType?1:0);
         Utilities::DiscardPileViewer::externalPickerTap=&PickTap;
+        Utilities::DiscardPileViewer::externalAdditionalTap=&AdditionalBoardTap;
         Pick3::Submission::isStockChooseBoardTap=&ShouldForwardStockChooseTap;
         Pick3::Submission::onPick3PlayDispatch=&OnPick3PlayDispatch;
         if(!Systems::TargetingPresentationRefreshSystem::RegisterAfterSubmissionPresentationObserver(&OnStockHolderUpdated)) {
@@ -1952,10 +2242,12 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             Pick3::Submission::onPick3PlayDispatch=nullptr;
             LOG_ERR("CustomComponents/Pick3/DiscoverUI: stock GameInputStateHolder observer unavailable");return false;
         }
-        LOG_INFO("CustomComponents/Pick3/DiscoverUI: TICK_SOURCE=STOCK_GAME_INPUT_HOLDER afterSubmission=1");
+        CC_SELECTION_DIAG("CustomComponents/Pick3/DiscoverUI: TICK_SOURCE=STOCK_GAME_INPUT_HOLDER afterSubmission=1");
         enabled=true;
-        LOG_INFO("CustomComponents/Pick3/DiscoverUI: port initialized stockTarget=%d maskStock=%d",stockTarget,maskStock);
+        CC_SELECTION_DIAG("CustomComponents/Pick3/DiscoverUI: port initialized stockTarget=%d maskStock=%d",stockTarget,maskStock);
         return true;
     }
 #undef PICK3_DISCOVER_LOG
 }
+
+

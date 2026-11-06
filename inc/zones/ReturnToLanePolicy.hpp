@@ -6,6 +6,9 @@ inline constexpr CardKind Classify(bool fighter,bool environment) {
     if(fighter==environment) return CardKind::Unsupported;
     return environment ? CardKind::Environment : CardKind::Fighter;
 }
+inline constexpr bool AllowsTerrain(CardKind kind,bool water,bool aquatic) {
+    return kind==CardKind::Environment || (kind==CardKind::Fighter && (!water || aquatic));
+}
 // Environment replacement is handled by EnvironmentPlacer, outside the
 // player-to-fighter map. Unknown fighter occupancy always fails closed.
 inline constexpr bool HasSlot(CardKind kind,int occupants,bool plant,bool incomingTeamup,bool residentTeamup) {

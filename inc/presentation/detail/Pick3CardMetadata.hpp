@@ -1,3 +1,4 @@
+#include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 // Read-only card preview metadata, sourced from the SAME CardDataMapper used
@@ -97,7 +98,7 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
         const auto method=mapperClass.GetMethod("SetCardData",2);
         const auto* info=method.IsValid()?method.GetInfo():nullptr;
         if (!info || info->parameters_count!=2 || !info->methodPointer) return false;
-        BNM::BasicHook(method,SetCardDataCapture,originalSetCardData);
+        CustomComponents::Core::Hooks::Install(method,SetCardDataCapture,originalSetCardData);
         return originalSetCardData!=nullptr;
     }
 
@@ -242,7 +243,7 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
             if (info && info->parameters_count == 0 && info->methodPointer) {
                 // Unlike BNM's BasicHook wrapper, check the actual Dobby status.
                 void* trampoline = nullptr;
-                const int status = DobbyHook(reinterpret_cast<void*>(info->methodPointer),
+                const int status = CustomComponents::Core::Hooks::InstallNative(reinterpret_cast<void*>(info->methodPointer),
                                              reinterpret_cast<void*>(&MediatorOnRegisterCapture),
                                              &trampoline);
                 if (status == 0 && trampoline &&

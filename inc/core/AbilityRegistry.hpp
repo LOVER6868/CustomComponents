@@ -53,6 +53,15 @@ namespace CustomComponents {
             for (std::size_t i = 0; i < count; ++i) callback(entries[i]);
         }
 
+        static bool SetSpecialAbilityType(int id,int type) {
+            for(std::size_t i=0;i<count;++i) if(entries[i].id==id) {
+                if(type!=AbilityDescriptor::NoSpecialAbilityType)
+                    for(std::size_t j=0;j<count;++j) if(i!=j && entries[j].specialAbilityType==type)return false;
+                entries[i].specialAbilityType=type;return true;
+            }
+            return false;
+        }
         static std::size_t Count() { return count; }
     };
 }
+

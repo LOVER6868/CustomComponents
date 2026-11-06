@@ -1,3 +1,4 @@
+#include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 #include <BNM/Class.hpp>
@@ -70,7 +71,7 @@ namespace CustomComponents::Systems::ComponentSupport {
             return false;
         }
 
-        BNM::BasicHook(method, GetTypeFromTypeStringHook, originalGetTypeFromTypeString);
+        CustomComponents::Core::Hooks::Install(method, GetTypeFromTypeStringHook, originalGetTypeFromTypeString);
 
         if (!originalGetTypeFromTypeString) {
             LOG_ERR("CustomComponents: serialized type resolver hook failed");
@@ -125,7 +126,7 @@ namespace CustomComponents::Systems::ComponentSupport {
             return false;
         }
 
-        BNM::BasicHook(method, CreateInstanceHook, originalCreateInstance);
+        CustomComponents::Core::Hooks::Install(method, CreateInstanceHook, originalCreateInstance);
 
         if (!originalCreateInstance) {
             LOG_ERR("CustomComponents: custom-component constructor hook failed");

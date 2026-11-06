@@ -1,3 +1,4 @@
+#include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 // Unity-thread presentation for hand discards.
@@ -368,7 +369,7 @@ namespace CustomComponents::Systems::DiscardFromHandPresentationSystem {
             LOG_ERR("CustomComponents/DiscardFromHand/PRESENT: required frontend API missing");
             return false;
         }
-        BNM::BasicHook(getMapped,GetMappedHook,originalGetMapped);
+        CustomComponents::Core::Hooks::Install(getMapped,GetMappedHook,originalGetMapped);
         if (!originalGetMapped) {
             LOG_ERR("CustomComponents/DiscardFromHand/CLEANUP: GetViewObject hook failed");
             return false;
@@ -384,15 +385,15 @@ namespace CustomComponents::Systems::DiscardFromHandPresentationSystem {
             LOG_ERR("CustomComponents/DiscardFromHand/MAP: MapCardView hook failed");
             return false;
         }
-        BNM::BasicHook(find,FindHook,originalFind);
-        BNM::BasicHook(reposition,RepositionHook,originalReposition);
-        BNM::BasicHook(dragOut,DragOutHook,originalDragOut);
+        CustomComponents::Core::Hooks::Install(find,FindHook,originalFind);
+        CustomComponents::Core::Hooks::Install(reposition,RepositionHook,originalReposition);
+        CustomComponents::Core::Hooks::Install(dragOut,DragOutHook,originalDragOut);
         // Install the same stock tick hook at exactly the former installation point:
         // hand reconciliation -> deferred CardView creation -> stock Update.
         const bool tickOk = CustomComponents::Core::FrontendTickDispatcher::Initialize(
             &ReconcilePendingOnFrontendTick,
             &CustomComponents::Core::CardViewLifecycleCoordinator::ProcessDeferredOnFrontendTick);
-        BNM::BasicHook(awake,LocalHandAwakeHook,originalLocalHandAwake);
+        CustomComponents::Core::Hooks::Install(awake,LocalHandAwakeHook,originalLocalHandAwake);
         const bool ok = originalFind && originalReposition && originalDragOut &&
                         tickOk && originalLocalHandAwake;
         const bool lifecycleOk = CustomComponents::Core::CardViewLifecycleCoordinator::Initialize();

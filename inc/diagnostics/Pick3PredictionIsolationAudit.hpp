@@ -1,3 +1,5 @@
+#include "diagnostics/DiagnosticLogging.hpp"
+#include "core/HookRegistry.hpp"
 #pragma once
 // Diagnostic ONLY: observe stock EntityModel.DeepCopyFrom; never create entities.
 #include <BNM/Class.hpp>
@@ -28,7 +30,7 @@ inline void OnDeepCopy(Obj* destination, Obj* source, Obj* manager, const void* 
     const int dstCount = dstEntities ? dstEntities->size : -1;
     const int srcNext = nextId[source].Get();
     const int dstNext = nextId[destination].Get();
-    LOG_INFO("CustomComponents/Pick3/CLONE_AUDIT: n=%d src=%p dst=%p distinct=%d srcEntities=%d dstEntities=%d srcNext=%d dstNext=%d dstBefore=%d countMatch=%d nextMatch=%d",
+    CC_SELECTION_DIAG("CustomComponents/Pick3/CLONE_AUDIT: n=%d src=%p dst=%p distinct=%d srcEntities=%d dstEntities=%d srcNext=%d dstNext=%d dstBefore=%d countMatch=%d nextMatch=%d",
         observedCopies, static_cast<void*>(source), static_cast<void*>(destination), source != destination,
         srcCount, dstCount, srcNext, dstNext, before, srcCount == dstCount, srcNext == dstNext);
 }
@@ -46,9 +48,9 @@ inline bool Install() {
         LOG_ERR("CustomComponents/Pick3/CLONE_AUDIT: fields or DeepCopyFrom missing");
         return false;
     }
-    BNM::BasicHook(copy, OnDeepCopy, original);
+    CustomComponents::Core::Hooks::Install(copy, OnDeepCopy, original);
     const bool ok = original != nullptr;
-    LOG_INFO("CustomComponents/Pick3/CLONE_AUDIT: hook=%d observerOnly=1 noCardCreation=1", ok);
+    CC_SELECTION_DIAG("CustomComponents/Pick3/CLONE_AUDIT: hook=%d observerOnly=1 noCardCreation=1", ok);
     return ok;
 }
 }

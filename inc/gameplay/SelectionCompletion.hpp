@@ -1,20 +1,24 @@
 #pragma once
 // Completion observation for any BaseService selection. No native detours.
-// Managed delegates are combined with existing handlers and removed individually.
+// Managed delegates share the service lifetime; retired tickets are inert.
 #include "gameplay/SelectionCompletionState.hpp"
 #include <BNM/ClassesManagement.hpp>
 #include <BNM/Defaults.hpp>
 #include <BNM/Delegates.hpp>
 #include "gameplay/SelectionTransport.hpp"
+#include "core/ManagedRuntime.hpp"
+#include "core/ManagedReference.hpp"
+#include <atomic>
 
 namespace CustomComponents::SelectionCompletion {
 using Obj = BNM::IL2CPP::Il2CppObject;
 inline CompletionState completion;
-inline std::uint64_t activeTicket = 0;
+inline std::atomic<std::uint64_t> activeTicket{0};
 // Optional read-only diagnostics observer; does not alter completion status.
 inline void (*networkObserver)(bool, int) = nullptr;
 struct Receiver : Obj {
     std::uint64_t ticket = 0;
+    Obj* retainedPlay = nullptr;
     BNM_CustomClass(Receiver,
         BNM::CompileTimeClassBuilder("Sprig.Selection", "CompletionReceiver", "Assembly-CSharp.dll").Build(),
         BNM::CompileTimeClassBuilder("System", "Object", "mscorlib.dll").Build(), {});
@@ -22,24 +26,26 @@ struct Receiver : Obj {
     // BNM already reserves sizeof(Receiver) for new class instances; this is
     // metadata/ABI consistency, not a proven out-of-bounds crash fix.
     BNM_CustomField(ticket, BNM::Defaults::Get<std::uint64_t>(), "ticket");
-    void Finish(Result value, int reason) {
+    // The service's delegate chain owns this receiver. Keep the request in
+    // that managed graph, including after scene teardown and late callbacks.
+    BNM_CustomField(retainedPlay, BNM::Defaults::Get<Obj*>(), "retainedPlay");
+    bool Finish(Result value, int reason) {
         const auto before = completion.Status();
         const bool accepted = completion.Complete(ticket, value, reason);
         LOG_INFO("CustomComponents/Pick3/HANDOFF_TRACE: phase=SERVICE_CALLBACK ticket=%llu activeTicket=%llu callbackResult=%d reason=%d statusBefore=%d accepted=%d statusAfter=%d",
             (unsigned long long)ticket, (unsigned long long)activeTicket,
             int(value), reason, int(before), int(accepted), int(completion.Status()));
+        return accepted;
     }
     void OnSuccess() {
         // Old managed service delegates may still fire; never publish telemetry
         // or alter completion for a retired selection ticket.
         if (!ticket || ticket != activeTicket) return;
-        if (networkObserver) networkObserver(true,0);
-        Finish(Result::Success, 0);
+        if (Finish(Result::Success, 0) && networkObserver) networkObserver(true,0);
     }
     void OnFailure(int reason) {
         if (!ticket || ticket != activeTicket) return;
-        if (networkObserver) networkObserver(false,reason);
-        Finish(Result::Failure, reason);
+        if (Finish(Result::Failure, reason) && networkObserver) networkObserver(false,reason);
     }
     BNM_CustomMethod(OnSuccess, false, BNM::Defaults::Get<void>(), "OnSuccess");
     BNM_CustomMethod(OnFailure, false, BNM::Defaults::Get<void>(), "OnFailure",
@@ -98,11 +104,15 @@ inline bool Initialize() {
         actionClass.IsValid() ? 1 : 0, failureActionClass.IsValid() ? 1 : 0);
     return ok;
 }
-inline bool Begin(Obj* target) {
+inline bool Begin(Obj* target,Obj* request=nullptr) {
     if (Status() != Result::Idle || !target) return false;
     service = Root(target);
     auto* receiver = reinterpret_cast<Receiver*>(Root(receiverClass.CreateNewInstance()));
     if (!service || !receiver) { Detach(); return false; }
+    if(request && !Core::ManagedRuntime::SetReference(receiver,
+        receiverClass.GetField("retainedPlay").cast<Obj*>(),request)) {
+        Detach();return false;
+    }
     activeTicket = completion.Begin();
     if (!activeTicket) { Detach(); return false; }
     receiver->ticket = activeTicket;

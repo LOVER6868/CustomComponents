@@ -1,3 +1,4 @@
+#include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 // CardView lifecycle coordinator and return presentation guard.
@@ -482,7 +483,7 @@ namespace CustomComponents::Core::CardViewLifecycleCoordinator {
                 LOG_ERR("CustomComponents/CardLife: method missing %s", label);
                 return false;
             }
-            BNM::BasicHook(method, hook, original);
+            CustomComponents::Core::Hooks::Install(method, hook, original);
             const bool ok = original != nullptr;
             CC_DIAG("CustomComponents/CardLife: hook %s = %d", label, (int)ok);
             return ok;

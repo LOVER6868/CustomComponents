@@ -1,3 +1,4 @@
+#include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 
@@ -63,8 +64,8 @@ namespace CustomComponents::GrantAbilityPresentation {
             return false;
         }
 
-        BNM::BasicHook(addSpecialAbilities, AddSpecialAbilitiesHook, originalAddSpecialAbilities);
-        BNM::BasicHook(getSpriteType, GetSpriteTypeHook, originalGetSpriteType);
+        CustomComponents::Core::Hooks::Install(addSpecialAbilities, AddSpecialAbilitiesHook, originalAddSpecialAbilities);
+        CustomComponents::Core::Hooks::Install(getSpriteType, GetSpriteTypeHook, originalGetSpriteType);
         if (!originalAddSpecialAbilities || !originalGetSpriteType) {
             LOG_ERR("CustomComponents/GrantAbility/Presentation: hooks add=%d sprite=%d", (int)(originalAddSpecialAbilities != nullptr), (int)(originalGetSpriteType != nullptr));
             return false;

@@ -1,26 +1,77 @@
-# Feature status
+# Feature catalog
 
-This is a **scope summary**, not a claim of universal regression coverage. Implementation details live in [source layout](SOURCE_LAYOUT.md) and source under `inc/`.
+These are public card-authoring features. Internal runtime carriers are implementation
+details. The [example catalog](../examples/README.md) links recipes for every area.
 
-| Area | Implemented behavior | Important qualification |
-| --- | --- | --- |
-| Abilities | Armor (19), Charge (20), Thrash (21), GrantAbility serialization and lifecycle | Ability-specific timing and Team-Up edge cases need explicit testing |
-| Deck identity | Persistent `EntityId` on main-deck `CardPoolEntry` across mulligan | Preserve stock card ownership and entry order |
-| Queries | `InDeckQuery`, `InDiscardPileQuery`, Guid-based zone queries, `DiscardedFromQuery` | `DiscardedFromQuery.Source` supports numeric `1`/`2` in the tested baseline; string aliases are not established |
-| Ordered targeting | Custom `ListPosition = 3` sort on deck/discard | Registered by `TargetScopeSupport` through the shared enum serializer |
-| Draw | `DrawCardFromSubsetInDeck` against real deck entries | Stock CardDatabase-backed subset queries are a distinct domain |
-| Discard / return | Deck/hand discards, discard pile removal, returns to hand/deck/lane | Repeated transitions and effect groups remain sensitive to lifecycle timing |
-| Triggers | Custom named triggers, global/targeted fire, discard and return triggers | Must preserve trigger eligibility and queue semantics |
-| Inspection | Discard pile shown through stock inspection UI | No custom Unity screen needed |
-| Presentation | Local/opponent hand-discard reconciliation, lane-card stat correction, off-board trigger animation guarding | Opponent stat correction worked in subsequent testing; one mid-match device crash was observed but not attributed; animation stalls remain under investigation |
-| Lifecycle | Guard against duplicate CardView creation and defer until safe retirement | Production coordinator is `core/CardViewLifecycleCoordinator.hpp`; the obsolete compatibility include was retired from the cleaned source |
+## Abilities
 
-## Regression scenarios
+| Feature | Purpose |
+| --- | --- |
+| Armor, grantable ID `19` | Grant or modify stock numeric Armor |
+| Charge, ID `20` | Control block-meter charge produced by a fighter's damage |
+| Thrash, ID `21` | Deal excess fighter damage to the hero opposing the damage source |
+| RandomKeyword, ID `22` | Grant an eligible keyword from a configurable pool |
+| Destroyable BoardAbility | Spend a hidden board ability through destruction targeting |
+| Grant/remove lifecycle | Add/Set operations, duration expiry and ability history |
 
-When modifying code affecting a row above, test at least: match startup on physical phone, both client viewpoints, discard from hand/deck, return to hand/deck/lane, lane → discard → lane, rapid repeat returns, stock played Trick reveal, stock buffs, and animation queue advancement.
+See [abilities](ABILITIES.md) and its linked references.
 
-See [known issues](KNOWN_ISSUES.md) before modifying anything in presentation or lifecycle code.
+## Selection and queries
 
-## Experimental deck positioning
+| Feature | Purpose |
+| --- | --- |
+| `PickFromThreeRandomTargets` | Offer up to three weighted physical candidates |
+| `PickFromThreeUniqueGuidTargets` | Offer distinct definitions while retaining a physical representative |
+| `PickFromThreeCardDatabase` | Choose a definition for a subset-based payout |
+| `AdditionalTargetSelectionType` | Override additional selection independently |
+| `AdditionalTargetFirst` | Choose an interactive additional target before primary PF3 |
+| `PickedFromThreeQuery` | Match the chosen GUID |
+| `PickedFromThreeEntityQuery` | Match the exact selected or produced physical card |
+| `InDeckQuery`, `InDiscardPileQuery` | Test physical zone membership |
+| `InDeckGuidQuery`, `InDiscardPileGuidQuery` | Match definitions whose GUID occurs in a zone |
+| `DiscardedFromQuery` | Distinguish custom hand and deck discards |
+| `ListPositionQuery` | Compare zero-based deck/discard position from either end |
+| `OpenLaneForCardQuery` | Find lanes for cards returned by a nested card query |
+| `CanBePlacedQuery` | Match cards that fit the current board |
+| `ListPosition` target sorting | Order physical targets by pool position |
 
-`MoveCardInDeckEffectDescriptor` changes the position of a targeted live deck card using `Mode` (`Add` / `Move`) and signed `Position`. See [reference](reference/move-card-in-deck.md). Runtime testing is pending.
+See [PickFromThree](PICKFROMTHREE.md) and [queries](QUERIES.md).
+
+## Card and zone effects
+
+| Descriptor | Purpose |
+| --- | --- |
+| `DiscardFromDeckEffectDescriptor` | Discard a physical deck card |
+| `DiscardFromHandEffectDescriptor` | Discard a physical hand card |
+| `RemoveFromDiscardPileEffectDescriptor` | Remove a current discard member |
+| `ReturnFromDiscardPileEffectDescriptor` | Return the original discarded card to hand |
+| `ReturnFromDiscardPileToDeckEffectDescriptor` | Return it to a deck position |
+| `ReturnFromDiscardPileToLaneEffectDescriptor` | Return a fighter or environment to a legal lane |
+| `MoveCardInDeckEffectDescriptor` | Reorder a deck card by offset or absolute position |
+| `DrawCardFromSubsetInDeckEffectDescriptor` | Tutor a deck card, with optional fallback and HeraldEntities |
+| `CreateCardInDeckFromSubsetEffectDescriptor` | Create copies of one sampled definition in a deck |
+| `CreateCardFromSubsetEffectDescriptor` extensions | Grant Team-Up/Aquatic and override front/back ordering |
+
+See [zone effects](ZONE_EFFECTS.md).
+
+## Triggers
+
+`CustomTrigger` listens for a named event. `FireCustomTriggerEffectDescriptor`
+broadcasts it; `FireTriggerEffectDescriptor` invokes a selected built-in or named
+trigger. `DiscardOutsidePlayTrigger`, `ReturnedFromDiscardPileTrigger` and
+`PickFromThreeTrigger` connect discard, return and selection to card effects.
+See [trigger examples](../examples/triggers/README.md).
+
+## Presentation and shared services
+
+- Discard inspection presents the physical card's current stats.
+- Custom discards receive the module's `discarded` herald origin.
+- Optional HeraldModifiers can append its `Gained …` summary.
+- Card-frame reconciliation updates views after animation/history work.
+- StatIcons provides configurable attack/health icons for registered abilities.
+- FrameIconRegistry provides a C++ extension point for other icon providers.
+- DeckMaterializer maintains physical identities for main-deck entries.
+- Shared hook, queue, model, pool and subset services support new components.
+
+See [presentation](PRESENTATION.md) and [architecture](ARCHITECTURE.md). Tradeable
+and StartingDeck are not in the current public feature set.
