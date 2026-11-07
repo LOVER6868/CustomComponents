@@ -2,6 +2,7 @@
 #pragma once
 #include "engine/MatchAccess.hpp"
 #include "core/HookRegistry.hpp"
+#include "engine/TriggerEligibility.hpp"
 namespace CustomComponents::Abilities::BoardAbility {
 using Obj=Engine::Match::Obj;
 inline constexpr const char* spent="sprig:spent";
@@ -25,7 +26,7 @@ static bool Validate(Obj* self,Obj* effectEntity,Obj* context,const void* method
     Obj* link=Engine::EntityAccess::Component(effectEntity,"EffectEntity");
     Obj* model=context && modelField.IsValid()?modelField[context].Get():nullptr;
     Obj* card=link && source.IsValid()?Engine::EntityAccess::Find(model,source[link].Get()):nullptr;
-    return BoardPolicy::MayTrigger(true,Engine::EntityAccess::Component(card,"BoardAbility")!=nullptr,IsSpent(card));
+    return BoardPolicy::MayTrigger(true,Engine::EntityAccess::Component(card,"BoardAbility")!=nullptr,IsSpent(card)) && Engine::TriggerEligibility::Allows(effectEntity,context);
 }
 inline bool Initialize() {
     auto validate=BNM::Class("PvZCards.Core.Systems.Utilities","TriggerValidator").GetMethod("ShouldTriggerEffect",2);

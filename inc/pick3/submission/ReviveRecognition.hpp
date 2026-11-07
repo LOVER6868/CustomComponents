@@ -138,7 +138,7 @@ inline bool ComputeGenericPick3ReviveBurst(int cardId) {
             else if(!std::strcmp(n,"EffectEntity"))owner=c;
             else if(!std::strcmp(n,"PrimaryTargetFilter"))primary=c;
             else if(!std::strcmp(n,"SecondaryTargetFilter"))secondary=true;
-            else if(!std::strcmp(n,"ReturnFromDiscardPileToLaneEffectDescriptor"))revive=true;
+            else if((!std::strcmp(n,"ReturnFromDiscardPileToLaneEffectDescriptor") || !std::strcmp(n,"PlayFromDeckToLaneEffectDescriptor")))revive=true;
         }
         if(!play || !owner || reviveEffectOwnerSourceField[owner].Get()!=cardId)continue;
         firstId=id;

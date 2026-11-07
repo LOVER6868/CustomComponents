@@ -6,16 +6,17 @@ must be adapted to your project.
 
 | Category | Files | Contents |
 | --- | --- | --- |
-| [Abilities](abilities/README.md) | 23 | Innate abilities, grants, removal, durations, and destroyable board abilities. |
+| [Abilities](abilities/README.md) | 64 | Innate abilities, grants, removal, durations, and destroyable board abilities. |
 | [Configuration](configuration/README.md) | 1 | INI examples for features configured outside card JSON. |
 | [Deck ordering](deck-order/README.md) | 5 | Signed offsets and absolute positions for a physical deck card. |
 | [Deck subset drawing](draw-effects/README.md) | 6 | Strict/fallback tutors, live-entity queries, and delivered-card heralds. |
 | [PickFromThree](pick-from-three/README.md) | 32 | Selection modes, physical representatives, additional targets, and complete creation setups. |
-| [Queries](queries/README.md) | 31 | Physical identity, GUID membership, discard provenance, ordered pools, and placement. |
-| [Generated state reference](reference/README.md) | 1 | Runtime marker shapes for understanding queries; do not author these as gameplay actions. |
+| [Play requirements](play-requirements/README.md) | 7 | Per-ability trick gates, Level predicates, and the stock unconditional Unplayable marker. |
+| [Queries](queries/README.md) | 38 | Physical identity, GUID membership, discard provenance, ordered pools, and placement. |
+| [Generated state reference](reference/README.md) | 3 | Runtime marker shapes for understanding queries; do not author these as gameplay actions. |
 | [Card templates and variants](templates/README.md) | 10 | Complete demonstration cards and alternate setups. Replace demonstration GUIDs and prefab metadata before use. |
 | [Triggers](triggers/README.md) | 21 | Named events, built-in trigger firing, discard/return listeners, and picked-card effects. |
-| [Zone effects](zone-effects/README.md) | 24 | Discard, removal, return, revive, and subset-creation options. |
+| [Zone effects](zone-effects/README.md) | 27 | Discard, removal, return, revive, and subset-creation options. |
 
 ## Where a fragment belongs
 

@@ -37,7 +37,7 @@
         if constexpr (false) CC_DIAG("CustomComponents/LANE-DIAG: DTE before TypeName descriptor=%p", descriptor);
         const std::string descriptorType = TypeName(descriptor);
         if constexpr (false) CC_DIAG("CustomComponents/LANE-DIAG: DTE type=%s", descriptorType.c_str());
-        if (descriptorType != "ReturnFromDiscardPileToLaneEffectDescriptor") {
+        if (descriptorType != "ReturnFromDiscardPileToLaneEffectDescriptor" && descriptorType != "PlayFromDeckToLaneEffectDescriptor") {
             if constexpr (false) CC_DIAG("CustomComponents/LANE-DIAG: DTE stock delegate ENTER");
             Obj* stock = originalMoveLaneDescriptorToEffect(self, instances, effectEntity, method);
             if constexpr (false) CC_DIAG("CustomComponents/LANE-DIAG: DTE stock delegate EXIT runtime=%p", stock);

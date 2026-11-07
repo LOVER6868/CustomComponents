@@ -58,3 +58,17 @@ produce no card. Do not enable the old standalone ShuffleRandomCard module too.
 Add is an offset; Move is an absolute index, with `-1` at the bottom. Results clamp
 to deck bounds. Identity and modifiers are retained. See
 [deck-order examples](../examples/deck-order/README.md).
+
+## Play an existing deck card into a lane
+
+`PlayFromDeckToLaneEffectDescriptor` takes the physical deck card as its primary
+target and the lane as its secondary target. It supports fighters and environments,
+uses PF3's existing selection/order handling, and costs no additional hand-play
+sun. Authored filters decide which deck cards can be offered; placement checks
+still enforce physical ownership, Aquatic, capacity and Team-Up.
+
+The original entity and its modifiers are retained. Successful placement publishes
+PlayTrigger once and suppresses origin MoveTrigger delivery. It does not draw,
+create a copy, or publish ReturnedFromDiscardPileTrigger. A failed transfer restores
+the card's deck position when recovery can safely do so. Empty eligible sets do
+nothing. See the [zone examples](../examples/zone-effects/README.md).

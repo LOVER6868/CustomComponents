@@ -1,0 +1,141 @@
+{
+  "$type": "PvZCards.Engine.Components.EffectEntitiesDescriptor, EngineLib",
+  "$data": {
+    "entities": [
+      {
+        "components": [
+          {
+            "$type": "PvZCards.Engine.Components.EffectEntityGrouping, EngineLib",
+            "$data": {
+              "AbilityGroupId": 0
+            }
+          },
+          {
+            "$type": "PvZCards.Engine.Components.PlayTrigger, EngineLib",
+            "$data": {}
+          },
+          {
+            "$type": "PvZCards.Engine.Components.TriggerTargetFilter, EngineLib",
+            "$data": {
+              "Query": {
+                "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib",
+                "$data": {}
+              }
+            }
+          },
+          {
+            "$type": "PvZCards.Engine.Components.PlayRequirement, EngineLib",
+            "$data": {
+              "Query": {
+                "$type": "PvZCards.Engine.Queries.LeveledQuery, EngineLib",
+                "$data": {
+                  "Value": 1,
+                  "ComparisonOperator": "Equal"
+                }
+              }
+            }
+          },
+          {
+            "$type": "PvZCards.Engine.Components.PrimaryTargetFilter, EngineLib",
+            "$data": {
+              "SelectionType": "All",
+              "NumTargets": 0,
+              "Query": {
+                "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib",
+                "$data": {
+                  "queries": [
+                    {
+                      "$type": "PvZCards.Engine.Queries.HasComponentQuery, EngineLib",
+                      "$data": {
+                        "ComponentType": "PvZCards.Engine.Components.Plants, EngineLib"
+                      }
+                    },
+                    {
+                      "$type": "PvZCards.Engine.Queries.HasComponentQuery, EngineLib",
+                      "$data": {
+                        "ComponentType": "PvZCards.Engine.Components.Player, EngineLib"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "$type": "PvZCards.Engine.Components.DrawCardEffectDescriptor, EngineLib",
+            "$data": {
+              "DrawAmount": 1
+            }
+          }
+        ]
+      },
+      {
+        "components": [
+          {
+            "$type": "PvZCards.Engine.Components.EffectEntityGrouping, EngineLib",
+            "$data": {
+              "AbilityGroupId": 1
+            }
+          },
+          {
+            "$type": "PvZCards.Engine.Components.PlayTrigger, EngineLib",
+            "$data": {}
+          },
+          {
+            "$type": "PvZCards.Engine.Components.TriggerTargetFilter, EngineLib",
+            "$data": {
+              "Query": {
+                "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib",
+                "$data": {}
+              }
+            }
+          },
+          {
+            "$type": "PvZCards.Engine.Components.PlayRequirement, EngineLib",
+            "$data": {
+              "Query": {
+                "$type": "PvZCards.Engine.Queries.LeveledQuery, EngineLib",
+                "$data": {
+                  "Value": 3,
+                  "ComparisonOperator": "Equal"
+                }
+              }
+            }
+          },
+          {
+            "$type": "PvZCards.Engine.Components.PrimaryTargetFilter, EngineLib",
+            "$data": {
+              "SelectionType": "All",
+              "NumTargets": 0,
+              "Query": {
+                "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib",
+                "$data": {
+                  "queries": [
+                    {
+                      "$type": "PvZCards.Engine.Queries.HasComponentQuery, EngineLib",
+                      "$data": {
+                        "ComponentType": "PvZCards.Engine.Components.Plants, EngineLib"
+                      }
+                    },
+                    {
+                      "$type": "PvZCards.Engine.Queries.HasComponentQuery, EngineLib",
+                      "$data": {
+                        "ComponentType": "PvZCards.Engine.Components.Player, EngineLib"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "$type": "PvZCards.Engine.Components.DrawCardEffectDescriptor, EngineLib",
+            "$data": {
+              "DrawAmount": 3
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,3 +1,4 @@
+#include "effects/PlayFromDeckToLaneEffectDescriptor.hpp"
 #include "engine/BoardPlacement.hpp"
 #include "engine/DeckCreation.hpp"
 #include "engine/EntityAccess.hpp"
@@ -161,6 +162,7 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
     #include "zones/detail/LegacyReturnProcessHook.inl"
     #include "zones/detail/DiscardToDeck.inl"
     #include "zones/detail/DiscardRevivePairLegality.inl"
+    #include "zones/detail/DeckLaneSource.inl"
     #include "zones/detail/ReturnToLaneTargeting.inl"
     #include "zones/detail/DiscardToLane.inl"
     #include "zones/detail/HandToDiscard.inl"
@@ -173,6 +175,11 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
         return CheckDiscardRevivePair(model, card, lane, player).legal;
     }
 
+    inline bool Pick3CanTransferPhysicalPair(Obj* model,int effect,int card,int lane,int player) {
+        if(FindComponent(FindEntity(model,effect),"PlayFromDeckToLaneEffectDescriptor"))return CheckDeckLanePair(model,card,lane,player);
+        return Pick3CanRevivePhysicalPair(model,card,lane,player);
+    }
+
     inline bool RegisterTypes() {
         struct Registration {
             const char* name;
@@ -180,6 +187,7 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
         };
 
         const Registration registrations[] = {
+            {"PlayFromDeckToLaneEffectDescriptor","MoveCardToLanesEffectDescriptor"},
             {
                 "ReturnFromDiscardPileEffectDescriptor",
                 "ReturnCardToPlayersDeckEffectDescriptor"

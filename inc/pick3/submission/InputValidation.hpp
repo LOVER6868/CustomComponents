@@ -1,5 +1,7 @@
 #include "diagnostics/DiagnosticLogging.hpp"
 #pragma once
+#include "engine/PlayValidation.hpp"
+#include "engine/PlayServices.hpp"
 // Private implementation module. Include PickFromThreeSubmission.hpp, not this file.
 namespace CustomComponents::Pick3::Submission {
 using Obj = BNM::IL2CPP::Il2CppObject;
@@ -134,6 +136,9 @@ inline thread_local int pick3PrimaryCaptureCard = -1;
 
 // Registered by the custom discard-zone system after its field bindings are
 // initialized. Avoid importing its header into submission (cyclic dependency).
+using Pick3TransferPairCheck=bool(*)(Obj*,int,int,int,int);
+inline Pick3TransferPairCheck pick3TransferPairCheck=nullptr;
+inline void RegisterPick3TransferPairCheck(Pick3TransferPairCheck fn){pick3TransferPairCheck=fn;}
 using Pick3PhysicalPairCheck = bool(*)(Obj*, int, int, int);
 inline Pick3PhysicalPairCheck pick3PhysicalPairCheck = nullptr;
 inline void RegisterPick3PhysicalPairCheck(Pick3PhysicalPairCheck fn) {

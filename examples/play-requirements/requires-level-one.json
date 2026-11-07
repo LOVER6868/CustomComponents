@@ -1,0 +1,12 @@
+{
+  "$type": "PvZCards.Engine.Components.PlayRequirement, EngineLib",
+  "$data": {
+    "Query": {
+      "$type": "PvZCards.Engine.Queries.LeveledQuery, EngineLib",
+      "$data": {
+        "Value": 1,
+        "ComparisonOperator": "Equal"
+      }
+    }
+  }
+}

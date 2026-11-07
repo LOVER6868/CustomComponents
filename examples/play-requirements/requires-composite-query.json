@@ -1,0 +1,23 @@
+{
+  "$type": "PvZCards.Engine.Components.PlayRequirement, EngineLib",
+  "$data": {
+    "Query": {
+      "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib",
+      "$data": {
+        "queries": [
+          {
+            "$type": "PvZCards.Engine.Queries.InHandQuery, EngineLib",
+            "$data": {}
+          },
+          {
+            "$type": "PvZCards.Engine.Queries.LeveledQuery, EngineLib",
+            "$data": {
+              "Value": 0,
+              "ComparisonOperator": "Greater"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

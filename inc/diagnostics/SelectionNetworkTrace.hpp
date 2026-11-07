@@ -1,3 +1,4 @@
+#include "engine/PlayTransport.hpp"
 #include "diagnostics/DiagnosticLogging.hpp"
 #include "core/HookRegistry.hpp"
 #pragma once
@@ -635,9 +636,12 @@ inline void Initialize() {
     auto pOk=server.GetMethod("HandlePredictionSuccess",0),pFail=server.GetMethod("HandlePredictionFailure",1);
     auto sOk=server.GetMethod("HandleServerSuccess",0),sFail=server.GetMethod("HandleServerFailure",0);
     auto lOk=server.GetMethod("HandleLocalServiceSuccess",0),lFail=server.GetMethod("HandleLocalServiceFailure",1);
-    if(a.IsValid()) CustomComponents::Core::Hooks::Install(a,RemoteProcess,originalRemoteProcess);
+    originalRemoteProcess=Engine::PlayTransport::originalRemote;
+    Engine::PlayTransport::beforeSubmit.Add([](Obj* play){PlayStage("REMOTE_PROCESS_ENTER",play);});
     if(b.IsValid()) CustomComponents::Core::Hooks::Install(b,Decide,originalDecide);
-    if(c.IsValid()) CustomComponents::Core::Hooks::Install(c,Serialize,originalSerialize);
+    originalSerialize=Engine::PlayTransport::originalSerialize;
+    Engine::PlayTransport::beforeSerialize.Add([](Obj* play){PlayStage("SERIALIZE_ENTER",play);});
+    Engine::PlayTransport::afterSerialize.Add([](Obj* play,Obj*){PlayStage("SERIALIZE_RETURN",play);});
     if(cs.IsValid()) CustomComponents::Core::Hooks::Install(cs,ClientSimulate,originalClientSimulate);
     if(ss.IsValid()) CustomComponents::Core::Hooks::Install(ss,ServerSimulate,originalServerSimulate);
     if(cOk.IsValid()) CustomComponents::Core::Hooks::Install(cOk,ClientSuccess,originalClientSuccess);

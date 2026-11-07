@@ -1,3 +1,4 @@
+#include "engine/EffectGuards.hpp"
 #include "core/HookRegistry.hpp"
 #pragma once
 #include <BNM/Class.hpp>
@@ -282,7 +283,10 @@ namespace CustomComponents::Systems {
                 static_cast<BNM::IL2CPP::Il2CppObject*>(effect));
             {CustomComponents::Core::Performance::Scope stock(CustomComponents::Core::Performance::Area::StockEffectRouter,effectName,
                 CustomComponents::Pick3::TransactionRuntime::IntAt(runtimeEffect,0x30),CustomComponents::Pick3::TransactionRuntime::IntAt(runtimeEffect,0x28));
-             originalEffectRouterProcess(self, effect, method);}
+             if(CustomComponents::Engine::EffectGuards::Allows(static_cast<BNM::IL2CPP::Il2CppObject*>(self),runtimeEffect)) {
+                 const CustomComponents::Engine::EffectGuards::Context context{static_cast<BNM::IL2CPP::Il2CppObject*>(self),runtimeEffect};
+                 CustomComponents::Engine::EffectGuards::ProcessingScope lifecycle(context);if(CustomComponents::Engine::EffectGuards::Prepare(context))originalEffectRouterProcess(self,effect,method);
+             }}
             CustomComponents::Pick3::TransactionRuntime::CompleteAutomaticSelection(selectionScope.link,
                 static_cast<BNM::IL2CPP::Il2CppObject*>(effect));
 

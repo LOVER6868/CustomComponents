@@ -7,6 +7,6 @@ bool ShouldSuppress(Model model,int listenerId,int originId,FindEntity find,HasC
     const auto listener=find(model,listenerId);
     if(!listener || !has(listener,"MoveTrigger")) return false;
     const auto origin=find(model,originId);
-    return origin && has(origin,"ReturnFromDiscardPileToLaneEffectDescriptor");
+    return origin && (has(origin,"ReturnFromDiscardPileToLaneEffectDescriptor") || has(origin,"PlayFromDeckToLaneEffectDescriptor"));
 }
 }

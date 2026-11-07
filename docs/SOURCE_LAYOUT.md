@@ -8,12 +8,14 @@
 | `inc/abilities/` | Grants, expiry and combat behavior |
 | `inc/effects/` | Descriptors, runtime effects and creation extensions |
 | `inc/zones/` | Discard, return, transfer and deck materialization |
+| `inc/level/` | Level data, command metadata, payment, gesture and presentation adapters |
 | `inc/queries/` | Zone, identity, position and placement predicates |
 | `inc/triggers/` | Trigger types, dispatch and return-origin filters |
 | `inc/pick3/` | Offers, transactions, routing and creation provenance |
 | `inc/pick3/submission/` | Private stock-handoff implementation pieces |
 | `inc/presentation/` | Picker, inspection, frames, heralds and icons |
 | `inc/engine/` | Shared stock adapters, queues and subset services |
+| `inc/gameplay/PlayRequirement.hpp` | Per-ability trick requirements and committed eligibility |
 | `inc/core/` | Registration, ownership, lifetime and scheduling |
 | `inc/diagnostics/` | Optional trace support |
 | `src/` | Included generated assets and their sources |

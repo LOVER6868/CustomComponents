@@ -63,7 +63,7 @@ inline void ReviveStripCastingPrimaryTrial(Obj* system,Obj* play,int location) {
             Obj* c=comps->items->m_Items[j];if(!c)continue;
             const auto* klass=BNM::Class(c).GetClass();const char* n=klass?klass->name:nullptr;
             if(!n)continue;
-            if(!std::strcmp(n,"ReturnFromDiscardPileToLaneEffectDescriptor"))revive=true;
+            if((!std::strcmp(n,"ReturnFromDiscardPileToLaneEffectDescriptor") || !std::strcmp(n,"PlayFromDeckToLaneEffectDescriptor")))revive=true;
             else if(!std::strcmp(n,"PrimaryTargetFilter"))primaryFilter=true;
             else if(!std::strcmp(n,"SecondaryTargetFilter"))secondaryFilter=true;
             else if(!std::strcmp(n,"PrimaryTargets"))primary=c;
@@ -209,7 +209,7 @@ inline void ReviveSetupSnapshot(const char* stage,Obj* system,Obj* play,int loca
             const char* name=cl?cl->name:nullptr; if(!name)continue;
             if(!std::strcmp(name,"PrimaryTargetFilter"))primary=true;
             if(!std::strcmp(name,"SecondaryTargetFilter"))secondary=true;
-            if(!std::strcmp(name,"ReturnFromDiscardPileToLaneEffectDescriptor"))revive=true;
+            if((!std::strcmp(name,"ReturnFromDiscardPileToLaneEffectDescriptor") || !std::strcmp(name,"PlayFromDeckToLaneEffectDescriptor")))revive=true;
             if(!std::strcmp(name,"PrimaryTargets") || !std::strcmp(name,"SecondaryTargets")) {
                 auto idsField=BNM::Class(c).GetField("TargetEntityIds").cast<IntList*>();
                 auto* ids=idsField.IsValid()?idsField[c].Get():nullptr;

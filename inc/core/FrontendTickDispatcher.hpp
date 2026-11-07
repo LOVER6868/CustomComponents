@@ -10,6 +10,7 @@
 // Keep callbacks feature-owned: the dispatcher never manipulates game views
 // or calls into gameplay code itself. Install only once, on module startup.
 #include <BNM/Class.hpp>
+#include "core/Observers.hpp"
 #include <BNM/Method.hpp>
 #include "log.h"
 
@@ -20,6 +21,7 @@ namespace CustomComponents::Core::FrontendTickDispatcher {
     inline UnityTickFn originalEventSystemUpdate = nullptr;
     inline FrontendTask reconcileHandDiscards = nullptr;
     inline FrontendTask processDeferredCardViews = nullptr;
+    inline Core::Observers<> additionalPresentationTicks;
     inline FrontendTask presentationTick = nullptr; // Presentation observer; runs after stock input Update
 
     inline bool IsAvailable() {
@@ -33,6 +35,7 @@ namespace CustomComponents::Core::FrontendTickDispatcher {
         if (processDeferredCardViews) processDeferredCardViews();
         originalEventSystemUpdate(self, method);
         if (presentationTick) presentationTick();
+        additionalPresentationTicks.Notify();
     }
 
     inline bool RegisterPresentationTick(FrontendTask task) {

@@ -1,3 +1,5 @@
+#include "engine/RouterContext.hpp"
+#include "engine/EffectGuards.hpp"
 #include "diagnostics/DiagnosticLogging.hpp"
 #include "core/HookRegistry.hpp"
 #include "core/Performance.hpp"
@@ -14,30 +16,14 @@
 namespace CustomComponents::Pick3::TransactionRuntime {
 using Obj=BNM::IL2CPP::Il2CppObject;
 namespace GC=CustomComponents::Core::SceneViewContext;
-struct RouterRoot { std::shared_ptr<Core::ManagedRuntime::Root> reference; Transaction::Model model; };
-inline std::mutex rootsLock;
-inline std::vector<RouterRoot> routers;
+using Engine::RouterContext::rootsLock;
+using Engine::RouterContext::routers;
+using Engine::RouterContext::RegisterRouter;
+using Engine::RouterContext::RouterModel;
 inline BNM::Field<Obj*> queryModel;
 inline BNM::Class modifySunCostEffectClass;
 inline bool pipelineReady=false;
 inline Transaction::Model ModelOf(Obj* model,bool create=false) { return Core::ModelRegistry::Identify(model,create); }
-inline void RegisterRouter(Obj* router,Obj* model) {
-    const auto token=ModelOf(model,true);
-    if(!router || !token) return;
-    std::lock_guard<std::mutex> guard(rootsLock);
-    for(auto it=routers.begin();it!=routers.end();) {
-        auto* object=it->reference->Get();
-        if(!object) it=routers.erase(it);
-        else { if(object==router) {it->model=token;return;} ++it; }
-    }
-    auto reference=std::make_shared<Core::ManagedRuntime::Root>(router,true);
-    if(reference->Get()) routers.push_back({reference,token});
-}
-inline Transaction::Model RouterModel(Obj* router) {
-    std::lock_guard<std::mutex> guard(rootsLock);
-    for(const auto& entry:routers) if(entry.reference->Get()==router) return entry.model;
-    return 0;
-}
 inline int IntAt(Obj* object,std::size_t offset) {
     return object?*reinterpret_cast<const int*>(reinterpret_cast<const std::uint8_t*>(object)+offset):-1;
 }
@@ -415,7 +401,7 @@ static void RouterHook(void* self,void* effect,const void* method) {
     Core::Performance::Scope timing(Core::Performance::Area::EffectRouter,runtimeEffect && runtimeEffect->klass?runtimeEffect->klass->name:"none",IntAt(runtimeEffect,0x30),IntAt(runtimeEffect,0x28));
     ScopedRouter scope(router,runtimeEffect);
     AuditBoundCostTarget(scope.model,runtimeEffect);
-    {Core::Performance::Scope stock(Core::Performance::Area::StockEffectRouter,runtimeEffect && runtimeEffect->klass?runtimeEffect->klass->name:"none",IntAt(runtimeEffect,0x30),IntAt(runtimeEffect,0x28));originalRouter(self,effect,method);}
+    {Core::Performance::Scope stock(Core::Performance::Area::StockEffectRouter,runtimeEffect && runtimeEffect->klass?runtimeEffect->klass->name:"none",IntAt(runtimeEffect,0x30),IntAt(runtimeEffect,0x28));if(Engine::EffectGuards::Allows(router,runtimeEffect)){const Engine::EffectGuards::Context context{router,runtimeEffect};Engine::EffectGuards::ProcessingScope lifecycle(context);if(Engine::EffectGuards::Prepare(context))originalRouter(self,effect,method);}}
     CompleteAutomaticSelection(scope.link,runtimeEffect);
 }
 inline bool Initialize() {

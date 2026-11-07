@@ -1,11 +1,21 @@
 #include "diagnostics/DiagnosticLogging.hpp"
 #pragma once
+#include "engine/HandPlayability.hpp"
 // Private implementation module. Include PickFromThreeSubmission.hpp, not this file.
 namespace CustomComponents::Pick3::Submission {
 inline bool Initialize(bool request, bool pve, bool pvp, int thresholdMs,
                        bool useInjectionResolver = true, bool syncPveCompletion = true,
                        bool prePlayLifecycleTrace = false) {
     if (!request) return true;
+    Engine::PlayValidation::deferPrimaryQuery=[](Obj* filter){return AdditionalSelection::Get(filter).first;};
+    Engine::HandPlayability::beforeRefresh.Add([](int card){
+        // Only local, in-hand candidate hints are invalidated. Committed
+        // selection transactions and service proofs keep their own lifetime.
+        if(deferredValidatedPlay.card==card)deferredValidatedPlay={};
+        if(deferredPrimaryCards.card==card)deferredPrimaryCards={};
+        if(stockSoleInitialPrimary.card==card)stockSoleInitialPrimary={};
+        if(card>=0){auto& zone=deferredInitialZones[static_cast<unsigned>(card)%32];if(zone.card==card)zone={};}
+    });
     if (!Core::SceneViewContext::newGCHandle || !Core::SceneViewContext::getGCHandle || !Core::SceneViewContext::freeGCHandle) {
         LOG_ERR("CustomComponents/Pick3/SUBMIT: SETUP missing GC handle API");
         return false;
@@ -250,7 +260,7 @@ inline bool Initialize(bool request, bool pve, bool pvp, int thresholdMs,
     CC_SELECTION_DIAG("CustomComponents/Pick3/PICK_FROM_THREE_ELIGIBILITY: phase=SETUP hasAnyTargets=%d observerOnly=1", originalTrickHasAnyTargets ? 1 : 0);
     // This stock method is 56 bytes long, unlike the unsafe 8-byte cache
     // getter. Preserve the precise PickFromThree metadata observer.
-    const auto firstEffectMethod = BNM::Class("PvZCards.Core.Utilities", "EffectEntityUtils").GetMethod("GetFirstOnPlayTriggeredAndTargetedEffectEntity", 1);
+    const auto firstEffectMethod = BNM::Class("PvZCards.Core.Utilities", "EffectEntityUtils").GetMethod("GetFirstOnPlayTriggeredAndTargetedEffectEntity", {BNM::Class("System","Int32").GetCompileTimeClass()});
     if (firstEffectMethod.IsValid()) CustomComponents::Core::Hooks::Install(firstEffectMethod, FirstTargetedEffectObserved, originalFirstTargetedEffect);
     CC_SELECTION_DIAG("CustomComponents/Pick3/RETURN_TO_LANE_METADATA: phase=SETUP hook=%d",originalFirstTargetedEffect?1:0);
     const auto targetingMethod = BNM::Class("PvZCards.Core.Utilities", "OneTimeEffectValidator").GetMethod("IsTargetingValid", 3);
@@ -362,7 +372,7 @@ inline bool Initialize(bool request, bool pve, bool pvp, int thresholdMs,
     const auto localPlayMethod = BNM::Class("PvZCards.Core.Services", "LocalPlayCardService").GetMethod("Process", 1);
     if (trickSuccess.IsValid()) CustomComponents::Core::Hooks::Install(trickSuccess, TrickPlaySuccess, originalTrickCommandSuccess);
     if (trickFailure.IsValid()) CustomComponents::Core::Hooks::Install(trickFailure, TrickPlayFailure, originalTrickCommandFailure);
-    if (localPlayMethod.IsValid()) CustomComponents::Core::Hooks::Install(localPlayMethod, TrickLocalPlayProcess, originalTrickLocalProcess);
+    if (localPlayMethod.IsValid()){originalTrickLocalProcess=Engine::PlayServices::originalLocal;Engine::PlayServices::observer=TrickLocalPlayProcess;}
     CC_SELECTION_DIAG("CustomComponents/Pick3/TRICK_ACCEPT: SETUP commandSuccess=%d commandFailure=%d localProcess=%d readOnly=1 focus=699,712,713,27", originalTrickCommandSuccess?1:0, originalTrickCommandFailure?1:0, originalTrickLocalProcess?1:0);
     CustomComponents::Core::Hooks::Install(playCardExecute, PlayCardExecute, originalPlayCardExecute);
     // Install the action hook before allowing the original Execute to run.

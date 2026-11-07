@@ -115,6 +115,9 @@ struct Pick3InitialEffectSnapshot {
 };
 inline Pick3InitialEffectSnapshot ResolvePick3InitialEffectOnModel(Obj* model, int cardId) {
     Pick3InitialEffectSnapshot result;
+    const auto selected=Engine::PlayValidation::current;
+    const bool scoped=selected.model==model && selected.card==cardId && selected.resolved;
+    if(scoped && selected.targeted && !selected.ability)return result;
     if (!model || cardId < 0 || !trickEntitiesField.IsValid() ||
         !trickEntityIdField.IsValid() || !reviveEffectOwnerSourceField.IsValid()) return result;
     auto* entities = trickEntitiesField[model].Get();
@@ -123,6 +126,7 @@ inline Pick3InitialEffectSnapshot ResolvePick3InitialEffectOnModel(Obj* model, i
     for (int i = 0; i < entities->size; ++i) {
         Obj* entity = entities->items->m_Items[i];
         if (!entity) continue;
+        if(scoped && entity!=selected.ability)continue;
         const int id = trickEntityIdField[entity].Get();
         if (id < 0 || (result.effectId >= 0 && id >= result.effectId)) continue;
         auto componentField = BNM::Class(entity).GetField("Components")
@@ -309,8 +313,7 @@ inline bool Pick3VerifyCapturedRevivePair(Obj* play, int* foundCard, int* foundL
             // use the same validation model and effect identity.
             // Test physical capacity (including Team-Up) first, but never
             // mistake it for acceptance by a complex stock lane query.
-            if (!pick3PhysicalPairCheck(pick3CurrentValidationModel,
-                                        primary, laneId, player)) continue;
+            if (pick3TransferPairCheck ? !pick3TransferPairCheck(pick3CurrentValidationModel,first.effectId,primary,laneId,player) : !pick3PhysicalPairCheck(pick3CurrentValidationModel,primary,laneId,player)) continue;
             const auto decision = plainLaneQuery
                 ? Pick3SecondaryDecision::Allow
                 : pick3SecondaryFilterEvaluator(
@@ -403,6 +406,7 @@ inline bool TrickValidateObserved(const char* type, TrickValidateFn original, Ob
         const int scopedCard = scopedService ? trickPlayCardIdField[play].Get() : trickValidationCard;
         pick3CurrentValidationModel = pick3OneTimeValidatorModelField[self].Get();
         pick3CurrentValidationCard = scopedCard;
+        Engine::PlayValidation::Prime(self);
         const auto firstEffect = ResolvePick3InitialEffectOnModel(
             pick3CurrentValidationModel, scopedCard);
         // Establish exact effect ownership before the stock target utility
@@ -430,6 +434,7 @@ inline bool TrickValidateObserved(const char* type, TrickValidateFn original, Ob
                      trickValidationCard, trickValidationGuid, self,
                      pick3CurrentValidationModel, pick3CurrentValidationModel ? 1 : 0);
     }
+    if(!oneTimeScope && type && !std::strcmp(type,"OneTimeEffect"))Engine::PlayValidation::Prime(self);
     const bool result = original ? original(self, play, errors, method) : false;
     if (oneTimeScope && scopedCandidate && result &&
         pick3CurrentValidationModel && pick3PrimaryCaptureEffect>=0 &&
@@ -863,7 +868,11 @@ inline bool TrickIsTargetingValidTrace(Obj* self, Obj* valid, Obj* selected, Obj
     return result;
 }
 inline bool TrickCompositeValidate(Obj* a, Obj* b, Obj* c, const void* m) { return TrickValidateObserved("Composite", originalTrickCompositeValidate, a,b,c,m); }
-inline bool TrickOneTimeValidate(Obj* a, Obj* b, Obj* c, const void* m) { return TrickValidateObserved("OneTimeEffect", originalTrickOneTimeValidate, a,b,c,m); }
+inline bool TrickOneTimeValidate(Obj* a, Obj* b, Obj* c, const void* m) {
+    auto field=pick3OneTimeValidatorModelField;
+    Engine::PlayValidation::Scope scope(a && field.IsValid()?field[a].Get():nullptr,b);
+    return Core::Validation::AfterNative(TrickValidateObserved("OneTimeEffect", originalTrickOneTimeValidate, a,b,c,m),[]{return Engine::PlayValidation::Allows();});
+}
 inline bool TrickNullValidate(Obj* a, Obj* b, Obj* c, const void* m) { return TrickValidateObserved("Null", originalTrickNullValidate, a,b,c,m); }
 inline bool TrickInHandValidate(Obj* a, Obj* b, Obj* c, const void* m) { return TrickValidateObserved("InHand", originalTrickInHandValidate, a,b,c,m); }
 inline bool TrickFighterValidate(Obj* a, Obj* b, Obj* c, const void* m) {

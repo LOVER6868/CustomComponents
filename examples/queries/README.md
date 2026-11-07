@@ -19,6 +19,12 @@ See the [insertion guide](../README.md) before copying a fragment.
 | [in-discard-pile-guid-query.json](in-discard-pile-guid-query.json) | Component | In discard pile guid query (`DrawCardFromSubsetEffectDescriptor`). |
 | [in-discard-pile-guid.json](in-discard-pile-guid.json) | Query | In discard pile guid (`InDiscardPileGuidQuery`). |
 | [in-discard-pile.json](in-discard-pile.json) | Query | In discard pile (`InDiscardPileQuery`). |
+| [leveled-equal.json](leveled-equal.json) | Query | Leveled equal (`LeveledQuery`). |
+| [leveled-greater-or-equal.json](leveled-greater-or-equal.json) | Query | Leveled greater or equal (`LeveledQuery`). |
+| [leveled-greater.json](leveled-greater.json) | Query | Leveled greater (`LeveledQuery`). |
+| [leveled-less-or-equal.json](leveled-less-or-equal.json) | Query | Leveled less or equal (`LeveledQuery`). |
+| [leveled-less.json](leveled-less.json) | Query | Leveled less (`LeveledQuery`). |
+| [leveled-not-equal.json](leveled-not-equal.json) | Query | Leveled not equal (`LeveledQuery`). |
 | [list-position-compare-equal.json](list-position-compare-equal.json) | Query | Deck: position Equal 2, counted from the start. |
 | [list-position-compare-greater.json](list-position-compare-greater.json) | Query | Deck: position Greater 2, counted from the start. |
 | [list-position-compare-greaterorequal.json](list-position-compare-greaterorequal.json) | Query | Deck: position GreaterOrEqual 2, counted from the start. |
@@ -37,3 +43,4 @@ See the [insertion guide](../README.md) before copying a fragment.
 | [open-lane-for-picked-entity.json](open-lane-for-picked-entity.json) | Query | Open lane for picked entity (`OpenLaneForCardQuery`). |
 | [picked-from-three-entity.json](picked-from-three-entity.json) | Query | Picked from three entity (`PickedFromThreeEntityQuery`). |
 | [picked-from-three-guid.json](picked-from-three-guid.json) | Query | Picked from three guid (`PickedFromThreeQuery`). |
+| [self-leveled-three.json](self-leveled-three.json) | Query | Self leveled three (`CompositeAllQuery`). |

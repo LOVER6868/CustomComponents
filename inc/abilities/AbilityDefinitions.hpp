@@ -5,6 +5,8 @@
 #include <BNM/Method.hpp>
 
 #include "abilities/Armor.hpp"
+#include "abilities/MarkerGrantState.hpp"
+#include "abilities/Withering.hpp"
 #include "abilities/Charge.hpp"
 #include "abilities/Thrash.hpp"
 #include "core/AbilityRegistry.hpp"
@@ -24,8 +26,9 @@ namespace CustomComponents::AbilityDefinitions {
 
     inline void* GetComponent(void* entity, BNM::MonoType* type, bool create) {
         if (!entity || !type) return nullptr;
-        if (hasComponent[entity](type)) return getComponent[entity](type);
-        return create ? getOrAddComponent[entity](type) : nullptr;
+        auto has=hasComponent;auto get=getComponent;auto add=getOrAddComponent;
+        if (has[entity](type)) return get[entity](type);
+        return create ? add[entity](type) : nullptr;
     }
 
     inline void* GetCharge(void* entity, bool create) {
@@ -50,12 +53,16 @@ namespace CustomComponents::AbilityDefinitions {
         if (!hasComponent.IsValid() || !getComponent.IsValid() ||
             !getOrAddComponent.IsValid() || !chargeType || !thrashType) return false;
 
+        if (!Abilities::MarkerGrants::Initialize() || !Abilities::Withering::Initialize()) return false;
         if (!AbilityRegistry::Register({Armor, "Armor", AbilityStorage::Numeric,
                 nullptr, Armor::GetValue, ArmorSpecialAbilityType}) ||
             !AbilityRegistry::Register({Charge, "Charge", AbilityStorage::Grantable,
                 GetCharge, nullptr}) ||
             !AbilityRegistry::Register({Thrash, "Thrash", AbilityStorage::Grantable,
-                GetThrash, nullptr})) {
+                GetThrash, nullptr}) ||
+            !AbilityRegistry::Register({23,"Withering",AbilityStorage::Grantable,Abilities::Withering::Get,nullptr}) ||
+            !AbilityRegistry::Register({24,"Multishot",AbilityStorage::Marker,Abilities::MarkerGrants::Multishot,nullptr,-1,"GrantedMultishot"}) ||
+            !AbilityRegistry::Register({25,"AttacksOnlyInAdjacentLanes",AbilityStorage::Marker,Abilities::MarkerGrants::Adjacent,nullptr,-1,"GrantedAdjacentAttacks"})) {
             LOG_ERR("CustomComponents/Abilities: registry registration failed");
             return false;
         }

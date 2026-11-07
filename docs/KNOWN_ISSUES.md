@@ -14,6 +14,13 @@
   a universal frame-time fix for observed turn/phase stalls.
 - Frontend continuation and creation grants have policy/compilation checks;
   chained PvE menus, scene transitions and trait grants still need device testing.
+- Withering, attack-marker grants and physical deck deployment pass local checks;
+  on-device PvE and matching-client PvP verification is still required.
+- Level cycling and payment have been exercised in PvE. Two-phone play and
+  prediction still require device validation. Hand styling and consecutive-menu
+  refresh changes also need confirmation on a phone.
+- Query-based trick play requirements pass local checks; their on-device
+  multi-ability behavior and matching-client PvP still need validation.
 - Tradeable is not implemented. Do not combine integrated deck creation with the
   old standalone shuffle module.
 

@@ -11,10 +11,16 @@ details. The [example catalog](../examples/README.md) links recipes for every ar
 | Charge, ID `20` | Control block-meter charge produced by a fighter's damage |
 | Thrash, ID `21` | Deal excess fighter damage to the hero opposing the damage source |
 | RandomKeyword, ID `22` | Grant an eligible keyword from a configurable pool |
+| Withering, ID `23` | End-of-turn hand/deck discard or board destruction |
+| Multishot, ID `24` | Grant the native multishot attack marker |
+| AttacksOnlyInAdjacentLanes, ID `25` | Grant the native adjacent-lane attack marker |
+| Level and Leveled | Ordered hand cost/stat options, spend-all/X, synchronized hand modes and queryable modifiers |
+| PlayRequirement | Per-ability trick requirements; at least one ability must qualify |
+| RemoveGrantAbilityEffectDescriptor | Remove a stock/custom ability completely or by source/duration |
 | Destroyable BoardAbility | Spend a hidden board ability through destruction targeting |
 | Grant/remove lifecycle | Add/Set operations, duration expiry and ability history |
 
-See [abilities](ABILITIES.md) and its linked references.
+See [abilities](ABILITIES.md), [Level](LEVEL.md), [play requirements](PLAY_REQUIREMENTS.md) and their linked references.
 
 ## Selection and queries
 
@@ -30,6 +36,7 @@ See [abilities](ABILITIES.md) and its linked references.
 | `InDeckQuery`, `InDiscardPileQuery` | Test physical zone membership |
 | `InDeckGuidQuery`, `InDiscardPileGuidQuery` | Match definitions whose GUID occurs in a zone |
 | `DiscardedFromQuery` | Distinguish custom hand and deck discards |
+| `LeveledQuery` | Compare the extra payment of a selected or played level |
 | `ListPositionQuery` | Compare zero-based deck/discard position from either end |
 | `OpenLaneForCardQuery` | Find lanes for cards returned by a nested card query |
 | `CanBePlacedQuery` | Match cards that fit the current board |
@@ -47,6 +54,7 @@ See [PickFromThree](PICKFROMTHREE.md) and [queries](QUERIES.md).
 | `ReturnFromDiscardPileEffectDescriptor` | Return the original discarded card to hand |
 | `ReturnFromDiscardPileToDeckEffectDescriptor` | Return it to a deck position |
 | `ReturnFromDiscardPileToLaneEffectDescriptor` | Return a fighter or environment to a legal lane |
+| `PlayFromDeckToLaneEffectDescriptor` | Deploy a physical deck fighter/environment to a legal lane |
 | `MoveCardInDeckEffectDescriptor` | Reorder a deck card by offset or absolute position |
 | `DrawCardFromSubsetInDeckEffectDescriptor` | Tutor a deck card, with optional fallback and HeraldEntities |
 | `CreateCardInDeckFromSubsetEffectDescriptor` | Create copies of one sampled definition in a deck |

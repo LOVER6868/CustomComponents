@@ -68,7 +68,7 @@ inline void PickFromThreeOwnerAudit(const char* stage, Obj* effect, Obj* context
             const char* name=(cls && cls->name)?cls->name:"?";
             if(!std::strcmp(name,"PrimaryTargetFilter")) primary=true;
             if(!std::strcmp(name,"SecondaryTargetFilter")) secondary=true;
-            if(!std::strcmp(name,"ReturnFromDiscardPileToLaneEffectDescriptor")) revive=true;
+            if((!std::strcmp(name,"ReturnFromDiscardPileToLaneEffectDescriptor") || !std::strcmp(name,"PlayFromDeckToLaneEffectDescriptor"))) revive=true;
             if(!std::strcmp(name,"MoveCardToLanesEffectDescriptor")) move=true;
             if(pickFromThreeOwnerSamples<=65)
                 CC_SELECTION_DIAG("CustomComponents/Pick3/PICK_FROM_THREE_OWNER: COMPONENT stage=%s entity=%d idx=%d type=%s",stage,entityId,i,name);

@@ -1,3 +1,5 @@
+#include "level/LevelSystem.hpp"
+#include "gameplay/PlayRequirement.hpp"
 #include "presentation/DiscardHerald.hpp"
 #include "presentation/StatIconSystem.hpp"
 #include "presentation/FrameIconRegistry.hpp"
@@ -126,6 +128,7 @@ namespace {
         }
 
         STARTUP_BOUNDARY(2, "combat-charge-thrash-armor-and-zone-systems");
+        if(!CustomComponents::Engine::PlayTransport::Initialize()){LOG_ERR("CustomComponents: play transport initialization failed");return;}
         // Components register first so the framework can resolve their serialized
         // names and construct their managed instances immediately afterward.
         const int combatHookMode = ReadCombatHookMode();
@@ -326,7 +329,7 @@ namespace {
             return;
         }
 
-        if(!CustomComponents::Abilities::RandomKeyword::Register() ||
+        if(!CustomComponents::Abilities::Withering::InitializeSystem() || !CustomComponents::Abilities::RandomKeyword::Register() ||
            !CustomComponents::Abilities::BoardAbility::Initialize()) {
             LOG_ERR("CustomComponents: selected ability initialization failed");return;
         }
@@ -336,7 +339,7 @@ namespace {
         // All feature enum registrations must precede the single shared
         // DefaultDeserializer.GetValue native hook. Do not install it in a
         // feature-specific serializer; this is the generic hook owner.
-        if (!CustomComponents::GrantAbilitySerialization::RegisterAbilityEnums()) {
+        if (!CustomComponents::Effects::AbilityRemoval::Initialize() || !CustomComponents::GrantAbilitySerialization::RegisterAbilityEnums()) {
             LOG_ERR("CustomComponents: GrantAbility enum registration failed");
             return;
         }
@@ -374,6 +377,9 @@ namespace {
         }
 
         STARTUP_BOUNDARY(8, "pick3-gameplay-and-submission");
+        if(!CustomComponents::Level::Initialize()){LOG_ERR("CustomComponents: Level initialization failed");return;}
+        if(!CustomComponents::PlayRequirements::Initialize()){LOG_ERR("CustomComponents: PlayRequirement initialization failed");return;}
+        CustomComponents::Level::Selection::inputBlocked=[](){return CustomComponents::Pick3::Submission::overlayCapturesInput;};
         // No PvP tracer hooks. The stock RemoteSelectTargetService is used directly
         // by the same submission adapter as PvE; only existing game-input hooks remain.
         const bool liveCandidateProbe = BLOOM_CONFIG_BOOL("PickFromThree", "LiveCandidateProbe", false);
@@ -412,6 +418,7 @@ namespace {
         // Do not equate an enabled transport with network-side capability:
         // remote CardDatabase still requires GUID replication.
         const bool pvpRequested = BLOOM_CONFIG_BOOL("PickFromThree", "SubmitInPVP", true);
+        CustomComponents::Pick3::Submission::RegisterPick3TransferPairCheck(&CustomComponents::Systems::DiscardPileZoneEffectsSystem::Pick3CanTransferPhysicalPair);
         CustomComponents::Pick3::Submission::RegisterPick3PhysicalPairCheck(
             &CustomComponents::Systems::DiscardPileZoneEffectsSystem::Pick3CanRevivePhysicalPair);
         if (installSubmission && candidateReady && !CustomComponents::Pick3::Submission::Initialize(
@@ -462,7 +469,7 @@ namespace {
             }
         }
 
-        LOG_INFO("CustomComponents/BUILD: patch=6.4.5 built=%s %s", __DATE__, __TIME__);
+        LOG_INFO("CustomComponents/BUILD: patch=6.6.8 built=%s %s", __DATE__, __TIME__);
         LOG_INFO("CustomComponents/STARTUP_DIAG: COMPLETED full startup");
 #undef STARTUP_BOUNDARY
         LOG_INFO(

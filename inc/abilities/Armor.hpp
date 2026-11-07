@@ -19,8 +19,9 @@ namespace CustomComponents::Armor {
         return monoType && amount.IsValid() && getOrAdd.IsValid() && get.IsValid() && has.IsValid();
     }
     inline void* GetValue(void* entity, bool create) {
-        if (!entity || (!create && !has[entity](monoType))) return nullptr;
-        auto* component = create ? getOrAdd[entity](monoType) : get[entity](monoType);
-        return component ? amount[component].Get() : nullptr;
+        auto exists=has;auto add=getOrAdd;auto read=get;auto value=amount;
+        if (!entity || (!create && !exists[entity](monoType))) return nullptr;
+        auto* component = create ? add[entity](monoType) : read[entity](monoType);
+        return component ? value[component].Get() : nullptr;
     }
 }

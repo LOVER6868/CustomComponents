@@ -86,8 +86,10 @@ namespace CustomComponents::NumericAbility {
     inline void Remove(void* entity, void* value, int ability, int duration,
                        int source = 0, bool allSources = false) {
         if (!entity || !value) return;
-        auto* instances = instancesField[entity].Get();
-        auto* list = modifiersField[value].Get();
+        auto instancesMetadata=instancesField;auto modifiersMetadata=modifiersField;
+        auto durationMetadata=durationField;auto groupMetadata=groupField;auto remove=removeModifier;
+        auto* instances = instancesMetadata[entity].Get();
+        auto* list = modifiersMetadata[value].Get();
         if (!instances || !list) return;
         BNM::Class listClass(static_cast<BNM::IL2CPP::Il2CppObject*>(list));
         auto count = listClass.GetMethod("get_Count", 0).cast<int>();
@@ -95,12 +97,12 @@ namespace CustomComponents::NumericAbility {
         if (!count.IsValid() || !item.IsValid()) return;
         for (int i = count[list]() - 1; i >= 0; --i) {
             auto* modifier = item[list](i);
-            if (!modifier || durationField[modifier].Get() != duration) continue;
-            auto* group = groupField[modifier].Get();
+            if (!modifier || durationMetadata[modifier].Get() != duration) continue;
+            auto* group = groupMetadata[modifier].Get();
             if (!group) continue;
             const auto text = group->str();
             if (MatchesGroup(text, ability, source, allSources))
-                removeModifier[value](modifier, instances);
+                remove[value](modifier, instances);
         }
     }
 }

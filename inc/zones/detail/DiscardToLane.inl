@@ -1,7 +1,7 @@
 #include "diagnostics/DiagnosticLogging.hpp"
 
 struct LaneReturnOperation {
-    Obj* model; Obj* system; Obj* effect; DiscardContext source;
+    Obj* model; Obj* system; Obj* effect; LaneTransferSource source;
     int cardId,laneId,effectId;
     bool environment=false,rendered=false,recordSubmitted=false;
     int replacedEnvironment=-1;
@@ -21,12 +21,12 @@ struct LaneReturnOperation {
         bool found=false;
         if(lanes && lanes->items && lanes->size>0 && lanes->size<=32 && lanes->size<=int(lanes->items->capacity))
             for(int i=0;i<lanes->size;++i) if(lanes->items->m_Items[i]==laneId) found=true;
-        return found && card && !DiscardContains(source.discardPile,cardId) &&
-            !FindComponent(card,"DiscardPileElement") && (!environment || laneEnvironmentId[lane].Get()==cardId);
+        return found && card && !SourceContains(model,source,cardId) &&
+            !FindComponent(card,"DiscardPileElement") && !FindComponent(card,"DeckElement") && (!environment || laneEnvironmentId[lane].Get()==cardId);
     }
     bool Prepare() {
-        const auto legality=CheckDiscardRevivePair(model,cardId,laneId,source.playerId);
-        if(!legality.legal) return false;
+        const bool legal=source.deck?CheckDeckLanePair(model,cardId,laneId,source.playerId):CheckDiscardRevivePair(model,cardId,laneId,source.playerId).legal;
+        if(!legal) return false;
         environment=FindComponent(source.card,"Environment")!=nullptr;
         lane=FindComponent(FindEntity(model,laneId),"Lane");
         modifier=moveLaneSystemModifier[system].Get();history=moveLaneSystemHistory[system].Get();
@@ -67,25 +67,26 @@ struct LaneReturnOperation {
             (!environment || (environmentPlacerRoot && environmentPlacerRoot->Get()));
     }
     bool Remove() {
-        Try([&]{discardRemoveCard[discardModifier](cardId,source.discardPileId);});
+        if(source.deck){if(!Try([&]{RemoveDeckLaneSource(model,source,cardId);}))return false;}
+        else Try([&]{discardRemoveCard[discardModifier](cardId,source.poolId);});
         Obj* card=FindEntity(model,cardId);
-        return card && !DiscardContains(source.discardPile,cardId) && !FindComponent(card,"DiscardPileElement") && !FindComponent(card,"LaneElement");
+        return card && !SourceContains(model,source,cardId) && !FindComponent(card,"DiscardPileElement") && !FindComponent(card,"DeckElement") && !FindComponent(card,"LaneElement");
     }
     bool Place() {
         // Only the rendered model records view work. Headless predictions still
         // perform the same gameplay mutation and produce their own history.
-        if(rendered) Core::CardViewLifecycleCoordinator::NoteReturn(cardId,laneId,source.discardPileId);
+        if(rendered) Core::CardViewLifecycleCoordinator::NoteReturn(cardId,laneId,source.poolId);
         Try([&]{if(environment) environmentPlaceCard[environmentPlacer](cardId,laneId);
                 else lanePlayCard[modifier](cardId,laneId,source.playerId);});
         return IsPlaced();
     }
     bool Recover() {
         Obj* card=FindEntity(model,cardId);
-        if(!card || FindComponent(card,"LaneElement") || FindComponent(card,"HandElement") || FindComponent(card,"DeckElement")) return false;
-        bool restored=DiscardContains(source.discardPile,cardId) && FindComponent(card,"DiscardPileElement");
-        if(!restored && !FindComponent(card,"DiscardPileElement") && !DiscardContains(source.discardPile,cardId)) {
-            Try([&]{discardAddCard[discardModifier](cardId,source.discardPileId);});
-            restored=DiscardContains(source.discardPile,cardId) && FindComponent(card,"DiscardPileElement");
+        if(!card || FindComponent(card,"LaneElement") || FindComponent(card,"HandElement") || (!source.deck && FindComponent(card,"DeckElement"))) return false;
+        bool restored=source.deck?RestoreDeckLaneSource(model,source,cardId):(DiscardContains(source.pool,cardId) && FindComponent(card,"DiscardPileElement"));
+        if(!source.deck && !restored && !FindComponent(card,"DiscardPileElement") && !SourceContains(model,source,cardId)) {
+            Try([&]{discardAddCard[discardModifier](cardId,source.poolId);});
+            restored=DiscardContains(source.pool,cardId) && FindComponent(card,"DiscardPileElement");
         }
         // Compensate a displaced environment only if nobody else has filled
         // its slot and its original entity is still cleanly in a discard pile.
@@ -108,11 +109,11 @@ struct LaneReturnOperation {
     }
     void Publish() {
         if(rendered) {
-            ZoneTriggeredAbilityPresentationSystem::RememberDiscardToLaneMove(model,cardId,effectId,laneId);
+            if(!source.deck)ZoneTriggeredAbilityPresentationSystem::RememberDiscardToLaneMove(model,cardId,effectId,laneId);
 
         }
         CustomTriggerSystem::FireInModel("PlayTrigger",effect,model);
-        CustomTriggerSystem::FireInModel("ReturnedFromDiscardPileTrigger",effect,model);
+        if(!source.deck)CustomTriggerSystem::FireInModel("ReturnedFromDiscardPileTrigger",effect,model);
     }
     ~LaneReturnOperation() {
         if(!recordSubmitted && recordRoot && recordRoot->Get())
@@ -125,12 +126,13 @@ static void MoveLaneProcessEffectHook(void* self,Obj* effect,const void* method)
     Obj* system=static_cast<Obj*>(self);
     Obj* model=moveLaneSystemModel[system].Get();
     const int effectId=effectEffectEntityId[effect].Get();
-    if(!FindComponent(FindEntity(model,effectId),"ReturnFromDiscardPileToLaneEffectDescriptor")) {
+    const bool fromDeck=FindComponent(FindEntity(model,effectId),"PlayFromDeckToLaneEffectDescriptor")!=nullptr;
+    if(!fromDeck && !FindComponent(FindEntity(model,effectId),"ReturnFromDiscardPileToLaneEffectDescriptor")) {
         originalMoveLaneProcessEffect(self,effect,method);return;
     }
     const int cardId=effectTargetId[effect].Get(),laneId=effectSecondaryTargetId[effect].Get();
-    DiscardContext source;
-    if(!ResolveDiscardContext(model,cardId,source)) return;
+    LaneTransferSource source;
+    if(!ResolveLaneSource(model,cardId,fromDeck,source)) return;
     struct Identity {Obj* model;int card;};
     static thread_local std::vector<Identity> active;
     for(const auto& value:active) if(value.model==model && value.card==cardId) return;

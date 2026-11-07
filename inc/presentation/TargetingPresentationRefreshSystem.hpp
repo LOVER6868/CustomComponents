@@ -12,6 +12,7 @@
 
 #include "log.h"
 #include "core/Observers.hpp"
+#include "engine/FrontendServices.hpp"
 
 namespace CustomComponents::Systems::TargetingPresentationRefreshSystem {
 
@@ -170,6 +171,8 @@ namespace CustomComponents::Systems::TargetingPresentationRefreshSystem {
         const int stateBefore = gameInputState[holder].Get();
 
         originalUpdate(self, method);
+
+        Engine::FrontendServices::Capture(holder);
 
         const int stateAfter = gameInputState[holder].Get();
         Obj* currentEffect = getFirstEffectInQueue[holder]();

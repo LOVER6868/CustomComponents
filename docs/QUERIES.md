@@ -55,3 +55,9 @@ check sun affordability or hand-play timing. Relevant subset-creation grants are
 considered; the stock placer still decides the actual placement outcome.
 
 See the [query examples](../examples/queries/README.md).
+
+## Committed Level state
+
+`LeveledQuery` compares `Value` against `ComparisonOperator`. The six comparison
+names match ListPositionQuery. A missing Leveled component does not match. Combine
+with SelfQuery, NotQuery or composite queries as usual. See [Level](LEVEL.md).

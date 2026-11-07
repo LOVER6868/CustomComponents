@@ -20,9 +20,12 @@ See the [insertion guide](../README.md) before copying a fragment.
 | [create-subset-three-copies-random.json](create-subset-three-copies-random.json) | Component | Create subset three copies random (`CreateCardInDeckFromSubsetEffectDescriptor`). |
 | [discard-from-deck.json](discard-from-deck.json) | Effect group component | Discard from deck: merge the effect entities into the card. |
 | [discard-from-hand.json](discard-from-hand.json) | Effect group component | Discard from hand: merge the effect entities into the card. |
+| [pf3-play-environment-from-deck-to-lane.json](pf3-play-environment-from-deck-to-lane.json) | Effect group component | Pf3 play environment from deck to lane: merge the effect entities into the card. |
+| [pf3-play-fighter-from-deck-to-lane.json](pf3-play-fighter-from-deck-to-lane.json) | Effect group component | Pf3 play fighter from deck to lane: merge the effect entities into the card. |
 | [pf3-return-environment-to-lane.json](pf3-return-environment-to-lane.json) | Effect group component | Pf3 return environment to lane: merge the effect entities into the card. |
 | [pf3-return-exclude-hand-deck-discards.json](pf3-return-exclude-hand-deck-discards.json) | Effect group component | Pf3 return exclude hand deck discards: merge the effect entities into the card. |
 | [pf3-return-fighter-to-lane.json](pf3-return-fighter-to-lane.json) | Effect group component | Pf3 return fighter to lane: merge the effect entities into the card. |
+| [play-from-deck-to-lane.json](play-from-deck-to-lane.json) | Component | Play from deck to lane (`PlayFromDeckToLaneEffectDescriptor`). |
 | [remove-from-discard-pile.json](remove-from-discard-pile.json) | Effect group component | Remove from discard pile: merge the effect entities into the card. |
 | [return-from-discard-pile-to-deck.json](return-from-discard-pile-to-deck.json) | Effect group component | Return from discard pile to deck: merge the effect entities into the card. |
 | [return-from-discard-pile-to-hand.json](return-from-discard-pile-to-hand.json) | Effect group component | Return from discard pile to hand: merge the effect entities into the card. |

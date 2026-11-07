@@ -1,3 +1,4 @@
+#include "engine/AbilityConversion.hpp"
 #include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
@@ -164,6 +165,8 @@ namespace CustomComponents::GrantAbilitySerialization {
     }
 
     static void* ConvertHook(void* self, void* instances, void* entity, const void* method) {
+        BNM::IL2CPP::Il2CppObject* converted=nullptr;
+        if(Engine::AbilityConversion::Convert(static_cast<BNM::IL2CPP::Il2CppObject*>(self),static_cast<BNM::IL2CPP::Il2CppObject*>(instances),static_cast<BNM::IL2CPP::Il2CppObject*>(entity),converted))return converted;
         auto* result = originalConvert(self, instances, entity, method);
         Put(effects, result, Get(descriptors, self)); return result;
     }

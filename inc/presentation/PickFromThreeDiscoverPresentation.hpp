@@ -1575,7 +1575,9 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         ReleaseActiveOfferModel();
         autoSolePending=false;chosenIndices.clear();currentPromptGuid=-1;
     }
+    inline Core::PresentationRefresh::MissingOfferRefresh missingOfferRefresh;
     inline void ResetMatchView() {
+        missingOfferRefresh={};
         Ui::Hide("match changed");
         ReleaseActiveOfferModel();
         hasRequest=awaitingResult=autoSolePending=awaitingStockCommand=false;
@@ -1595,11 +1597,17 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
     using LightsFn=void(*)(Obj*,Obj*,Obj*,const void*);
     inline LightsFn originalTargetLights=nullptr;
     inline BNM::Method<void> activateTargetLight;
+    using SingleLightFn=void(*)(Obj*,int,int,Obj*,Obj*,const void*);
+    inline SingleLightFn originalSingleTargetLight=nullptr;
+    inline thread_local bool suppressBoardTargetLights=false;
+    static void SingleTargetLight(Obj* command,int target,int source,Obj* effect,Obj* game,const void* method) {
+        if(!suppressBoardTargetLights)originalSingleTargetLight(command,target,source,effect,game,method);
+    }
 
     // The stock recipient proxy is an execution bridge, never a UI offer.
     static void TargetLights(Obj* command,Obj* blocking,Obj* game,const void* method) {
         const auto& h=Systems::TargetingPresentationRefreshSystem::observedTargetingIdentity;
-        const auto identity=Systems::TargetingPresentationRefreshSystem::ReadIdentity(h.holder,h.state,blocking);
+        const auto identity=Systems::TargetingPresentationRefreshSystem::ReadIdentity(h.holder,6,blocking);
         const bool exact=hasRequest && identity.valid && identity.phase==0 &&
             identity.effectEntityId==activeRequest.effectEntityId && identity.effectGroupId==activeRequest.effectGroupId &&
             ExactTurn(activeRequest,Pick3::Submission::Remote());
@@ -1611,9 +1619,18 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             return; // Card popups never expose the additional board targets.
         }
         // Commands can run before the holder observer publishes the popup.
-        Obj* model=Pick3::Submission::Target(Pick3::Submission::boundEntityModelRoot);
+        static auto modelMetadata=BNM::Class("PvZCards.Core.Utilities","GameFacade").GetField("<EntityModel>k__BackingField").cast<Obj*>();auto modelField=modelMetadata;
+        Obj* model=game && modelField.IsValid()?modelField[game].Get():nullptr;
         Obj* filter=Engine::EntityAccess::Component(Engine::EntityAccess::Find(model,identity.effectEntityId),"PrimaryTargetFilter");
-        if(identity.valid && identity.phase==0 && Pick3::EnumModes::IsPickFromThree(Pick3::TargetBridge::LogicalSelectionMode(filter)))return;
+        if(identity.valid && identity.phase==0 && Pick3::EnumModes::IsPickFromThree(Pick3::TargetBridge::LogicalSelectionMode(filter))) {
+            // This native method also calls GameFacade.FindValidTargetsFromEffect.
+            // Skipping it prevents a consecutive menu from ever caching its
+            // offer. Keep that stock discovery and suppress only the lights.
+            struct Restore {bool prior=suppressBoardTargetLights;~Restore(){suppressBoardTargetLights=prior;}}restore;
+            suppressBoardTargetLights=true;
+            originalTargetLights(command,blocking,game,method);
+            return;
+        }
         originalTargetLights(command,blocking,game,method);
     }
     inline void RefreshStageLights() {
@@ -2200,6 +2217,23 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             S::UpdateHook(holder,nullptr);
             return;
         }
+        const bool idle= !hasRequest && !awaitingResult && !awaitingStockCommand &&
+            !Ui::state.shown && !Ui::state.exiting && !Ui::state.deferredExit &&
+            !Pick3::TargetBridge::HasQueuedChoice();
+        const bool missing=ownPrimary && model && idle &&
+            S::gameInputState[holder].Get()==S::kSelectTriggeredEffectPrimaryTarget &&
+            !Pick3::TargetBridge::HasCurrentModelOffer(next.effectEntityId,next.effectGroupId,model,local) &&
+            !Pick3::TargetBridge::CachedModelForHolderChoice(next.effectEntityId,next.effectGroupId,local);
+        if(frameCount.IsValid() && missingOfferRefresh.Enter(missing,frameCount(),
+            {front,next.state,next.phase,next.effectEntityId,next.effectGroupId})) {
+            // Re-enter the stock presentation binding, which owns target
+            // discovery and its context. Never call a finder with a fabricated
+            // effect or replay a selection to wake a consecutive menu.
+            bool refreshed=false;
+            auto exception=BNM::TryInvoke([&]{refreshed=S::RefreshStockPresentation(holder,S::kSelectTriggeredEffectPrimaryTarget);});
+            LOG_INFO("CustomComponents/Pick3/OFFER_REFRESH: effect=%d group=%d attempt=%d refreshed=%d exception=%d",
+                next.effectEntityId,next.effectGroupId,missingOfferRefresh.attempts,int(refreshed),int(exception.IsValid()));
+        }
         if(hasRequest || Ui::state.shown || Ui::state.exiting || Ui::state.deferredExit ||
            Pick3::TargetBridge::HasPendingOffer() || Pick3::TargetBridge::HasQueuedChoice())TickOncePerFrame();
     }
@@ -2226,7 +2260,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         if(!frameCount.IsValid() || !Core::FrontendTickDispatcher::RegisterPresentationTick(&OnFrontendTick))return false;
         auto lights=BNM::Class("PvZCards.Game","HighlightTriggeredEffectTargetsCommand");
         activateTargetLight=lights.GetMethod("ActivateLightForTarget",4).cast<void>();
-        if(!activateTargetLight.IsValid() || !Core::Hooks::Install(lights.GetMethod("ActivateLightsForChooseTargetEffect",2),TargetLights,originalTargetLights))return false;
+        if(!activateTargetLight.IsValid() || !Core::Hooks::Install(lights.GetMethod("ActivateLightForTarget",4),SingleTargetLight,originalSingleTargetLight) || !Core::Hooks::Install(lights.GetMethod("ActivateLightsForChooseTargetEffect",2),TargetLights,originalTargetLights))return false;
         if (!Pick3CardMetadata::InstallLocalizationCapture(Ui::gcNew,Ui::gcFree))
             LOG_WARN("CustomComponents/Pick3/DiscoverUI: stock localization capture unavailable; generic prompt safe fallback (no scene scan)");
         Ui::showCards = &Utilities::DiscardPileViewer::ShowCardGuidList;

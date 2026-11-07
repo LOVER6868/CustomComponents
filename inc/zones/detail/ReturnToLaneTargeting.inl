@@ -10,9 +10,11 @@ inline MoveFn originalMove=nullptr;
 inline BNM::Field<Obj*> queryModel;
 inline BNM::Field<Obj*> finderEntities,entitiesModel;
 inline BNM::Field<int> ownerSource;
+inline thread_local bool activeDeckSource=false;
+struct SourceScope {bool previous=activeDeckSource;explicit SourceScope(Obj* effect){activeDeckSource=FindComponent(effect,"PlayFromDeckToLaneEffectDescriptor")!=nullptr;}~SourceScope(){activeDeckSource=previous;}};
 inline ReturnToLaneTargeting::Context Resolve(Obj* finder,Obj* effect,Obj* context) {
     if(!finder || !effect || !context || !queryModel.IsValid() || !ownerSource.IsValid() ||
-       !FindComponent(effect,"ReturnFromDiscardPileToLaneEffectDescriptor")) return {};
+       (!FindComponent(effect,"ReturnFromDiscardPileToLaneEffectDescriptor") && !FindComponent(effect,"PlayFromDeckToLaneEffectDescriptor"))) return {};
     Obj* model=queryModel[context].Get();
     auto finderField=finderEntities;
     auto modelField=entitiesModel;
@@ -26,17 +28,21 @@ inline ReturnToLaneTargeting::Context Resolve(Obj* finder,Obj* effect,Obj* conte
     return {finder,model,player[static_cast<Obj*>(nullptr)](source)};
 }
 static Obj* Primary(Obj* finder,Obj* effect,Obj* context,const void* method) {
+    SourceScope source(effect);
     ReturnToLaneTargeting::Scope scope(Resolve(finder,effect,context));
     return originalPrimary(finder,effect,context,method);
 }
 static Obj* Secondary(Obj* finder,Obj* effect,Obj* context,const void* method) {
+    SourceScope source(effect);
     ReturnToLaneTargeting::Scope scope(Resolve(finder,effect,context));
     return originalSecondary(finder,effect,context,method);
 }
 static bool Move(Obj* finder,int card,int lane,Obj* validator,const void* method) {
     if(!ReturnToLaneTargeting::Owns(finder))return originalMove(finder,card,lane,validator,method);
     const auto scope=ReturnToLaneTargeting::active;
-    const auto pair=CheckDiscardRevivePair(static_cast<Obj*>(scope.model),card,lane,scope.player);
+    Obj* model=static_cast<Obj*>(scope.model);
+    if(activeDeckSource)return CheckDeckLanePair(model,card,lane,scope.player);
+    const auto pair=CheckDiscardRevivePair(model,card,lane,scope.player);
     static thread_local unsigned samples=0;
     if(++samples<=96)LOG_INFO("CustomComponents/ReturnToLane/TARGET_PAIR: card=%d lane=%d player=%d legal=%d reason=%s source=discard-transfer stockQueries=preserved",
         card,lane,scope.player,int(pair.legal),pair.reason);
