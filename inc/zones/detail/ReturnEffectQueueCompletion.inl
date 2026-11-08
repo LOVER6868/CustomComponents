@@ -624,6 +624,7 @@
     }
 
     static void CompleteEffectHook(void* self, Obj* effects, const void* method) {
+        Engine::Events::beforeEffectComplete.Notify(static_cast<Obj*>(self),effects);
         TraceProcessing(DiagnosticBoundary::CompleteEnter, effects);
         // Verified in stock ARM64: EffectCollectionProcessor.CompleteEffect
         // invokes EffectCollection.CompleteEffect, which calls Shift() DURING
@@ -668,5 +669,6 @@
         TraceProcessing(DiagnosticBoundary::CompleteExit, effects);
         // Do not remove here: another listener may still be resolving in the
         // enclosing ProcessEffects pass. Cleanup runs at processor exit.
+        Engine::Events::afterEffectComplete.Notify(static_cast<Obj*>(self),effects);
     }
 

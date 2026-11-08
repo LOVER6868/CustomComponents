@@ -12,4 +12,8 @@ inline Core::Observers<const Effect&> afterBuff;
 inline Core::Observers<const View&> afterViewAdded;
 inline Core::Observers<Obj*> afterShowInHand;
 inline Core::Observers<const Deck&> beforeDeckInitialize,afterDeckInitialize;
+// Published by the existing discard/return completion owner. Consumers receive
+// the processor and collection, never an effect that may already be pooled.
+inline bool effectCompletionReady=false;
+inline Core::Observers<Obj*,Obj*> beforeEffectComplete,afterEffectComplete;
 }

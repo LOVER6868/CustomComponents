@@ -1,0 +1,12 @@
+{
+  "$type": "PvZCards.Engine.Components.VariableMultiplier, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "Expression": "CardsOnBoard * 2",
+    "Aggregation": "Single",
+    "Divider": 1,
+    "Query": {
+      "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+      "$data": {}
+    }
+  }
+}

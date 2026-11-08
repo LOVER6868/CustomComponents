@@ -8,6 +8,10 @@ GitHub version numbers.
 
 ### Added
 
+- Typed per-card variables, checked expressions, array operations and variable-backed queries/multipliers.
+- Revision-based continuous variable bindings and conditional card-local SelfTeleport grants.
+- Card-local SelfTeleport permissions without granting a player-wide surprise window.
+
 - Per-ability PlayRequirement queries with pre-payment eligibility snapshots.
 
 - Level options with ordered extra costs, signed/X buffs, synchronized hand modifiers, a shake gesture and pulse.

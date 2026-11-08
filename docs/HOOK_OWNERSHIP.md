@@ -22,6 +22,9 @@ consumers use that owner's callbacks or capabilities.
 | Both public CardFromSubsetFinder overloads | `CreationProvenance`; shared `SubsetSelection` context/capabilities |
 | Draw/created-card completion | `CreationProvenance`; verify GUID/entity/model before binding |
 | Created-card placement | `SubsetCreationExtensions`; grants before legality checking |
+| Resolved effect completion | Existing discard/return owner via `Engine::Events`; `SimulationChanges` subscribes for revisions |
+| Native multiplier-specific value | `variables/Multiplier.hpp`; custom multiplier only, stock delegation |
+| Card-local phase exceptions | `PhasePermissions`; relevant native phase validators |
 | Grant/remove/expiry | `GrantAbilitySystem`; registry dispatch |
 | Revive eligibility | `ReturnToLaneTargeting.inl`; shared physical pair checker |
 | Board taps | Existing discard-viewer owner; picker/additional callbacks |

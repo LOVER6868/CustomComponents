@@ -61,3 +61,11 @@ See the [query examples](../examples/queries/README.md).
 `LeveledQuery` compares `Value` against `ComparisonOperator`. The six comparison
 names match ListPositionQuery. A missing Leveled component does not match. Combine
 with SelfQuery, NotQuery or composite queries as usual. See [Level](LEVEL.md).
+
+## Card variables
+
+`VariableComparisonQuery` compares stored or derived integer expressions, typed
+identity values, or array membership. `HasVariableQuery` checks presence.
+`VariableCardQuery` matches definitions or physical cards remembered by another
+card. Each accepts an `EntityQuery` for the cards holding the variables.
+See [variables](VARIABLES.md) for fields, examples and missing-value behavior.

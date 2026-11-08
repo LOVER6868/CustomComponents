@@ -1,0 +1,23 @@
+{
+  "$type": "PvZCards.Engine.Components.SetVariableEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "Owner": "Self",
+    "Variable": "Counter",
+    "OwnerQuery": {
+      "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+      "$data": {
+        "queries": [
+          {
+            "$type": "PvZCards.Engine.Queries.InHandQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {}
+          },
+          {
+            "$type": "PvZCards.Engine.Queries.SameFactionQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {}
+          }
+        ]
+      }
+    },
+    "Value": 1
+  }
+}

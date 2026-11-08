@@ -1,0 +1,23 @@
+{
+  "$type": "PvZCards.Engine.Components.VariableMultiplier, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "Expression": "Counter",
+    "Aggregation": "Sum",
+    "Divider": 1,
+    "Query": {
+      "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+      "$data": {
+        "queries": [
+          {
+            "$type": "PvZCards.Engine.Queries.SameFactionQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {}
+          },
+          {
+            "$type": "PvZCards.Engine.Queries.TargetableInPlayFighterQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {}
+          }
+        ]
+      }
+    }
+  }
+}

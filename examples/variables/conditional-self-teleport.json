@@ -1,0 +1,114 @@
+{
+  "$type": "PvZCards.Engine.Components.EffectEntitiesDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "entities": [
+      {
+        "components": [
+          {
+            "$type": "PvZCards.Engine.Components.EffectEntityGrouping, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {
+              "AbilityGroupId": 0
+            }
+          },
+          {
+            "$type": "PvZCards.Engine.Components.Continuous, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {}
+          },
+          {
+            "$type": "PvZCards.Engine.Components.PrimaryTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {
+              "Query": {
+                "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                "$data": {}
+              },
+              "SelectionType": "All",
+              "NumTargets": 0
+            }
+          },
+          {
+            "$type": "PvZCards.Engine.Components.SetVariableEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {
+              "Variable": "CardsOnBoard",
+              "Owner": "Self",
+              "Value": 1,
+              "ActiveZones": "Hand,Board"
+            }
+          },
+          {
+            "$type": "PvZCards.Engine.Components.QueryMultiplier, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {
+              "Query": {
+                "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                "$data": {
+                  "queries": [
+                    {
+                      "$type": "PvZCards.Engine.Queries.HasComponentQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {
+                        "ComponentType": "PvZCards.Engine.Components.Zombies, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
+                      }
+                    },
+                    {
+                      "$type": "PvZCards.Engine.Queries.TargetableInPlayFighterQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {}
+                    }
+                  ]
+                }
+              },
+              "Divider": 1
+            }
+          }
+        ]
+      },
+      {
+        "components": [
+          {
+            "$type": "PvZCards.Engine.Components.EffectEntityGrouping, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {
+              "AbilityGroupId": 0
+            }
+          },
+          {
+            "$type": "PvZCards.Engine.Components.Continuous, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {}
+          },
+          {
+            "$type": "PvZCards.Engine.Components.PrimaryTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {
+              "Query": {
+                "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                "$data": {}
+              },
+              "SelectionType": "All",
+              "NumTargets": 0
+            }
+          },
+          {
+            "$type": "PvZCards.Engine.Components.GrantAbilityEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {
+              "GrantableAbilityType": "SelfTeleport",
+              "Duration": "Permanent",
+              "AbilityValue": 1
+            }
+          },
+          {
+            "$type": "PvZCards.Engine.Components.SelfEntityFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {
+              "Query": {
+                "$type": "PvZCards.Engine.Queries.VariableComparisonQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                "$data": {
+                  "EntityQuery": {
+                    "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                    "$data": {}
+                  },
+                  "Variable": "CardsOnBoard",
+                  "ComparisonOperator": "GreaterOrEqual",
+                  "Value": 3
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -3,6 +3,13 @@
 #include <BNM/Method.hpp>
 #include <BNM/Field.hpp>
 namespace CustomComponents::Core::ComponentLifecycle {
+inline bool PatchVirtual(BNM::Class type,BNM::Class base,BNM::Class iface,const char* name,int count){
+    auto* klass=type.GetClass();auto method=type.GetMethod(name,count);auto inherited=base.GetMethod(name,count);auto entry=iface.GetMethod(name,count);
+    if(!klass || !method.IsValid() || !inherited.IsValid() || !entry.IsValid())return false;int slot=-1;
+    for(int i=0;i<klass->interface_offsets_count;++i)if(klass->interfaceOffsets[i].interfaceType==iface.GetClass())slot=klass->interfaceOffsets[i].offset+entry.GetInfo()->slot;
+    int concrete=inherited.GetInfo()->slot;if(slot<0 || slot>=klass->vtable_count || concrete>=klass->vtable_count)return false;
+    method.GetInfo()->slot=concrete;for(int index:{slot,concrete})klass->vtable[index]={method.GetInfo()->methodPointer,method.GetInfo()};return true;
+}
 inline bool Patch(BNM::Class type,BNM::Class base) {
     auto* klass=type.GetClass();if(!klass)return false;
     for(const char* name:{"DeepCopyFrom","HandleReturnToPool"}) {

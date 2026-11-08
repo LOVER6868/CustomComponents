@@ -100,3 +100,10 @@ specified `Duration`. That mode preserves innate copies and other sources.
 `AbilityValue` is unused. See the [removal examples](../examples/abilities/README.md).
 
 For selectable hand costs and stat bonuses, see [Level](LEVEL.md).
+
+## SelfTeleport
+
+`SelfTeleport` is a card-local grantable permission (registry value 26). Zombie
+fighters gain their owner's surprise window; zombie cards with `Surprise` also
+gain their owner's main window. It does not grant a player-wide permission.
+See [SelfTeleport](SELF_TELEPORT.md) for innate, temporary and reactive grants.

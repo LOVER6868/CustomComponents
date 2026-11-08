@@ -62,3 +62,13 @@ pooling, comparison and queued play effects. EffectGuards preparations run befor
 native payment/play; lifecycle observers bound the scoped cost override. ZoneChanges
 reports narrow source-zone transitions so cleanup does not scan every model after
 every effect. Level selection and its animation remain frontend adapters.
+
+
+Variables keep persistent typed state in a serialized card component and derived
+state in revision-scoped resolver caches. SimulationChanges publishes model-only
+settled notifications through the existing completion owner after native effect retirement, so consumers never keep a
+pooled Effect pointer. Snapshot setters use ordered EffectGuards preparations;
+continuous setters compute source-owned overlays without repeatedly writing state.
+PhasePermissions reads conditional SelfTeleport through the same resolver and
+changes only relevant phase-validator branches. The native condition validator
+remains the owner of condition semantics.

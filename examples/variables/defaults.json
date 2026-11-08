@@ -1,0 +1,31 @@
+{
+  "$type": "PvZCards.Engine.Components.Variables, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "Values": [
+      {
+        "Name": "CardsOnBoard",
+        "Type": "Int",
+        "Value": 0
+      },
+      {
+        "Name": "ChosenAnimal",
+        "Type": "Guid",
+        "Value": 721
+      },
+      {
+        "Name": "RememberedCards",
+        "Type": "EntityArray",
+        "Value": []
+      },
+      {
+        "Name": "Numbers",
+        "Type": "IntArray",
+        "Value": [
+          -2,
+          1,
+          3
+        ]
+      }
+    ]
+  }
+}

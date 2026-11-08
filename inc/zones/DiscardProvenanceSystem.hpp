@@ -193,6 +193,7 @@ namespace CustomComponents::Systems::DiscardedSystem {
         // boundary. If unavailable the base v2 lifecycle still initializes.
         if (completeEffectMethod.IsValid())
             CustomComponents::Core::Hooks::Install(completeEffectMethod, CompleteEffectHook, originalCompleteEffect);
+        Engine::Events::effectCompletionReady=originalCompleteEffect!=nullptr;
         if (groupMetadataReady && startSystemModel.IsValid() && startMethod.IsValid())
             CustomComponents::Core::Hooks::Install(startMethod, StartHandlerHook, originalStartHandler);
         if (groupMetadataReady && buffSystemModel.IsValid() && buffMethod.IsValid())

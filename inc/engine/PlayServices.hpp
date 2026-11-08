@@ -4,6 +4,7 @@
 #include "engine/MatchAccess.hpp"
 #include "engine/HandModeCommandPolicy.hpp"
 #include "engine/PlayServiceCompletion.hpp"
+#include "engine/SimulationChanges.hpp"
 namespace CustomComponents::Engine::PlayServices {
 using Obj=BNM::IL2CPP::Il2CppObject;
 // None has no stock service. A marked control command uses its existing wire
@@ -16,7 +17,7 @@ inline Obj*(*originalService)(Obj*,int,const void*)=nullptr;
 inline int Type(Obj* play){static auto metadata=BNM::Class("PvZCards.Engine.Dtos","Play").GetField("Type").cast<int>();auto field=metadata;return play?field[play].Get():-1;}
 static Obj* Service(Obj* factory,int type,const void* method){return originalService(factory,type==0?3:type,method);}
 static void Local(Obj* self,Obj* play,const void* method){
-    if(Type(play)==0){if(control)control(self,play);else {auto fail=BNM::Class("PvZCards.Engine","BaseService").GetMethod("DispatchFailureDelegate",1).cast<void>();fail[self](29);}return;}
+    if(Type(play)==0){if(control){control(self,play);auto instances=BNM::Class("PvZCards.Core.Services","LocalPlayCardService").GetField("<Instances>k__BackingField").cast<Obj*>();Obj* model=Match::Provide(instances[self].Get(),BNM::Class("PvZCards.Engine","EntityModel").GetMonoType());SimulationChanges::Changed(model);SimulationChanges::settled.Notify(model);}else {auto fail=BNM::Class("PvZCards.Engine","BaseService").GetMethod("DispatchFailureDelegate",1).cast<void>();fail[self](29);}return;}
     if(observer)observer(self,play,method);else originalLocal(self,play,method);
 }
 inline bool Submit(Obj* card,int player,int entry){

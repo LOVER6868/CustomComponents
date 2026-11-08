@@ -6,6 +6,7 @@ must be adapted to your project.
 
 | Category | Files | Contents |
 | --- | --- | --- |
+| [Variables and SelfTeleport](variables/README.md) | 36 | Typed defaults, setters, expressions, arrays, remembered cards, multipliers and reactive permissions. |
 | [Abilities](abilities/README.md) | 64 | Innate abilities, grants, removal, durations, and destroyable board abilities. |
 | [Configuration](configuration/README.md) | 1 | INI examples for features configured outside card JSON. |
 | [Deck ordering](deck-order/README.md) | 5 | Signed offsets and absolute positions for a physical deck card. |

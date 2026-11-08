@@ -27,3 +27,14 @@ Most systems are header-based. Internal `.inl` files are included inside their
 owner's namespace, not compiled separately. Optional local `tests/`, `tools/`,
 `.build/` and `.local/` folders are excluded from the GitHub distribution and are
 not module dependencies.
+
+## Variables and phase permissions
+
+- `inc/variables/Values.hpp` and `Expressions.hpp`: typed values, codec and pure math.
+- `Storage.hpp` and `Components.hpp`: serialized state, setter and native lifecycle.
+- `Resolver.hpp`: contextual reads, native conditions, snapshot and derived writes.
+- `Queries.hpp` and `Multiplier.hpp`: query and shared-calculator integration.
+- `Reactive.hpp`: conditional grants and source-owned counter reconciliation.
+- `inc/engine/SimulationChanges.hpp`: model revisions subscribed to the existing completion boundary.
+- `inc/engine/PhasePermissions.hpp`: scoped card-local phase exceptions.
+- `inc/abilities/SelfTeleport.hpp`: grantable component and innate state.

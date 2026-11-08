@@ -1,3 +1,4 @@
+#include "variables/System.hpp"
 #include "level/LevelSystem.hpp"
 #include "gameplay/PlayRequirement.hpp"
 #include "presentation/DiscardHerald.hpp"
@@ -379,6 +380,7 @@ namespace {
         STARTUP_BOUNDARY(8, "pick3-gameplay-and-submission");
         if(!CustomComponents::Level::Initialize()){LOG_ERR("CustomComponents: Level initialization failed");return;}
         if(!CustomComponents::PlayRequirements::Initialize()){LOG_ERR("CustomComponents: PlayRequirement initialization failed");return;}
+        if(!CustomComponents::Variables::Initialize()){LOG_ERR("CustomComponents: Variables initialization failed");return;}
         CustomComponents::Level::Selection::inputBlocked=[](){return CustomComponents::Pick3::Submission::overlayCapturesInput;};
         // No PvP tracer hooks. The stock RemoteSelectTargetService is used directly
         // by the same submission adapter as PvE; only existing game-input hooks remain.
@@ -469,7 +471,7 @@ namespace {
             }
         }
 
-        LOG_INFO("CustomComponents/BUILD: patch=6.6.8 built=%s %s", __DATE__, __TIME__);
+        LOG_INFO("CustomComponents/BUILD: patch=6.7.0 built=%s %s", __DATE__, __TIME__);
         LOG_INFO("CustomComponents/STARTUP_DIAG: COMPLETED full startup");
 #undef STARTUP_BOUNDARY
         LOG_INFO(
