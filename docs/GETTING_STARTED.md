@@ -1,36 +1,43 @@
 # Getting started
 
-## Install and build
+## Install
 
-1. Place this directory at `Sprig-main/Bloom/CustomComponents`.
-2. From PowerShell, apply the included BNM dependency fix:
+Put this folder in `Sprig-main/Bloom/CustomComponents`. From PowerShell, apply the bundled BNM fix once for your Sprig checkout:
 
-   ```powershell
-   .\patches\BNM-Android\Apply.ps1 -SprigRoot 'C:\path\to\Sprig-main'
-   ```
+```powershell
+.\patches\BNM-Android\Apply.ps1 -SprigRoot 'C:\path\to\Sprig-main'
+```
 
-   The installer verifies the dependency version and its output. It accepts
-   `-WhatIf`. See [the dependency guide](../patches/BNM-Android/README.md) if the
-   checked dependency has local modifications.
-3. Build Sprig's native library and package the APK through your Sprig setup.
-   The module targets the Android ARM64 game build used by Sprig/Bloom.
-4. Install matching native code and rebuilt card data on participating PvP clients.
+Then build Sprig using the normal project build script. The patch has its own instructions at `patches/BNM-Android/README.md`.
 
-Bloom identifies this as a PnP module through `bloom.ini`. A clean checkout builds
-without developer tests, tools or source regenerators. Keep the included generated
-C++ assets under `src/`.
+## Where card JSON goes
 
-## Add a component
+A card definition has an `entity.components` array. Individual components, such as `Variables` or `OverhealToHealth`, go in that array. Triggered effects go inside an `EffectEntitiesDescriptor`, whose `$data.entities` array contains effect entities with their own `components` arrays.
 
-Start with a small [example](../examples/README.md). Component fragments belong in
-an `entity.components` array. Triggers, filters and effects usually belong on
-effect entities inside the card's `EffectEntitiesDescriptor`. Queries belong in
-fields such as `Query`, `SubsetQuery` and `CardQuery`.
+A normal effect entity is arranged like this:
 
-A complete card file is a template. Assign its GUID, prefab and normal metadata
-for your project instead of nesting the entire file inside another component.
-The example indexes identify each file's shape.
+1. `EffectEntityGrouping`
+2. Trigger (for example `PlayTrigger`)
+3. `TriggerTargetFilter` and any other trigger conditions
+4. `PrimaryTargetFilter`
+5. Effect descriptor (for example `HealEffectDescriptor`)
+6. Multiplier and/or `SecondaryTargetFilter`, if the effect uses them
 
-Check that startup reaches the module's ready message. For PF3,
-`CREATION_BINDING: ready=1` confirms that its draw/creation adapters resolved.
-Missing dependencies and unresolved hooks are reported during initialization.
+This is the layout found in the stock card data. Don't flatten effect components into the card's top-level component list.
+
+A complete example of that nesting is [per-target healing](../examples/new-card-features/FullHeal_PerPrimaryTarget.json). A smaller [variable example](../examples/variables/defaults.json) shows a single component.
+
+## JSON conventions
+
+Stock and custom components both use `$type` and `$data`. Examples use the full assembly-qualified form, such as:
+
+```json
+{
+  "$type": "PvZCards.Engine.Components.OverhealToHealth, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": { "Innate": true }
+}
+```
+
+Queries use `PvZCards.Engine.Queries` instead of `PvZCards.Engine.Components`. For names supplied as *values* (such as `GrantableAbilityType: "OverhealToHealth"`), keep the name format shown by that descriptor; not every field is an assembly-qualified type.
+
+When testing, start with one card and one effect. For PvP, both players must have the same native module and gameplay data.

@@ -1,67 +1,26 @@
-# JSON example catalog
+# Card JSON examples
 
-Choose a category, then use the shape column to find the insertion point. These
-are authoring recipes; complete card files contain demonstration identifiers that
-must be adapted to your project.
+These files are recipes, not a second card database. Most show **one component** or an `EffectEntitiesDescriptor` to place inside a card's `entity.components`. Files under `templates/` vary; open the file before copying it.
 
-| Category | Files | Contents |
-| --- | --- | --- |
-| [Variables and SelfTeleport](variables/README.md) | 38 | Typed defaults, setters, expressions, arrays, remembered cards, multipliers and reactive permissions. |
-| [Abilities](abilities/README.md) | 64 | Innate abilities, grants, removal, durations, and destroyable board abilities. |
-| [Base stats and metadata](card-features/README.md) | 8 | Stock-style stat reads/comparisons and add/remove tag/subtype snippets. |
-| [Healing, overheal and swapping](new-card-features/README.md) | 5 | Fully wrapped Play effects for healing, granting Overheal, and swapping; one innate marker. |
-| [Configuration](configuration/README.md) | 1 | INI examples for features configured outside card JSON. |
-| [Deck ordering](deck-order/README.md) | 5 | Signed offsets and absolute positions for a physical deck card. |
-| [Deck subset drawing](draw-effects/README.md) | 6 | Strict/fallback tutors, live-entity queries, and delivered-card heralds. |
-| [PickFromThree](pick-from-three/README.md) | 32 | Selection modes, physical representatives, additional targets, and complete creation setups. |
-| [Play requirements](play-requirements/README.md) | 7 | Per-ability trick gates, Level predicates, and the stock unconditional Unplayable marker. |
-| [Queries](queries/README.md) | 38 | Physical identity, GUID membership, discard provenance, ordered pools, and placement. |
-| [Generated state reference](reference/README.md) | 3 | Runtime marker shapes for understanding queries; do not author these as gameplay actions. |
-| [Card templates and variants](templates/README.md) | 10 | Complete demonstration cards and alternate setups. Replace demonstration GUIDs and prefab metadata before use. |
-| [Triggers](triggers/README.md) | 21 | Named events, built-in trigger firing, discard/return listeners, and picked-card effects. |
-| [Zone effects](zone-effects/README.md) | 27 | Discard, removal, return, revive, and subset-creation options. |
+When an example includes an effect entity, keep its nested `components` array intact. The usual order is grouping, trigger, trigger filters, primary-target filter, effect descriptor, then multiplier or secondary-target filter. That matches the stock card data. All `$type` and type-valued fields use full EngineLib assembly names.
 
-## Where a fragment belongs
+## Find an example
 
-| Shape | Insertion point |
+| Folder | What you'll find |
 | --- | --- |
-| Complete card | A card-data entry; replace GUID, prefab and normal metadata |
-| Effect group component | Card `entity.components`; merge its effect-entity array |
-| Effect entity | `EffectEntitiesDescriptor.$data.entities` |
-| Trigger, filter or effect descriptor | An effect entity's `components` array |
-| Query | A field such as Query, SubsetQuery, CardQuery, or a composite's queries array |
-| Innate ability/BoardAbility component | The card's `entity.components` array |
-| INI configuration | `config.ini`, not card JSON |
+| [abilities](abilities/README.md) | Innate abilities, grants, removal and Level choices |
+| [variables](variables/README.md) | Counters, arrays, expressions and multipliers |
+| [new-card-features](new-card-features/README.md) | Full heal, overheal and position swapping |
+| [card-features](card-features/README.md) | Base stats, comparisons, tags and subtypes |
+| [pick-from-three](pick-from-three/README.md) | Card and definition selection, additional targets |
+| [queries](queries/README.md) | Deck/discard, placement, Level and identity checks |
+| [play-requirements](play-requirements/README.md) | Trick requirements and Level gates |
+| [zone-effects](zone-effects/README.md) | Discard, return, create and play-from-deck |
+| [draw-effects](draw-effects/README.md) | Tutor cards from a deck subset |
+| [deck-order](deck-order/README.md) | Move cards to deck positions |
+| [triggers](triggers/README.md) | Named, discard, return and picked-card events |
+| [templates](templates/README.md) | Larger setups and variants |
+| [reference](reference/README.md) | Runtime shapes for reading only |
+| [configuration](configuration/README.md) | INI settings |
 
-**Use the stock effect-entity component order:** `EffectEntityGrouping`, event
-trigger, source/target filters and requirements, `PrimaryTargetFilter`, effect
-descriptor(s), multiplier, then `SecondaryTargetFilter` if needed. The game puts
-secondary filters **after** the effect descriptor and stock multipliers **after**
-the amount descriptor. Source filters are not effect descriptors. Preserve this
-ordering when adapting samples.
-
-**Full type names:** components and queries include the complete `EngineLib,
-Version=1.0.0.0, Culture=neutral, PublicKeyToken=null` suffix, including
-`ComponentType` inside queries. `Query` fields use proper `$type` / `$data`
-objects, not abbreviated assembly strings. The JSON samples are fragments unless
-the catalog explicitly says "Complete card"; do not add arbitrary `note` keys.
-
-Keep grouping and ownership constraints appropriate for the card. In HeraldEntities,
-`ids` are zero-based indices in the same descriptor's effect-entity array, not
-AbilityGroupIds or card GUIDs. Update them if you append or reorder the entities.
-
-## Identity and selection
-
-Physical queries select an existing card and preserve its modifiers. GUID queries
-select definitions or test whether a GUID occurs in a pool. Use
-PickedFromThreeQuery for a subset payout and PickedFromThreeEntityQuery for the
-actual selected/produced card. See [PF3](../docs/PICKFROMTHREE.md) and
-[query reference](../docs/QUERIES.md).
-
-For card-first PF3 followed by OpenLaneForCardQuery(PickedFromThree), lane finding
-runs after selection. Set AdditionalTargetFirst to reverse interactive ordering.
-Subset creation can grant Team-Up/Aquatic and choose Front/Back; false grant flags
-preserve innate traits. See [zone effects](../docs/ZONE_EFFECTS.md).
-
-The generated-state reference documents engine-written markers. It is not a
-recipe for bypassing the discard, selection or transfer systems.
+For what each custom field does, use the [documentation](../docs/README.md). If you need an entire stock card wrapper, start from your current card data; don't assume a one-component recipe can be loaded as a whole card.

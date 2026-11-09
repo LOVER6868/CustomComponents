@@ -1,11 +1,17 @@
-# Base stats, stat queries and card metadata
+# Stats, tags and subtypes
 
-These are **individual snippets**, intended to be inserted into the game card's
-normal JSON structure rather than treated as standalone cards:
+These are individual query or effect components. Queries belong in a filter’s `Query` field; tag and subtype descriptors belong on an effect entity after primary targeting. They are not standalone cards. See [card stats reference](../../docs/reference/card-stats.md).
 
-- `AddTagEffectDescriptor`, `RemoveTagEffectDescriptor`, `AddSubtypeEffectDescriptor`, and `RemoveSubtypeEffectDescriptor` go inside an **effect entity's** `components` array, after its trigger and primary-target filter. An effect can modify only the fighter it actually selects.
-- `StatComparisonQuery`, `StatModifierQuery`, and `VariableComparisonQuery` go into a `Query` field on a corresponding filter or requirement.
-- `SetVariableEffectDescriptor` requires the surrounding effect to execute and a `Variables` component defining the referenced variable, where appropriate.
-- Subtypes are **numeric IDs** in `Subtypes.$data.subtypes`; tags are strings in `Tags.$data.tags`. The demonstrated subtype ID `4` is stock **Mushroom**; change it to the ID you want to add/remove.
+## Start with these
 
-All class strings include `EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null`, including nested `ComponentType` references.
+- [Compare base cost](base-cost-comparison.json)
+- [Cost versus attack](cost-greater-than-attack.json)
+- [Buffed health](health-buffed.json)
+- [Add tag](add-tag.json)
+- [Remove subtype](remove-subtype.json)
+
+## Other variants
+
+- [add-subtype.json](add-subtype.json)
+- [remove-tag.json](remove-tag.json)
+- [snapshot-base-attack.json](snapshot-base-attack.json)

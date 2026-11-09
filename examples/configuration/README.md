@@ -1,9 +1,6 @@
-# Configuration
+# Configuration examples
 
-INI examples for features configured outside card JSON.
+INI snippets belong in `config.ini`, not card JSON. PNG files mentioned by icon settings must be supplied separately. See [configuration](../../docs/reference/configuration.md).
 
-See the [insertion guide](../README.md) before copying a fragment.
-
-| Example | Shape | Purpose |
-| --- | --- | --- |
-| [stat-icons.ini](stat-icons.ini) | INI configuration | Merge this section into config.ini; supply the referenced PNG separately. |
+## Start with these
+## Files

@@ -1,11 +1,9 @@
-# Generated state reference
+# Runtime reference shapes
 
-Runtime marker shapes for understanding queries; do not author these as gameplay actions.
+These are examples of data that appears **after** an effect executes. Don’t add runtime marker components to a card as though they were authorable descriptors.
 
-See the [insertion guide](../README.md) before copying a fragment.
-
-| Example | Shape | Purpose |
-| --- | --- | --- |
-| [discarded-runtime-marker.json](discarded-runtime-marker.json) | Component | Discarded runtime marker (`Discarded`). |
-| [remove-adjacent-attacks-runtime.json](remove-adjacent-attacks-runtime.json) | Component | Remove adjacent attacks runtime (`RemoveGrantAbilityEffect`). |
-| [remove-multishot-runtime.json](remove-multishot-runtime.json) | Component | Remove multishot runtime (`RemoveGrantAbilityEffect`). |
+## Start with these
+## Files
+- [discarded-runtime-marker.json](discarded-runtime-marker.json)
+- [remove-adjacent-attacks-runtime.json](remove-adjacent-attacks-runtime.json)
+- [remove-multishot-runtime.json](remove-multishot-runtime.json)

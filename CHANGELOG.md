@@ -2,91 +2,38 @@
 
 ## Unreleased
 
-Compared with published [`main` at e6b7823](https://github.com/LOVER6868/CustomComponents/tree/e6b7823e140e34918accd22ad8c4d2f1daa89db9),
-verified on 2026-11-06. These are the changes in this working version, not released
-GitHub version numbers.
+This branch builds on [upstream `e6b7823`](https://github.com/LOVER6868/CustomComponents/tree/e6b7823e140e34918accd22ad8c4d2f1daa89db9). The entries below describe the current work, not separate releases or version numbers.
 
-### Added
+### Card mechanics
 
-- Typed per-card variables, checked expressions, array operations and variable-backed queries/multipliers.
-- Revision-based continuous variable bindings and conditional card-local SelfTeleport grants.
-- Card-local SelfTeleport permissions without granting a player-wide surprise window.
+- Added **Level** choices with fixed or spend-all costs, X-based buffs, a `Leveled` value, and synced hand selection. Level stat and cost displays use the existing game UI.
+- Added typed **card variables**, expressions, comparisons, array operations, continuous bindings, and multipliers. `LevelSpentMultiplier` uses `Leveled.Value`; `VariableMultiplier` can read card stats and evaluate each `PrimaryTarget` separately.
+- Added **OverhealToHealth** and a position-swap effect. Overhealing queues a stock health buff; swapping uses native lane placement and movement history. Both still need device-level verification of triggers and animation.
+- Added base-stat comparisons, stat buff/nerf checks, and effects to add or remove tags and subtypes.
+- Added per-ability **PlayRequirement** checks for tricks.
 
-- Per-ability PlayRequirement queries with pre-payment eligibility snapshots.
+### Abilities and targeting
 
-- Level options with ordered extra costs, signed/X buffs, synchronized hand modifiers, a shake gesture and pulse.
-- Leveled state and comparison queries, with owned modifier cleanup on departure.
-- A versioned Level command extension preserved through prediction copies and pooling.
-- Explicit removal of stock/custom abilities, including innate or source-scoped modes.
+- Added or extended Armor, Charge, Thrash, RandomKeyword, Withering, Multishot, AttacksOnlyInAdjacentLanes, and card-local SelfTeleport grants, including duration and removal handling.
+- Added **PickFromThree** selection of physical cards and database definitions, with extra-target selection, picked-card queries, and PvP synchronization.
+- Added named trigger firing, custom discard/return triggers, and support for destroying hidden BoardAbility entities.
 
-- Withering grants with hand/deck discard and board-destruction modes.
-- Grantable native Multishot and AttacksOnlyInAdjacentLanes markers.
-- Physical deck-to-lane deployment with PF3 targeting and play-trigger semantics.
+### Cards and zones
 
-- RandomKeyword grants with configurable pools and source/duration-aware removal.
-- Destroyable hidden BoardAbility support.
-- Configurable StatIcons and a reusable frame-icon provider registry.
-- CreateCardInDeckFromSubset for integrated subset-based deck creation/shuffling.
-- ListPositionQuery for deck/discard positions from either end.
-- OpenLaneForCardQuery and CanBePlacedQuery for placement-aware targeting.
-- Independent additional-target selection and additional-first ordering for PF3.
-- Team-Up, Aquatic and front/back options for stock subset creation.
-- A current feature catalog, authoring guides and categorized example indexes.
+- Added deck/discard transfer effects, direct deck deployment to lanes, deck ordering, subset tutors, and creation from card definitions.
+- Preserved physical card identity through selection and transfers, including copies with the same GUID.
+- Added placement queries, Team-Up/Aquatic creation options, herald information, and optional custom stat icons.
 
-### Changed
+### Native integration
 
-- Level stat colours survive the native card dimmer without changing its fade behavior.
-- Final trick validation combines each ability's requirement and primary-target eligibility.
+- Consolidated shared hooks, effect queues, model/copy bookkeeping, selection state, and frontend update handling. This reduces overlapping native detours.
+- Improved Level affordability, targeting previews, and PickFromThree menu recovery across consecutive selections.
+- Kept development diagnostics and generated files outside the distributed module.
 
-- Hand-mode submissions provide valid native completion delegates, allowing immediate preview, tint and legal-play cache refresh.
+### Documentation
 
-- Level hand modes use real queryable modifiers and stock stat colours without emitting buff triggers.
-- Full-cost/X modes follow current resources and reset when no extra payment remains.
-- Physical PF3 eligibility verifies its own primary query instead of counting only a casting zone.
+- Reorganized short-lived patch notes into the maintained guides and reference pages.
+- Matched the JSON examples to stock assembly-qualified type strings and game-style effect ordering.
+- Removed only verified duplicate examples; the other recipes remain available.
 
-- Play requirements combine with each ability's native primary-target eligibility and preserve final stock validation.
-- Level changes rebuild native playability and refresh the current card, lane or casting-zone targets.
-- Selected Level cost text overrides its font face, cached colour, gradient and colour tags, restoring owned settings on return to base.
-
-- Unaffordable Level options also hide drag-time placement and target markers.
-- Level cost-number tint follows native colour updates and refreshes its text mesh.
-
-- Selected Level costs control hand affordability highlights and use a configurable cost tint.
-- Level changes use a larger, longer pulse that can finish after returning a card to hand.
-- PF3 board-light suppression preserves stock target discovery for consecutive menus.
-
-- Custom ability expiry skips absent components and counters with no matching duration.
-- Level tables read boxed JSON numbers directly and report the failed field when invalid.
-- Leveled queries see private hand choices and command-scoped trick validation, resetting at base.
-
-- PF3 selection, submission and listener routing retain model/effect/group/generation
-  identity and exact physical representatives, including automatic unique-GUID choices.
-- Verified created-card binding participates in normal operation independently of
-  tracing. Provisional target queries remain separate from committed picked queries.
-- Consecutive menus observe the frontend frame tick and refresh the real local
-  holder without submitting synthetic board actions.
-- Return-to-lane preserves card identity, supports fighters/environments, checks
-  fighter capacity and Aquatic water placement, and excludes return-origin moves.
-- Custom discards provide their own herald origin and cooperate with optional
-  HeraldModifiers. Inspection stat reconciliation is confined to discard viewing.
-- Deck subset drawing supports physical-entity queries and delivered-card heralds.
-- Subset creation options survive deserialization/copying; granted Aquatic affects
-  the stock subset finder before its innate-trait lane restriction.
-- Shared services centralize native hook ownership, model lifetime, queues, managed
-  settings and subset selection.
-
-### Performance and distribution
-
-- Reuse generation metadata instead of copying the full selection history.
-- Reuse verified router model lookups and cache tag/keyword metadata.
-- Avoid copying every tag for a single-prefix lookup.
-- Add bounded nested timing for turn/phase, copy, selection and ability expiry work.
-- Separate local tests, maintenance tools and investigation notes from the GitHub
-  distribution. Include the required dependency installer with the production patch.
-- Replace scattered private iteration notes with the current public manual.
-
-### Validation
-
-Local host, schema and native build checks accompany development. Device gameplay
-and performance measurements remain separate evidence; the manual documents current
-constraints rather than claiming universal test coverage.
+Host compilation and source tests are not the same as testing on Android. The [compatibility page](docs/reference/compatibility.md) keeps track of what still needs game testing.
