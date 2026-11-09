@@ -1,3 +1,7 @@
+#include <cstring>
+#include "effects/CardMetadataEffects.hpp"
+#include "effects/SwapPositionEffectDescriptor.hpp"
+#include "abilities/OverhealToHealthSystem.hpp"
 #include "variables/System.hpp"
 #include "level/LevelSystem.hpp"
 #include "gameplay/PlayRequirement.hpp"
@@ -381,6 +385,9 @@ namespace {
         if(!CustomComponents::Level::Initialize()){LOG_ERR("CustomComponents: Level initialization failed");return;}
         if(!CustomComponents::PlayRequirements::Initialize()){LOG_ERR("CustomComponents: PlayRequirement initialization failed");return;}
         if(!CustomComponents::Variables::Initialize()){LOG_ERR("CustomComponents: Variables initialization failed");return;}
+        if(!CustomComponents::Effects::CardMetadata::Initialize()){LOG_ERR("CustomComponents: CardMetadata effect initialization failed");return;}
+        if(!CustomComponents::Abilities::OverhealToHealth::InitializeSystem()){LOG_ERR("CustomComponents: OverhealToHealth hook initialization failed");return;}
+        if(!CustomComponents::Effects::SwapPosition::Initialize()){LOG_ERR("CustomComponents: SwapPosition effect initialization failed");return;}
         CustomComponents::Level::Selection::inputBlocked=[](){return CustomComponents::Pick3::Submission::overlayCapturesInput;};
         // No PvP tracer hooks. The stock RemoteSelectTargetService is used directly
         // by the same submission adapter as PvE; only existing game-input hooks remain.

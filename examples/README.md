@@ -6,8 +6,10 @@ must be adapted to your project.
 
 | Category | Files | Contents |
 | --- | --- | --- |
-| [Variables and SelfTeleport](variables/README.md) | 36 | Typed defaults, setters, expressions, arrays, remembered cards, multipliers and reactive permissions. |
+| [Variables and SelfTeleport](variables/README.md) | 38 | Typed defaults, setters, expressions, arrays, remembered cards, multipliers and reactive permissions. |
 | [Abilities](abilities/README.md) | 64 | Innate abilities, grants, removal, durations, and destroyable board abilities. |
+| [Base stats and metadata](card-features/README.md) | 8 | Stock-style stat reads/comparisons and add/remove tag/subtype snippets. |
+| [Healing, overheal and swapping](new-card-features/README.md) | 5 | Fully wrapped Play effects for healing, granting Overheal, and swapping; one innate marker. |
 | [Configuration](configuration/README.md) | 1 | INI examples for features configured outside card JSON. |
 | [Deck ordering](deck-order/README.md) | 5 | Signed offsets and absolute positions for a physical deck card. |
 | [Deck subset drawing](draw-effects/README.md) | 6 | Strict/fallback tutors, live-entity queries, and delivered-card heralds. |
@@ -30,6 +32,19 @@ must be adapted to your project.
 | Query | A field such as Query, SubsetQuery, CardQuery, or a composite's queries array |
 | Innate ability/BoardAbility component | The card's `entity.components` array |
 | INI configuration | `config.ini`, not card JSON |
+
+**Use the stock effect-entity component order:** `EffectEntityGrouping`, event
+trigger, source/target filters and requirements, `PrimaryTargetFilter`, effect
+descriptor(s), multiplier, then `SecondaryTargetFilter` if needed. The game puts
+secondary filters **after** the effect descriptor and stock multipliers **after**
+the amount descriptor. Source filters are not effect descriptors. Preserve this
+ordering when adapting samples.
+
+**Full type names:** components and queries include the complete `EngineLib,
+Version=1.0.0.0, Culture=neutral, PublicKeyToken=null` suffix, including
+`ComponentType` inside queries. `Query` fields use proper `$type` / `$data`
+objects, not abbreviated assembly strings. The JSON samples are fragments unless
+the catalog explicitly says "Complete card"; do not add arbitrary `note` keys.
 
 Keep grouping and ownership constraints appropriate for the card. In HeraldEntities,
 `ids` are zero-based indices in the same descriptor's effect-entity array, not

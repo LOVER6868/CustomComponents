@@ -131,3 +131,18 @@ stat colour. Other labels and cards keep their normal dimmer behavior.
 Frame binding also preserves original stat baselines when a snapshot already
 contains the selected numbers, so unchanged-value optimizations cannot hide the
 buff or nerf colour.
+
+## Scaling effects by the selected Level
+
+`Leveled.Value` is the **extra sun** selected by a Level option; the normal
+play has no public `Leveled` marker and reads as zero. This differs from the
+zero-based option `EntryIndex` and the card's total sun cost.
+
+The optional `LevelSpentMultiplier` multiplies native multiplier-aware effect
+amounts by this value; it inherits `Query` and `Divider` from `QueryMultiplier`.
+For example, damage 2 at Level 3 deals 6 with Divider 1.
+
+In `SetVariableEffectDescriptor`, set `ValueSource` to `Level`, `ValueType` to
+`Int` and `Owner` to `Self` to copy the same selected extra-sun number into a
+card variable. Both features read the existing `Leveled` component and do not
+create a separate payment component. See `docs/VARIABLES.md` and examples.

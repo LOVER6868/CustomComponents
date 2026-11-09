@@ -1,0 +1,8 @@
+{
+  "$type": "PvZCards.Engine.Queries.VariableComparisonQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "Expression": "Cost",
+    "ValueExpression": "Attack",
+    "ComparisonOperator": "Greater"
+  }
+}

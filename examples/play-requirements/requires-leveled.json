@@ -1,8 +1,8 @@
 {
-  "$type": "PvZCards.Engine.Components.PlayRequirement, EngineLib",
+  "$type": "PvZCards.Engine.Components.PlayRequirement, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
   "$data": {
     "Query": {
-      "$type": "PvZCards.Engine.Queries.LeveledQuery, EngineLib",
+      "$type": "PvZCards.Engine.Queries.LeveledQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
       "$data": {
         "Value": 0,
         "ComparisonOperator": "Greater"

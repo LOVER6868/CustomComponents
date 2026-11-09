@@ -1,4 +1,4 @@
 {
-  "$type": "PvZCards.Engine.Components.Unplayable, EngineLib",
+  "$type": "PvZCards.Engine.Components.Unplayable, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
   "$data": {}
 }

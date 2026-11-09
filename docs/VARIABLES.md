@@ -71,6 +71,7 @@ The last three use the default integer value when no input is needed.
 | `Self`, `Target` | Source or runtime target as a GUID or entity |
 | `PrimaryGuid` | Runtime target's GUID; use `DatabaseQuery` + `PickedFromThreeQuery` for database PF3 choices |
 | `Attack`, `Health`, `Cost` | Owner's current calculated stat, as `Int` |
+| `Level` | Owner's `Leveled.Value` (extra sun selected); 0 when not leveled, as `Int` |
 | `ArrayElement` | Scalar from the array named by `Expression`, at index `Value` |
 | `ArrayLength` | Length of the array named by `Expression` |
 
@@ -142,6 +143,26 @@ draw systems. An effect that never consults the native calculator does not gain
 multiplier support merely by adding the component. The multiplier changes
 numeric amounts, not GUIDs, entity references or arrays.
 
+## LevelSpentMultiplier
+
+Use `LevelSpentMultiplier` on an effect entity alongside a native multiplier-aware
+amount effect (such as damage). It reads `Leveled.Value` directly from the source
+card, or the single entity selected by inherited `Query`. Without a query it
+uses the source card. Inherited native `Divider` applies, with 0 treated as 1.
+
+This counts **extra sun selected by Level**, not the full card cost, and not the
+0-based `Leveled.EntryIndex`. For normal plays without `Leveled`, the factor is
+0. Example: base damage 2 and `Leveled.Value=3` yields 6 damage (`Divider=1`).
+No `LevelSunPayment` component or extra runtime payment bookkeeping is needed.
+See `examples/variables/level-spent-multiplier.json`.
+
+To store the same level as an integer variable, use `SetVariableEffectDescriptor`
+with `ValueSource: "Level"`, `ValueType: "Int"` and `Owner: "Self"`.
+It resolves using the existing setter owner, so `OwnerQuery` can choose a
+specific card instead. See `examples/variables/snapshot-level.json`.
+This setter is still subject to normal trigger timing: run it while the card
+retains its `Leveled` marker; the value can reset if the card is returned to hand.
+
 ## Reactive continuous values
 
 With `Continuous`, a setter defines a derived value rather than repeatedly
@@ -190,3 +211,8 @@ two-client PvP testing are still required before treating a new card as verified
 
 Ordered post-effect sequences are a separate feature. This foundation does not
 add an `AfterEffects` field to stock descriptors.
+
+
+### Additional stat snapshot sources (2026-11-08)
+
+`ValueSource` additionally supports `BaseAttack`, `BaseHealth`, `BaseCost`, `CurrentHealth`, and `DamageTaken`. See [Card stat and metadata status](CARD_FEATURES_STATUS.md). Existing `Attack`, `Health`, `Cost` sources are unchanged.

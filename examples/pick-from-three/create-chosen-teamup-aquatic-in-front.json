@@ -27,16 +27,15 @@
             "$type": "PvZCards.Engine.Components.PrimaryTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
             "$data": {
               "SelectionType": "PickFromThreeCardDatabase",
-              "AdditionalTargetSelectionType": "Manual",
               "NumTargets": 1,
               "TargetScopeType": "All",
               "TargetScopeSortValue": "None",
               "TargetScopeSortMethod": "None",
               "AdditionalTargetType": "Query",
               "AdditionalTargetQuery": {
-                "$type": "PvZCards.Engine.Queries.OpenLaneQuery, EngineLib",
+                "$type": "PvZCards.Engine.Queries.OpenLaneQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
                 "$data": {
-                  "PlayerFactionType": "PvZCards.Engine.Components.Plants, EngineLib",
+                  "PlayerFactionType": "PvZCards.Engine.Components.Plants, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
                   "IsForTeamupCard": true
                 }
               },
@@ -74,7 +73,8 @@
                     }
                   ]
                 }
-              }
+              },
+              "AdditionalTargetSelectionType": "Manual"
             }
           },
           {

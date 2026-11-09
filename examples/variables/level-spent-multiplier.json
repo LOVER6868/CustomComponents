@@ -1,0 +1,10 @@
+{
+  "$type": "PvZCards.Engine.Components.LevelSpentMultiplier, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "Divider": 1,
+    "Query": {
+      "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+      "$data": {}
+    }
+  }
+}

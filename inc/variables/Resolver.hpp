@@ -1,6 +1,8 @@
 #pragma once
 #include "variables/Components.hpp"
 #include "variables/Expressions.hpp"
+#include "level/LevelValue.hpp"
+#include "engine/CardStatValues.hpp"
 #include "engine/BoardPlacement.hpp"
 #include "engine/EffectGuards.hpp"
 #include "queries/InDeckQuery.hpp"
@@ -82,10 +84,32 @@ template<class Spec> inline std::optional<Value> Resolve(const Spec& spec,Contex
         QueryScope scope(c);auto matches=scope.Find(spec.Query,mode=="DatabaseQuery");if(mode=="QueryCount")return *kind==Kind::Int?std::optional<Value>(Value{Kind::Int,{int(matches.size())}}):std::nullopt;
         Value value{*kind,{}};for(Obj* e:matches){int n=(*kind==Kind::Guid || *kind==Kind::Guids)?Engine::BoardPlacement::Guid(e):Engine::Match::Id(e);if(n<0)return {};value.items.push_back(n);}return value.Valid()?std::optional<Value>(value):std::nullopt;
     }
+    if(mode=="Level") {
+        // Level is Leveled.Value (extra sun), not the option index or total cost.
+        // A normal play has no Leveled component and yields Int(0).
+        if(*kind!=Kind::Int) return {};
+        auto level=Level::ReadLevelValue(expressionOwner);
+        return level?std::optional<Value>(Value{Kind::Int,{*level}}):std::nullopt;
+    }
     if(mode=="Attack" || mode=="Health" || mode=="Cost"){
-        if(*kind!=Kind::Int || !expressionOwner)return {};Obj* stat=Engine::EntityAccess::Component(expressionOwner,mode=="Cost"?"SunCost":mode.c_str());if(!stat)return {};
-        if(mode=="Attack" || mode=="Health"){auto method=BNM::Class(stat).GetMethod(mode=="Attack"?"CalculateAttack":"CalculateHealth",0).template cast<int>();return method.IsValid()?std::optional<Value>(Value{Kind::Int,{method[stat]()}}):std::nullopt;}
-        if(Engine::EntityAccess::Component(expressionOwner,"IsFree"))return Value{Kind::Int,{0}};auto field=BNM::Class(stat).GetField("SunCostValue").cast<Obj*>();auto calculate=BNM::Class("PvZCards.Engine.Utilities","ModifiableIntCalculator").GetMethod("CalculateValue",1).cast<int>();return Value{Kind::Int,{std::max(0,calculate(field[stat].Get()))}};
+        // Retain existing semantics of the original variable value sources.
+        if(*kind!=Kind::Int || !expressionOwner)return {};
+        Obj* stat=Engine::EntityAccess::Component(expressionOwner,mode=="Cost"?"SunCost":mode.c_str());
+        if(!stat)return {};
+        if(mode=="Attack" || mode=="Health"){
+            auto method=BNM::Class(stat).GetMethod(mode=="Attack"?"CalculateAttack":"CalculateHealth",0).template cast<int>();
+            return method.IsValid()?std::optional<Value>(Value{Kind::Int,{method[stat]()}}):std::nullopt;
+        }
+        if(Engine::EntityAccess::Component(expressionOwner,"IsFree"))return Value{Kind::Int,{0}};
+        auto field=BNM::Class(stat).GetField("SunCostValue").cast<Obj*>();
+        auto calculate=BNM::Class("PvZCards.Engine.Utilities","ModifiableIntCalculator").GetMethod("CalculateValue",1).cast<int>();
+        return field.IsValid() && calculate.IsValid()?std::optional<Value>(Value{Kind::Int,{std::max(0,calculate(field[stat].Get()))}}):std::nullopt;
+    }
+    if(mode=="BaseAttack" || mode=="BaseHealth" || mode=="BaseCost" ||
+       mode=="CurrentHealth" || mode=="DamageTaken"){
+        if(*kind!=Kind::Int)return {};
+        auto value=Engine::CardStatValues::Read(expressionOwner,mode);
+        return value?std::optional<Value>(Value{Kind::Int,{*value}}):std::nullopt;
     }
     if(mode=="Self" || mode=="Target" || mode=="PrimaryGuid"){
         if(*kind==Kind::Int || *kind==Kind::Ints || (mode=="PrimaryGuid" && *kind!=Kind::Guid && *kind!=Kind::Guids))return {};

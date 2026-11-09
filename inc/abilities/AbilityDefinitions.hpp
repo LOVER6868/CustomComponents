@@ -8,6 +8,7 @@
 #include "abilities/MarkerGrantState.hpp"
 #include "abilities/Withering.hpp"
 #include "abilities/SelfTeleport.hpp"
+#include "abilities/OverhealToHealth.hpp"
 #include "abilities/Charge.hpp"
 #include "abilities/Thrash.hpp"
 #include "core/AbilityRegistry.hpp"
@@ -54,7 +55,7 @@ namespace CustomComponents::AbilityDefinitions {
         if (!hasComponent.IsValid() || !getComponent.IsValid() ||
             !getOrAddComponent.IsValid() || !chargeType || !thrashType) return false;
 
-        if (!Abilities::MarkerGrants::Initialize() || !Abilities::Withering::Initialize() || !Abilities::SelfTeleport::Initialize()) return false;
+        if (!Abilities::MarkerGrants::Initialize() || !Abilities::Withering::Initialize() || !Abilities::SelfTeleport::Initialize() || !Abilities::OverhealToHealth::Initialize()) return false;
         if (!AbilityRegistry::Register({Armor, "Armor", AbilityStorage::Numeric,
                 nullptr, Armor::GetValue, ArmorSpecialAbilityType}) ||
             !AbilityRegistry::Register({Charge, "Charge", AbilityStorage::Grantable,
@@ -64,7 +65,8 @@ namespace CustomComponents::AbilityDefinitions {
             !AbilityRegistry::Register({23,"Withering",AbilityStorage::Grantable,Abilities::Withering::Get,nullptr}) ||
             !AbilityRegistry::Register({24,"Multishot",AbilityStorage::Marker,Abilities::MarkerGrants::Multishot,nullptr,-1,"GrantedMultishot"}) ||
             !AbilityRegistry::Register({25,"AttacksOnlyInAdjacentLanes",AbilityStorage::Marker,Abilities::MarkerGrants::Adjacent,nullptr,-1,"GrantedAdjacentAttacks"}) ||
-            !AbilityRegistry::Register({Abilities::SelfTeleport::Id,"SelfTeleport",AbilityStorage::Grantable,Abilities::SelfTeleport::Get,nullptr})) {
+            !AbilityRegistry::Register({Abilities::SelfTeleport::Id,"SelfTeleport",AbilityStorage::Grantable,Abilities::SelfTeleport::Get,nullptr}) ||
+            !AbilityRegistry::Register({Abilities::OverhealToHealth::Id,"OverhealToHealth",AbilityStorage::Grantable,Abilities::OverhealToHealth::Get,nullptr})) {
             LOG_ERR("CustomComponents/Abilities: registry registration failed");
             return false;
         }

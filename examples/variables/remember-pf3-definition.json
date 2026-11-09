@@ -15,22 +15,34 @@
             "$data": {}
           },
           {
-            "$type": "PvZCards.Engine.Components.PrimaryTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$type": "PvZCards.Engine.Components.TriggerTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
             "$data": {
               "Query": {
-                "$type": "PvZCards.Engine.Queries.HasComponentQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
-                "$data": {
-                  "ComponentType": "PvZCards.Engine.Components.Plants, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
-                }
-              },
+                "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                "$data": {}
+              }
+            }
+          },
+          {
+            "$type": "PvZCards.Engine.Components.PrimaryTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {
               "SelectionType": "PickFromThreeCardDatabase",
               "NumTargets": 1,
+              "TargetScopeType": "All",
+              "TargetScopeSortValue": "None",
+              "TargetScopeSortMethod": "None",
               "AdditionalTargetType": "Query",
               "AdditionalTargetQuery": {
                 "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
                 "$data": {}
               },
-              "OnlyApplyEffectsOnAdditionalTargets": true
+              "OnlyApplyEffectsOnAdditionalTargets": true,
+              "Query": {
+                "$type": "PvZCards.Engine.Queries.HasComponentQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                "$data": {
+                  "ComponentType": "PvZCards.Engine.Components.Plants, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
+                }
+              }
             }
           },
           {
@@ -42,15 +54,6 @@
               "ValueSource": "DatabaseQuery",
               "Query": {
                 "$type": "PvZCards.Engine.Queries.PickedFromThreeQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
-                "$data": {}
-              }
-            }
-          },
-          {
-            "$type": "PvZCards.Engine.Components.TriggerTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
-            "$data": {
-              "Query": {
-                "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
                 "$data": {}
               }
             }

@@ -27,7 +27,6 @@
             "$type": "PvZCards.Engine.Components.PrimaryTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
             "$data": {
               "SelectionType": "PickFromThreeCardDatabase",
-              "AdditionalTargetSelectionType": "Manual",
               "NumTargets": 1,
               "TargetScopeType": "All",
               "TargetScopeSortValue": "None",
@@ -109,6 +108,7 @@
                   ]
                 }
               },
+              "AdditionalTargetSelectionType": "Manual",
               "AdditionalTargetFirst": true
             }
           },
