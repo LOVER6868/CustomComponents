@@ -31,7 +31,7 @@
     inline BNM::Field<int> laneEventCardId;
     inline BNM::Field<int> laneEventOrder;
     inline BNM::Field<bool> laneEventFaceDown;
-    inline BNM::Field<int> laneRecordTargetId;
+    inline BNM::Method<int> laneRecordTargetId;
     inline BNM::Method<Obj*> laneRecordGetCard;
     inline BNM::Field<int> laneCardDataEntityId;
     inline std::uint64_t laneTraceStartCount = 0;
@@ -65,7 +65,7 @@
 
     inline void LaneTraceCardFrame(Obj* view, const char* stage) {
         if (!view || !cardViewEntityId.IsValid() || !cardViewFrame.IsValid() ||
-            std::strcmp(TraceObjectType(view), "CardViewComponent") != 0) return;
+            !IsMappedCardView(view)) return;
         const int id = cardViewEntityId[view].Get();
         Obj* model = nullptr;
         for (const auto& bound : frameViewBindings) {
@@ -100,7 +100,7 @@
         if (n <= 200) CUSTOMCOMPONENTS_LANE_TRACE(
             "CustomComponents/ZoneTriggeredAbilityPresentation/LANEENTRY: CREATE_EVENT ENTER seq=%llu record=%p card=%d laneTarget=%d",
             (unsigned long long)n, record, recordCardId,
-            record && laneRecordTargetId.IsValid() ? laneRecordTargetId[record].Get() : -1);
+            record && laneRecordTargetId.IsValid() ? laneRecordTargetId[record]() : -1);
         Obj* action = originalLaneCreateCardEvent(self, record, method);
         if (n <= 200) CUSTOMCOMPONENTS_LANE_TRACE(
             "CustomComponents/ZoneTriggeredAbilityPresentation/LANEENTRY: CREATE_EVENT EXIT seq=%llu action=%p type=%s actionCard=%d order=%d faceDown=%d",
@@ -153,7 +153,7 @@
             ? laneAnimationCardId[animation].Get() : -1;
         if (laneView && model && id >= 0 && cardViewEntityId.IsValid() &&
             cardViewEntityId[laneView].Get() == id &&
-            std::strcmp(TraceObjectType(laneView), "CardViewComponent") == 0) {
+            IsMappedCardView(laneView)) {
             BindFrameView(laneView, model, id);
             // Do not expose unrevealed face-down cards through stat changes.
             if (laneAnimationFaceDown.IsValid() &&
@@ -196,6 +196,7 @@
         const auto n = ++laneTraceBoardCount;
         if (n <= 200) LaneTraceCardFrame(static_cast<Obj*>(self), "PLAYED_TO_BOARD BEFORE");
         originalLanePlayedToBoard(self, state, method);
+        frameStatsDirty=true;
         if (n <= 200) LaneTraceCardFrame(static_cast<Obj*>(self), "PLAYED_TO_BOARD AFTER");
     }
 

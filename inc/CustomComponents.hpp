@@ -1,4 +1,29 @@
 #pragma once
+#include "engine/AiPerformance.hpp"
+#include <cstring>
+#include "effects/CardMetadataEffects.hpp"
+#include "effects/SwapPositionEffectDescriptor.hpp"
+#include "presentation/CombatFacingPresentation.hpp"
+#include "combat/DamageRedirection.hpp"
+#include "combat/ExtraCombat.hpp"
+#include "abilities/OverhealToHealthSystem.hpp"
+#include "variables/System.hpp"
+#include "level/LevelSystem.hpp"
+#include "gameplay/PlayRequirement.hpp"
+#include "presentation/DiscardHerald.hpp"
+#include "presentation/StatIconSystem.hpp"
+#include "presentation/FrameIconRegistry.hpp"
+#include "effects/CreateCardInDeckFromSubset.hpp"
+#include "engine/EntityAccess.hpp"
+#include "engine/SubsetSelection.hpp"
+
+#include <cstdio>
+#include <cstdlib>
+#include <cerrno>
+#include <cstring>
+
+#include "log.h"
+
 
 // Shared component and ability registries
 #include "core/CustomComponentRegistry.hpp"
@@ -47,3 +72,19 @@
 #include "effects/SubsetCreationExtensions.hpp"
 
 #include "queries/PlacementQueries.hpp"
+#include "queries/LaneQueries.hpp"
+#include "queries/PrimaryTargetsQuery.hpp"
+#include "queries/WasDamagedThisTurnQuery.hpp"
+#include "queries/CardClassificationQueries.hpp"
+
+#include "cost/CostModifierLifetime.hpp"
+
+#include "abilities/BoardAbilitySystem.hpp"
+#include "diagnostics/Pick3PredictionIsolationAudit.hpp"
+#include "diagnostics/PvpInitialModelAudit.hpp"
+#include "diagnostics/PvpDeckPrepopulatePrototype.hpp"
+#include "pick3/Pick3ReleaseSafety.hpp"
+#include "pick3/CreationProvenance.hpp"
+#include "DrawCardFromSubsetInDeck.hpp"
+#include "DiscardPileZoneEffects.hpp"
+

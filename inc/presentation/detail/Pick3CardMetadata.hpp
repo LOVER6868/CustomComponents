@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <mutex>
 #include <string>
+#include "queries/CardClassificationPolicy.hpp"
 #include <BNM/Class.hpp>
 #include <BNM/Field.hpp>
 #include <BNM/Method.hpp>
@@ -43,7 +44,7 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
     inline BNM::Field<int> displayAttack, displayHealth, displayCost;
     inline BNM::Field<bool> isFighter, isEnvironment;
     inline BNM::Field<int> faction, cardColorField;
-    inline BNM::Field<Str*> prefabName, baseId;
+    inline BNM::Field<Str*> prefabName, baseId, cardSet;
     inline BNM::Field<Obj*> specialAbilities;
     inline BNM::Method<int> attackIconDecider, healthIconDecider;
     inline bool useTraitIcons = true;
@@ -61,6 +62,10 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
         bool fighter=false, environment=false;
     };
     inline std::unordered_map<int,Snapshot> snapshots;
+    // Independently cached top-level CardData.Set metadata, keyed by GUID.
+    // Does not depend on the optional Pick3 UI being enabled.
+    inline std::unordered_map<int,std::string> setSnapshots;
+    inline std::unordered_map<int,int> colorSnapshots;
     inline std::mutex snapshotMutex;
     inline unsigned int snapshotCount=0;
     // Passive capture of game-driven card_data initialization. The game calls
@@ -79,12 +84,16 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
         return true;
     }
     inline void CaptureSnapshot(int guid, Obj* data);
+    inline void CaptureSet(int guid, Obj* data);
     inline void SetCardDataCapture(Obj* self, int guid, Obj* data, const void* method) {
         if (!originalSetCardData) return;
         // Preserve game behavior before performing any optional observations.
         originalSetCardData(self, guid, data, method);
         // Notify other Bloom modules after the stock mapper has updated.
         if (sharedObserver) sharedObserver(self, guid, data, method);
+        if (self && guid>0 && data && mapperClass.IsValid() &&
+            dataClass.IsValid() && BNM::IsA(self, mapperClass) && BNM::IsA(data, dataClass))
+            CaptureSet(guid, data);
         if (mapperCaptureActive && self && guid>0 && data &&
             mapperClass.IsValid() && BNM::IsA(self,mapperClass) &&
             dataClass.IsValid() && BNM::IsA(data,dataClass)) {
@@ -100,6 +109,37 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
         if (!info || info->parameters_count!=2 || !info->methodPointer) return false;
         CustomComponents::Core::Hooks::Install(method,SetCardDataCapture,originalSetCardData);
         return originalSetCardData!=nullptr;
+    }
+
+    inline bool EnsureSetCapture() {
+        mapperClass = BNM::Class("PvZCards.Core.Utilities", "CardDataMapper");
+        dataClass = BNM::Class("PvZCards.Core.Utilities", "CardData");
+        if (!mapperClass.IsValid() || !dataClass.IsValid()) return false;
+        cardSet = dataClass.GetField("Set").cast<Str*>();
+        cardColorField = dataClass.GetField("Color").cast<int>();
+        return cardSet.IsValid() && cardColorField.IsValid() && InstallMapperCapture();
+    }
+    inline void CaptureSet(int guid, Obj* data) {
+        if (!cardSet.IsValid() || guid<=0 || !data) return;
+        Str* setName = cardSet[data].Get();
+        const std::string value = setName ? setName->str() : "";
+        std::lock_guard<std::mutex> lock(snapshotMutex);
+        setSnapshots[guid] = value;
+        if (cardColorField.IsValid()) colorSnapshots[guid] = cardColorField[data].Get();
+    }
+    inline bool HasCapturedSet(int guid, std::string_view expected) {
+        if (guid<=0) return false;
+        std::lock_guard<std::mutex> lock(snapshotMutex);
+        const auto it = setSnapshots.find(guid);
+        return it != setSnapshots.end() &&
+            Queries::CardClassificationPolicy::HasSet(it->second, expected);
+    }
+
+    inline bool HasCapturedClass(int guid, int classFlag) {
+        if (guid <= 0 || classFlag <= 0) return false;
+        std::lock_guard<std::mutex> lock(snapshotMutex);
+        const auto it = colorSnapshots.find(guid);
+        return it != colorSnapshots.end() && (it->second & classFlag) == classFlag;
     }
 
     // Capture only scalar values / copied strings, NEVER a Unity or managed pointer.
@@ -166,6 +206,7 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
             cardColorField = dataClass.GetField("Color");
             prefabName = dataClass.GetField("PrefabName");
             baseId = dataClass.GetField("BaseId");
+            cardSet = dataClass.GetField("Set").cast<Str*>();
             specialAbilities = dataClass.GetField("SpecialAbilities").cast<Obj*>();
         }
         const BNM::Class attackDecider("PvZCards.Game", "AttackIconDecider");

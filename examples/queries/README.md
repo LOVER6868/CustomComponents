@@ -8,6 +8,8 @@ These JSON objects go into an existing `Query` field; they don’t do anything o
 - [Placeable card](can-be-placed-any-lane.json)
 - [PF3 exact card](picked-from-three-entity.json)
 - [Level three or higher](leveled-greater-or-equal.json)
+- [Card set metadata (Set3)](has-set.json)
+- [Rarity component (R3)](has-rarity.json)
 
 ## Other variants
 
@@ -43,3 +45,9 @@ These JSON objects go into an existing `Query` field; they don’t do anything o
 - [open-lane-for-picked-entity.json](open-lane-for-picked-entity.json)
 - [picked-from-three-guid.json](picked-from-three-guid.json)
 - [self-leveled-three.json](self-leveled-three.json)
+
+## Set vs. rarity
+
+`HasSetQuery` uses the card_data **top-level `set` metadata**, not the card's Tags/Subtypes or a fictional Set component. The comparison is case-sensitive: `"Set3"`, `"Token"`, etc. The metadata is captured from the game's `CardDataMapper.SetCardData` using the existing shared detour; if a GUID has not been loaded, it does **not** match.
+
+`HasRarityQuery` reads the **live `PvZCards.Engine.Components.Rarity.Value` component** from the candidate card. Supported string names are `R1`, `R2`, `R3`, `R4`, `R0`, and `Event` (these are not the integer values in `CardData.Rarity`). If the component is missing or the value is unknown, it does **not** match. Both queries work as normal `EntityQuery` objects in target filters.

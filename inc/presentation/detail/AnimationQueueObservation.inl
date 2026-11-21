@@ -82,6 +82,7 @@
     // These are stock-initiated calls only. Never invoke animation methods from
     // the picker, and never hold gameplay progression in a diagnostic hook.
     static void QueueAddAnimationHook(void* self, Obj* animation, const void* method) {
+        Diagnostics::HistoryTrace::Animation("ENQUEUE",self,animation,animation && animation->klass?animation->klass->name:nullptr);
         if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualQueueGate::ObserveEnqueue(self, animation, false);
         if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualBarrierTracker::Enqueue(self, animation);
         CC_SELECTION_DIAG("CustomComponents/Pick3/ANIMATION_LIFECYCLE: event=ENQUEUE queue=%p animation=%p front=0", self, animation);
@@ -89,6 +90,7 @@
         frameStatsDirty = true;
     }
     static void QueueAddFrontAnimationHook(void* self, Obj* animation, const void* method) {
+        Diagnostics::HistoryTrace::Animation("ENQUEUE_FRONT",self,animation,animation && animation->klass?animation->klass->name:nullptr);
         if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualQueueGate::ObserveEnqueue(self, animation, true);
         if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualBarrierTracker::Enqueue(self, animation);
         CC_SELECTION_DIAG("CustomComponents/Pick3/ANIMATION_LIFECYCLE: event=ENQUEUE queue=%p animation=%p front=1", self, animation);
@@ -96,6 +98,7 @@
         frameStatsDirty = true;
     }
     static void QueueStartAnimationHook(void* self, Obj* animation, const void* method) {
+        Diagnostics::HistoryTrace::Animation("START",self,animation,animation && animation->klass?animation->klass->name:nullptr);
         if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualQueueGate::ObserveStart(self, animation);
         if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualBarrierTracker::Start(self, animation);
         CC_SELECTION_DIAG("CustomComponents/Pick3/ANIMATION_LIFECYCLE: event=START queue=%p animation=%p", self, animation);
@@ -169,6 +172,9 @@
         ::CustomComponents::Presentation::Pick3VisualQueueGate::frontCount.store(afterFront.count, std::memory_order_relaxed);
         } else {Core::Performance::Scope stockCost(Core::Performance::Area::StockQueue,PerformanceQueueHead(queue));originalQueueUpdate(self,method);}
         activeQueueUpdate = previousQueue;
+        // One native Update hook owns the stock call. Presentation subsystems
+        // observe only after stock Update, without installing competing hooks.
+        Core::AnimationQueuePostUpdate::Notify(self, method);
         if (traced) LogQueueLifecycle(queue, "UPDATE AFTER");
         {Core::Performance::Scope reconciliationCost(Core::Performance::Area::FrameReconciliation);FlushCompletedIdleLaneFrames(queue);FlushIdleHandFrames(queue);}
         Core::Performance::Report();

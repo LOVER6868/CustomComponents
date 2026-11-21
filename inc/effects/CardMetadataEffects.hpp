@@ -1,8 +1,11 @@
+#include "core/NativeConstruction.hpp"
 #pragma once
 #include "variables/Resolver.hpp"
 #include "engine/EffectGuards.hpp"
 #include "engine/AbilityConversion.hpp"
 #include "engine/SimulationChanges.hpp"
+#include "history/RecordWriter.hpp"
+#include "history/Serialization.hpp"
 #include "core/CustomComponentRegistry.hpp"
 #include "core/ComponentLifecycle.hpp"
 #include "core/CustomFieldBridgeSystem.hpp"
@@ -16,7 +19,7 @@ inline void Reference(Obj* obj,Str** field,Str* value){if(Core::ManagedRuntime::
 struct AddTagEffect:Obj {
     unsigned char inherited[0x40]{};Str* Tag=nullptr;
     BNM_CustomClass(AddTagEffect,BNM::CompileTimeClassBuilder("PvZCards.Engine.Effects","AddTagEffect","EngineLib.dll").Build(),BNM::CompileTimeClassBuilder("PvZCards.Engine.Effects","GrantAbilityEffect","EngineLib.dll").Build(),{});
-    void Construct(){BNM_CallCustomMethodOrigin(Construct,this);}
+    void Construct(){Core::NativeConstruction::Base(this);}
     BNM_CustomMethod(Construct,false,BNM::Defaults::Get<void>(),".ctor");
     BNM_CustomField(Tag,BNM::Defaults::Get<Str*>(),"Tag");
     void DeepCopyFrom(Obj* src,Obj* instances){BNM_CallCustomMethodOrigin(DeepCopyFrom,this,src,instances);Reference(this,&Tag,src?reinterpret_cast<AddTagEffect*>(src)->Tag:nullptr);}
@@ -36,7 +39,7 @@ struct AddTagEffectDescriptor:Obj {
 struct AddSubtypeEffect:Obj {
     unsigned char inherited[0x40]{};int Subtype=-1;
     BNM_CustomClass(AddSubtypeEffect,BNM::CompileTimeClassBuilder("PvZCards.Engine.Effects","AddSubtypeEffect","EngineLib.dll").Build(),BNM::CompileTimeClassBuilder("PvZCards.Engine.Effects","GrantAbilityEffect","EngineLib.dll").Build(),{});
-    void Construct(){BNM_CallCustomMethodOrigin(Construct,this);}
+    void Construct(){Core::NativeConstruction::Base(this);}
     BNM_CustomMethod(Construct,false,BNM::Defaults::Get<void>(),".ctor");
     BNM_CustomField(Subtype,BNM::Defaults::Get<int>(),"Subtype");
     void DeepCopyFrom(Obj* src,Obj* instances){BNM_CallCustomMethodOrigin(DeepCopyFrom,this,src,instances);Subtype=src?reinterpret_cast<AddSubtypeEffect*>(src)->Subtype:-1;}
@@ -57,7 +60,7 @@ struct AddSubtypeEffectDescriptor:Obj {
 struct RemoveTagEffect:Obj {
     unsigned char inherited[0x40]{};Str* Tag=nullptr;
     BNM_CustomClass(RemoveTagEffect,BNM::CompileTimeClassBuilder("PvZCards.Engine.Effects","RemoveTagEffect","EngineLib.dll").Build(),BNM::CompileTimeClassBuilder("PvZCards.Engine.Effects","GrantAbilityEffect","EngineLib.dll").Build(),{});
-    void Construct(){BNM_CallCustomMethodOrigin(Construct,this);}
+    void Construct(){Core::NativeConstruction::Base(this);}
     BNM_CustomMethod(Construct,false,BNM::Defaults::Get<void>(),".ctor");
     BNM_CustomField(Tag,BNM::Defaults::Get<Str*>(),"Tag");
     void DeepCopyFrom(Obj* src,Obj* instances){BNM_CallCustomMethodOrigin(DeepCopyFrom,this,src,instances);Reference(this,&Tag,src?reinterpret_cast<RemoveTagEffect*>(src)->Tag:nullptr);}
@@ -77,7 +80,7 @@ struct RemoveTagEffectDescriptor:Obj {
 struct RemoveSubtypeEffect:Obj {
     unsigned char inherited[0x40]{};int Subtype=-1;
     BNM_CustomClass(RemoveSubtypeEffect,BNM::CompileTimeClassBuilder("PvZCards.Engine.Effects","RemoveSubtypeEffect","EngineLib.dll").Build(),BNM::CompileTimeClassBuilder("PvZCards.Engine.Effects","GrantAbilityEffect","EngineLib.dll").Build(),{});
-    void Construct(){BNM_CallCustomMethodOrigin(Construct,this);}
+    void Construct(){Core::NativeConstruction::Base(this);}
     BNM_CustomMethod(Construct,false,BNM::Defaults::Get<void>(),".ctor");
     BNM_CustomField(Subtype,BNM::Defaults::Get<int>(),"Subtype");
     void DeepCopyFrom(Obj* src,Obj* instances){BNM_CallCustomMethodOrigin(DeepCopyFrom,this,src,instances);Subtype=src?reinterpret_cast<RemoveSubtypeEffect*>(src)->Subtype:-1;}
@@ -196,6 +199,15 @@ inline bool Convert(Obj* descriptor,Obj* instances,Obj*,Obj*& result){
     return true;
 }
 
+inline std::string MetadataState(Obj* card,bool tags){
+    if(tags){std::string out="[";for(const auto& tag:Engine::Match::Tags(card)){if(out.size()>1)out+=',';out+=History::Wire::Quote(tag);}return out+"]";}
+    Obj* component=Engine::EntityAccess::Component(card,"Subtypes");if(!component)return "[]";
+    auto type=BNM::Class("PvZCards.Engine.Components","Subtypes");BNM::Field<Obj*> field;
+    for(const char* name:{"subtypes","SubtypeList","Subtypes"}){field=type.GetField(name).cast<Obj*>();if(field.IsValid())break;}
+    auto* list=field.IsValid()?reinterpret_cast<BNM::Structures::Mono::List<int>*>(field[component].Get()):nullptr;
+    if(!Engine::EntityAccess::Valid(list))return "[]";
+    return History::Wire::Numbers({list->items->m_Items,list->items->m_Items+list->size});
+}
 inline bool Prepare(const Engine::EffectGuards::Context& c){
     if(!c.effect || !c.effect->klass || !c.effect->klass->name)return true;
     const std::string_view name=c.effect->klass->name;
@@ -208,11 +220,17 @@ inline bool Prepare(const Engine::EffectGuards::Context& c){
     int targetId=Variables::Field(c.effect,"TargetId");
     Obj* target=Engine::EntityAccess::Find(model,targetId);
     if(!target){LOG_WARN("CustomComponents/CardMetadata: missing target id=%d",targetId);return false;}
+    const auto before=MetadataState(target,addTag || removeTag);
     bool ok=addTag?AppendTag(target,reinterpret_cast<AddTagEffect*>(c.effect)->Tag):
         removeTag?RemoveTag(target,reinterpret_cast<RemoveTagEffect*>(c.effect)->Tag):
         addSubtype?AppendSubtype(target,reinterpret_cast<AddSubtypeEffect*>(c.effect)->Subtype):
         RemoveSubtype(target,reinterpret_cast<RemoveSubtypeEffect*>(c.effect)->Subtype);
-    if(ok)Engine::SimulationChanges::Changed(model);
+    if(ok){Engine::SimulationChanges::Changed(model);
+        History::Record record;record.kind=History::Kind::CardMetadataChanged;record.visual=History::VisualPolicy::NoVisual;
+        record.entityId=targetId;record.effectId=Variables::Field(c.effect,"EffectEntityId");
+        const auto after=MetadataState(target,addTag || removeTag);
+        if(before!=after){record.payload=History::MetadataPayload{targetId,std::string(name),before,after};History::Writer::Commit(std::move(record),model);}
+    }
     else LOG_WARN("CustomComponents/CardMetadata: failed to apply %s target=%d",name.data(),targetId);
     return false; // Custom effect handled; never dispatch as stock GrantAbilityEffect.
 }

@@ -1,5 +1,11 @@
+#include "history/RecordWriter.hpp"
 #include "core/HookRegistry.hpp"
 #pragma once
+#include "integration/ReplayEventBridge.hpp"
+#include "engine/CustomRecords.hpp"
+#include "engine/CustomRecordHistoryAnchor.hpp"
+#include "core/SceneViewContext.hpp"
+
 #include "diagnostics/DiagnosticLogging.hpp"
 
 #include <BNM/BasicMonoStructures.hpp>
@@ -262,6 +268,22 @@ namespace CustomComponents::Systems::ReturnFromDiscardPileSystem {
 
         if (isRemoveOnly) {
             discardRemoveCard[discardModifier](targetId, pileId);
+            if (!DiscardContains(pile,targetId) &&
+                reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity()) {
+                Engine::CustomRecords::Record r{};
+                r.model=reinterpret_cast<std::uintptr_t>(model);
+                r.kind=Engine::CustomRecords::Kind::ReturnFromDiscard;
+                r.stage=Engine::CustomRecords::Stage::Committed;
+                r.from=Engine::CustomRecords::Origin::DiscardPile;
+                r.to=Engine::CustomRecords::Origin::Unknown; // remove-only has no known destination
+                r.entityId=targetId;r.ownerId=playerId;r.fromZoneId=pileId;
+                r.visual=History::VisualPolicy::NoVisual;
+            r.payload=History::TransferPayload{r.entityId,r.fromZoneId,r.toZoneId,r.amount,r.aux};
+            History::Writer::Commit(r,model);
+                Integration::ReplayEventBridge::Publish("discard_pile_removed", {
+                    {"entityId",targetId},{"pileId",pileId},{"ownerId",playerId},
+                    {"verifiedRemoval",1}});
+            }
 
             CC_DIAG(
                 "CustomComponents/RemoveFromDiscardPile: SUCCESS EntityId=%d PlayerId=%d DiscardPileId=%d (entity preserved; no destination)",
@@ -337,6 +359,11 @@ namespace CustomComponents::Systems::ReturnFromDiscardPileSystem {
             return;
         }
 
+        if (reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity())
+            Integration::ReplayEventBridge::Publish("discard_pile_to_hand", {
+                {"entityId",targetId},{"ownerId",playerId},{"handId",handId},
+                {"pileId",pileId},{"visualDeckId",deckId},
+                {"verifiedTransfer",1}});
         // Observational marker only: no Unity calls on this gameplay thread.
         // This includes returns of cards destroyed on the board or discarded from deck.
         CustomComponents::Core::CardViewLifecycleCoordinator::NoteReturn(targetId, handId, pileId);
@@ -389,6 +416,20 @@ namespace CustomComponents::Systems::ReturnFromDiscardPileSystem {
             CC_DIAG("CustomComponents/ReturnFromDiscard/DIAGNOSTIC: SKIPPED synthetic DrawCardRecord card=%d hand=%d deckAnchor=%d; gameplay move and custom trigger preserved", targetId, handId, deckId);
         }
 
+        if(reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity()) {
+            Engine::CustomRecords::Record r{};
+            r.model=reinterpret_cast<std::uintptr_t>(model);
+            r.kind=Engine::CustomRecords::Kind::ReturnFromDiscard;
+            r.stage=Engine::CustomRecords::Stage::Committed;
+            r.from=Engine::CustomRecords::Origin::DiscardPile;
+            r.to=Engine::CustomRecords::Origin::Hand;
+            r.entityId=targetId;r.ownerId=playerId;
+            r.fromZoneId=pileId;r.toZoneId=handId;
+            r.stockHistoryAnchor=Engine::CustomRecordHistoryAnchor::Count(history);
+            r.visual=History::VisualPolicy::NoVisual;
+            r.payload=History::TransferPayload{r.entityId,r.fromZoneId,r.toZoneId,r.amount,r.aux};
+            History::Writer::Commit(r,model);
+        }
         CustomTriggerSystem::FireReturnedFromDiscardPile(effect);
     }
 

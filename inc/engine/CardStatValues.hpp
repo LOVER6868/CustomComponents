@@ -7,6 +7,7 @@
 
 namespace CustomComponents::Engine::CardStatValues {
 using Obj=EntityAccess::Obj;
+inline bool IsStat(std::string_view name){return name=="Attack" || name=="Health" || name=="Cost" || name=="BaseAttack" || name=="BaseHealth" || name=="BaseCost" || name=="CurrentHealth" || name=="DamageTaken" || name=="Level";}
 // CurrentHealth means remaining health; Health means calculated MAX health.
 // DamageTaken is separate and is NOT a health nerf.
 inline std::optional<int> Read(Obj* card,std::string_view stat) {
@@ -37,7 +38,7 @@ inline std::optional<int> Read(Obj* card,std::string_view stat) {
         auto f=BNM::Class("PvZCards.Engine.Components.Data","ModifiableInt").GetField("BaseValue").cast<int>();
         return f.IsValid()?std::optional<int>(f[value].Get()):std::nullopt;
     }
-    if(stat=="Cost" && EntityAccess::Component(card,"IsFree"))return 0;
+    if(stat=="Cost" && EntityAccess::Component(card,"FreeSunCost"))return 0;
     auto calc=BNM::Class("PvZCards.Engine.Utilities","ModifiableIntCalculator").GetMethod("CalculateValue",1).cast<int>();
     if(!calc.IsValid())return {};
     const int number=calc(value);

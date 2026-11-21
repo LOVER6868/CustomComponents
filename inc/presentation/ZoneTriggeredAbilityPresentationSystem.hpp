@@ -1,10 +1,17 @@
 #include "engine/Events.hpp"
 #include "presentation/StatQueueContext.hpp"
+#include "presentation/history/SwapTransactionProcessor.hpp"
 #include "presentation/InspectionStatPresentation.hpp"
+#include "presentation/CardReadiness.hpp"
+#include "presentation/HeroHealthPresentation.hpp"
 #include "core/HookRegistry.hpp"
+#include "core/WeakObjectSettings.hpp"
 #include "diagnostics/DiagnosticLogging.hpp"
 
 #pragma once
+#include <atomic>
+
+#include "core/Performance.hpp"
 
 #include <array>
 #include <cstdint>
@@ -21,6 +28,7 @@
 
 #include "core/CardViewLifecycleCoordinator.hpp"
 #include "core/SceneViewContext.hpp"
+#include "core/AnimationQueuePostUpdate.hpp"
 #include "presentation/detail/Pick3VisualQueueGate.hpp"
 #include "log.h"
 
@@ -820,7 +828,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
         Obj* mapped = nullptr;
         if (!TryResolveMappedCardView(mapper, entry.id, &mapped) ||
             reinterpret_cast<std::uintptr_t>(mapped) != entry.view ||
-            std::strcmp(TraceObjectType(mapped), "CardViewComponent") != 0 ||
+            !IsMappedCardView(mapped) ||
             cardViewEntityId[mapped].Get() != entry.id) return;
         Obj* entity = getEntityById[model](entry.id);
         if (!entity || !TraceFindComponent(entity, "Card") ||
@@ -834,6 +842,8 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
     }
 
     inline void FlushIdleHandFrames(Obj* queue) {
+        if(!frameStatsDirty)return;
+        Presentation::StatQueue::ObserveQueue(queue);
         if(!frameStatsDirty || !Presentation::StatQueue::Owns(queue)) return;
         auto normal=queueAnimations;auto front=queueFrontAnimations;
         if(!normal.IsValid() || !front.IsValid()) return;
@@ -843,21 +853,51 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
         Obj* mapper=Core::SceneViewContext::RootedMapper();
         Obj* model=Presentation::StatQueue::owner.model->Get();
         if(!mapper || !model) return;
-        frameStatsDirty=false;
-        for(const auto& binding:frameViewBindings) {
-            if(binding.model!=model || !binding.view || !binding.shownInHand) continue;
+        frameStatsDirty.exchange(false);
+        const auto revision=Engine::SimulationChanges::Revision(model);
+        unsigned inspected=0,unchanged=0,refreshed=0;
+        for(auto& binding:frameViewBindings) {
+            if(binding.model!=model || !binding.view)continue;
+            // A global queue dirty flag may be raised by ordinary animations.
+            // Reject unchanged cards BEFORE any managed mapper lookup, entity
+            // search, component checks, or sprite/stat rendering calls.
+            if(!binding.explicitDirty && binding.lastRevision==revision){++unchanged;continue;}
             Obj* mapped=nullptr;
             if(!TryResolveMappedCardView(mapper,binding.id,&mapped) || mapped!=binding.view ||
-               std::strcmp(TraceObjectType(mapped),"CardViewComponent")!=0 ||
-               cardViewEntityId[mapped].Get()!=binding.id) continue;
+               !IsMappedCardView(mapped) ||
+               cardViewEntityId[mapped].Get()!=binding.id)continue;
             Obj* entity=Engine::EntityAccess::Find(model,binding.id);
-            if(!Engine::EntityAccess::Component(entity,"HandElement") ||
-               Engine::EntityAccess::Component(entity,"LaneElement") ||
-               Engine::EntityAccess::Component(entity,"DiscardPileElement")) continue;
+            if(!entity || !Engine::EntityAccess::Component(entity,"Card") ||
+               Engine::EntityAccess::Component(entity,"DiscardPileElement"))continue;
+            // All *visible mapped* lane fighters, including the local client's
+            // representation of opponent cards, are eligible for reconciliation.
+            // Hand entries remain restricted to views the stock UI actually
+            // displayed: don't expose an opponent's hidden hand/deck cards.
+            const bool lane=Engine::EntityAccess::Component(entity,"LaneElement")!=nullptr;
+            const bool visibleHand=binding.shownInHand &&
+                Engine::EntityAccess::Component(entity,"HandElement")!=nullptr;
+            if(!lane && !visibleHand)continue;
             Obj* frame=cardViewFrame[mapped].Get();
-            Presentation::CardStats::Apply(frame,Presentation::CardStats::Read(entity));
+            if(!frame)continue;
+            ++inspected;
+            // Gameplay effect hooks advance the revision. Ordinary animation
+            // enqueues do not justify recomputing managed stats for unchanged
+            // card views; a new binding or native hand show forces a refresh.
+            auto snapshot=Presentation::CardStats::Read(entity);
+            const int printed=frameCurrentAttack.IsValid()?Core::Metadata::Bind(frameCurrentAttack,frame).Get():-1;
+            Presentation::CardStats::Apply(frame,snapshot);
+            if(snapshot.attack && printed!=*snapshot.attack)
+                LOG_INFO("CustomComponents/Stats/RECONCILE: card=%d owner=%d printed=%d modelAttack=%d lane=%d",binding.id,Engine::BoardPlacement::Owner(entity),printed,*snapshot.attack,int(lane));
+            // The stock UI already owns most icon lifecycles. Only refresh
+            // abilities when an effect changed a visible mapped card; never
+            // do this in an unconditional every-frame scan.
             RefreshFrameTraits(frame,entity);
+            binding.lastRevision=revision;binding.explicitDirty=false;++refreshed;
         }
+        static unsigned logged=0;
+        if((refreshed || (unchanged && inspected>16)) && logged++<96)
+            LOG_INFO("CustomComponents/Stats/RECONCILE_BATCH: revision=%llu inspected=%u unchanged=%u refreshed=%u",
+                static_cast<unsigned long long>(revision),inspected,unchanged,refreshed);
     }
     inline bool QueueContainsAnimation(Obj* queue, const PendingIdleLaneFrame& pending) {
         if (!queue || !pending.animation) return false;
@@ -925,8 +965,9 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
     #include "presentation/detail/OffBoardEffectAudit.inl"
 
     inline bool Initialize() {
+        if(!Presentation::CardReadiness::Initialize() || !Presentation::HeroHealth::Initialize())return false;
         if(!Presentation::CardStats::Metadata().Valid()) return false;
-        if(!Presentation::StatQueue::Initialize() || !Presentation::InspectionStats::Initialize()) return false;
+        if(!Presentation::StatQueue::Initialize() || !Presentation::InspectionStats::Initialize() || !Presentation::SwapTransactions::Initialize()) return false;
         // Shared stock reveal structure. The Card/Hand/Target refs are the
         // ones owned by the reveal animation, not its later triggered effects.
         auto trickRevealBase = BNM::Class("PvZCards.Game", "RevealOneTimeEffectAnimation");
@@ -1575,7 +1616,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
         if (laneRecordClass.IsValid())
             laneRecordGetCard = laneRecordClass.GetMethod("get_Card", 0).cast<Obj*>();
         if (laneCardIdData.IsValid()) laneCardDataEntityId = laneCardIdData.GetField("EntityId");
-        if (laneEffectRecord.IsValid()) laneRecordTargetId = laneEffectRecord.GetField("TargetId");
+        if (laneEffectRecord.IsValid()) laneRecordTargetId = laneEffectRecord.GetMethod("get_TargetId", 0).cast<int>();
 
         // GetOffset is the real native address in this BNM build. Refuse to
         // inline-hook unknown versions or unexpectedly resolved overloads.

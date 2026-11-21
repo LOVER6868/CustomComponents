@@ -1,10 +1,16 @@
 #pragma once
+#include <atomic>
 #include "queries/InDeckQuery.hpp"
 #include "queries/ListPositionPolicy.hpp"
 #include "core/ComponentLifecycle.hpp"
 #include "engine/EntityAccess.hpp"
+#include "engine/BoardPlacement.hpp"
 #include "level/LevelQueryState.hpp"
+#include "core/ManagedRuntime.hpp"
+#include "core/CustomFieldBridgeSystem.hpp"
+#include "log.h"
 namespace CustomComponents::Queries {
+namespace Systems = CustomComponents::Systems;
 struct LeveledQuery:Obj {
     int Value=0;BNM::Structures::Mono::String* ComparisonOperator=nullptr;
     void Constructor(){auto ctor=BNM::Class("PvZCards.Engine.Queries","InHandQuery").GetMethod(".ctor",0).cast<void>();if(ctor.IsValid())ctor[this]();Value=0;ComparisonOperator=nullptr;}
@@ -18,7 +24,11 @@ struct LeveledQuery:Obj {
         if(preview){actual=*preview;if(actual<=0)return false;}
         else {Obj* marker=Engine::EntityAccess::Component(entity,"Leveled");if(!marker)return false;auto value=BNM::Class(marker).GetField("Value").cast<int>();if(!value.IsValid())return false;actual=value[marker].Get();}
         const auto op=ComparisonOperator?ComparisonOperator->str():"Equal";
-        if(op=="Equal")return actual==Value;if(op=="NotEqual")return actual!=Value;if(op=="Greater")return actual>Value;if(op=="GreaterOrEqual")return actual>=Value;if(op=="Less")return actual<Value;if(op=="LessOrEqual")return actual<=Value;return false;
+        bool result=false;
+        if(op=="Equal")result=actual==Value;else if(op=="NotEqual")result=actual!=Value;
+        else if(op=="Greater")result=actual>Value;else if(op=="GreaterOrEqual")result=actual>=Value;
+        else if(op=="Less")result=actual<Value;else if(op=="LessOrEqual")result=actual<=Value;
+        return result;
     }
     void DeepCopyFrom(Obj* source,Obj*){auto* s=reinterpret_cast<LeveledQuery*>(source);Value=s?s->Value:0;auto* text=s?s->ComparisonOperator:nullptr;if(Core::ManagedRuntime::writeBarrier)Core::ManagedRuntime::writeBarrier(this,reinterpret_cast<void**>(&ComparisonOperator),text);else ComparisonOperator=text;}
     void HandleReturnToPool(Obj* instances){DeepCopyFrom(nullptr,instances);}

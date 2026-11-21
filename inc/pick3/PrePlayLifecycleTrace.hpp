@@ -1,5 +1,5 @@
 #include "diagnostics/DiagnosticLogging.hpp"
-#include "core/HookRegistry.hpp"
+#include "core/SharedHookEvents.hpp"
 #pragma once
 // Patch 1.7.20: opt-in read-only observation of the stock pre-Play lifecycle.
 // IMPORTANT: DetermineCurrentInputState and BindCommandsForState are ALREADY
@@ -17,8 +17,6 @@
 namespace CustomComponents::Pick3::PrePlayLifecycleTrace {
 using Obj = BNM::IL2CPP::Il2CppObject;
 using IntList = BNM::Structures::Mono::List<int>;
-using ExecuteFn = void (*)(Obj*, const void*);
-inline ExecuteFn originalHighlight = nullptr;
 inline BNM::Field<int> holderState;
 inline BNM::Field<Obj*> holderDrag;
 inline BNM::Field<int> dragCard;
@@ -47,6 +45,8 @@ inline thread_local int lastHighlightState = -99;
 inline thread_local int lastHighlightCount = -99;
 inline thread_local int lastHighlightFirst = -99;
 inline thread_local int lastHighlightSecond = -99;
+struct HighlightFrame { int beforeState=-99; bool entering=false; };
+inline thread_local std::vector<HighlightFrame> highlightFrames;
 
 inline int Card(Obj* drag) {
     return drag && dragCard.IsValid() ? dragCard[drag].Get() : -1;
@@ -101,35 +101,37 @@ inline void OnBind(Obj* holder, int prior, int state, bool after) {
         Log(after ? "BIND_EXIT" : "BIND_ENTER",prior,state,drag,actual);
     }
 }
-// A separate, long stock method (RVA 0x1F6F04C in the provided dump).
-// Execute is observed exactly once, before and after the original. Do not
-// call HighlightPlayableLocationsOrTargetsForCardCommand.Execute manually.
-inline void Highlight(Obj* self, const void* method) {
-    int beforeCard=-1, beforeState=-99;
-    bool entering=false;
-    if (enabled && self && highlightDrag.IsValid()) {
-        Obj* drag=highlightDrag[self].Get();
-        beforeCard=Card(drag);
-        beforeState=highlightState.IsValid() ? highlightState[self].Get() : -99;
-        entering=(IsTargeting(beforeState) || beforeCard>=0) &&
-            (beforeCard!=lastHighlightCard || beforeState!=lastHighlightState);
-        if (entering) Log("HIGHLIGHT_ENTER",beforeState,beforeState,drag,beforeState);
+// Observed through Level::PlacementPresentation, the sole owner of the
+// HighlightPlayableLocationsOrTargetsForCardCommand.Execute detour.
+// This observer does not call the original or mutate gameplay state.
+inline void Highlight(Obj* self, bool after) {
+    if(!enabled)return;
+    if(!after) {
+        HighlightFrame frame;
+        if(self && highlightDrag.IsValid()) {
+            Obj* drag=highlightDrag[self].Get();
+            const int beforeCard=Card(drag);
+            frame.beforeState=highlightState.IsValid()?highlightState[self].Get():-99;
+            frame.entering=(IsTargeting(frame.beforeState) || beforeCard>=0) &&
+                (beforeCard!=lastHighlightCard || frame.beforeState!=lastHighlightState);
+            if(frame.entering) Log("HIGHLIGHT_ENTER",frame.beforeState,frame.beforeState,drag,frame.beforeState);
+        }
+        highlightFrames.push_back(frame);
+        return;
     }
-    if (originalHighlight) originalHighlight(self,method);
-    if (enabled && self && highlightDrag.IsValid()) {
+    HighlightFrame frame;
+    if(!highlightFrames.empty()){frame=highlightFrames.back();highlightFrames.pop_back();}
+    if(self && highlightDrag.IsValid()) {
         Obj* drag=highlightDrag[self].Get();
-        const int afterState=highlightState.IsValid() ? highlightState[self].Get() : -99;
+        const int afterState=highlightState.IsValid()?highlightState[self].Get():-99;
         const int afterCard=Card(drag);
-        int first=-1, second=-1;
+        int first=-1,second=-1;
         const int count=Count(drag,first,second);
-        // Changes in the legal target list are significant; identical
-        // per-frame highlight refreshes are deliberately coalesced.
         const bool changed=afterState!=lastHighlightState ||
             afterCard!=lastHighlightCard || count!=lastHighlightCount ||
             first!=lastHighlightFirst || second!=lastHighlightSecond;
-        if ((entering || changed) &&
-            (IsTargeting(afterState) || afterCard>=0))
-            Log("HIGHLIGHT_EXIT",beforeState,afterState,drag,afterState);
+        if((frame.entering || changed) && (IsTargeting(afterState) || afterCard>=0))
+            Log("HIGHLIGHT_EXIT",frame.beforeState,afterState,drag,afterState);
         lastHighlightCard=afterCard;
         lastHighlightState=afterState;
         lastHighlightCount=count;
@@ -186,6 +188,7 @@ inline bool Configure(bool requested) {
     lastObservedState = lastObservedCard = -99;
     lastHighlightCard=lastHighlightState=lastHighlightCount=-99;
     lastHighlightFirst=lastHighlightSecond=-99;
+    highlightFrames.clear();
     if (!requested) {
         CC_SELECTION_DIAG("CustomComponents/Pick3/PREPLAY1720: SETUP enabled=0 duplicateStateHooks=0");
         return true;
@@ -209,14 +212,12 @@ inline bool Configure(bool requested) {
         LOG_ERR("CustomComponents/Pick3/PREPLAY1720: metadata missing; tracing disabled; gameplay unaffected");
         return false;
     }
-    // This method is not hooked by any existing CustomComponents module.
-    // Configure is expected once at startup; avoid ever stacking ourselves.
-    if (!originalHighlight) CustomComponents::Core::Hooks::Install(execute,Highlight,originalHighlight);
-    enabled = originalHighlight != nullptr;
+    // Level owns the only native hook; this is a read-only subscription.
+    enabled = Core::SharedHookEvents::highlightPlayableLocations.Add(Highlight);
     CC_SELECTION_DIAG("CustomComponents/Pick3/PREPLAY1720: SETUP enabled=%d highlight=%d "
              "sharedDetermine=1 sharedBind=1 duplicateStateHooks=0 "
              "commandReplay=0 gestureMutation=0 budget=%u",
-             int(enabled),int(originalHighlight!=nullptr),kMaxEvents);
+             int(enabled),int(enabled),kMaxEvents);
     return enabled;
 }
 } // namespace CustomComponents::Pick3::PrePlayLifecycleTrace

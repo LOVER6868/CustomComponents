@@ -39,8 +39,8 @@ inline ResolveResult TryResolveSerializedQuery(const std::string& serialized) {
 template <typename CreateFn>
 inline ConstructResult ConsumePendingConstruction(
     void* type,
-    const void* /*method*/,
-    CreateFn /*originalCreateInstance*/
+    const void* method,
+    CreateFn originalCreateInstance
 ) {
     if (!hasPendingConstruction) return {};
 
@@ -49,30 +49,21 @@ inline ConstructResult ConsumePendingConstruction(
     pendingConstruction = {};
 
     auto runtimeClass = BNM::Class(registration.runtimeNamespace, registration.runtimeClass);
-    auto baseClass = BNM::Class(registration.baseNamespace, registration.baseClass);
-    if (!runtimeClass.IsValid() || !baseClass.IsValid()) {
+    if (!runtimeClass.IsValid() || !originalCreateInstance ||
+        type != static_cast<void*>(runtimeClass.GetMonoType())) {
         LOG_ERR("CustomComponents/QuerySupport: construction class lookup failed query='%s'",
                 registration.name);
         return {true, nullptr};
     }
 
-    // Match the proven CustomComponentRegistry construction pattern:
-    // allocate the BNM subclass, then invoke the real concrete stock base .ctor.
-    void* instance = runtimeClass.CreateNewInstance();
+    // Let InstanceManager own construction and pooling. Its original factory
+    // invokes the reflected parameterless constructor for this registered type.
+    void* instance = originalCreateInstance(type, method);
     if (!instance) {
         LOG_ERR("CustomComponents/QuerySupport: allocation failed query='%s' type=%p",
                 registration.name, type);
         return {true, nullptr};
     }
-
-    auto ctor = baseClass.GetMethod(".ctor", 0);
-    if (!ctor.IsValid()) {
-        LOG_ERR("CustomComponents/QuerySupport: base ctor missing query='%s' base='%s.%s'",
-                registration.name, registration.baseNamespace, registration.baseClass);
-        return {true, nullptr};
-    }
-
-    ctor.cast<void>()[instance]();
 
     return {true, instance};
 }

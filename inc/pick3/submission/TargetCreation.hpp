@@ -202,9 +202,7 @@ inline Obj* PickFromThreePrimaryListAudit(Obj* self, Obj* targets, Obj* effect, 
 // Trace the stock primary creator's *choice boundary*, including whether the
 // Burst preselected path ever enters the normal primary selection creator.
 using PrimaryNormalAuditFn = Obj*(*)(Obj*, Obj*, Obj*, const void*);
-using PrimaryMethodAuditFn = Obj*(*)(Obj*, Obj*, Obj*, Obj*, Obj*, const void*);
 inline PrimaryNormalAuditFn originalPrimaryNormalAudit=nullptr;
-inline PrimaryMethodAuditFn originalPrimaryMethodAudit=nullptr;
 inline Obj* PickFromThreePrimaryNormalAudit(Obj* self, Obj* effect, Obj* context, const void* method) {
     const bool scoped=(trickSecondaryFocusGuid==712 || trickSecondaryFocusGuid==713 || pickFromThreeTargetAuditDepth!=0) && ++pickFromThreeTargetAuditSamples<=160;
     int reviveId=-1;
@@ -218,21 +216,32 @@ inline Obj* PickFromThreePrimaryNormalAudit(Obj* self, Obj* effect, Obj* context
     if(scoped) CC_SELECTION_DIAG("CustomComponents/Pick3/PICK_FROM_THREE_PRIMARY_BRANCH: NORMAL_EXIT effects=%p",result);
     return result;
 }
-inline Obj* PickFromThreePrimaryMethodAudit(Obj* self, Obj* effect, Obj* context, Obj* targets, Obj* filter, const void* method) {
-    const bool scoped=(trickSecondaryFocusGuid==712 || trickSecondaryFocusGuid==713 || pickFromThreeTargetAuditDepth!=0) && ++pickFromThreeTargetAuditSamples<=160;
-    int reviveId=-1;
-    const bool revive=Pick3RevivePrimaryCreatorScope(effect,reviveId);
-    if(revive) {
-        Pick3RevivePrimaryCreatorContext("METHOD_ENTER",effect,context,reviveId);
-        CC_SELECTION_DIAG("CustomComponents/Pick3/PICK3_REVIVE_PRIMARY_CREATOR: phase=METHOD_INPUT entity=%d targets=%p filter=%p",reviveId,targets,filter);
+// Read-only observer for the *already-owned* TargetBridge hook. Never call
+// the stock primary creator here; TargetBridge is responsible for that.
+struct PrimaryMethodAuditFrame {bool scoped=false, revive=false; int reviveId=-1;};
+inline thread_local std::vector<PrimaryMethodAuditFrame> primaryMethodAuditStack;
+inline void PickFromThreePrimaryMethodObserved(Obj* self, Obj* effect, Obj* context,
+                                               Obj* targets, Obj* filter, Obj* result, bool after) {
+    (void)self;
+    if(!after) {
+        PrimaryMethodAuditFrame frame;
+        frame.scoped=(trickSecondaryFocusGuid==712 || trickSecondaryFocusGuid==713 ||
+                      pickFromThreeTargetAuditDepth!=0) && ++pickFromThreeTargetAuditSamples<=160;
+        frame.revive=Pick3RevivePrimaryCreatorScope(effect,frame.reviveId);
+        primaryMethodAuditStack.push_back(frame);
+        if(frame.revive) {
+            Pick3RevivePrimaryCreatorContext("METHOD_ENTER",effect,context,frame.reviveId);
+            CC_SELECTION_DIAG("CustomComponents/Pick3/PICK3_REVIVE_PRIMARY_CREATOR: phase=METHOD_INPUT entity=%d targets=%p filter=%p",frame.reviveId,targets,filter);
+        }
+        if(frame.scoped) PickFromThreeOwnerAudit("METHOD_ENTER",effect,context);
+        if(frame.scoped) CC_SELECTION_DIAG("CustomComponents/Pick3/PICK_FROM_THREE_PRIMARY_BRANCH: METHOD_ENTER effect=%p context=%p targets=%p filter=%p",effect,context,targets,filter);
+        return;
     }
-    if(scoped) PickFromThreeOwnerAudit("METHOD_ENTER",effect,context);
-    if(scoped) CC_SELECTION_DIAG("CustomComponents/Pick3/PICK_FROM_THREE_PRIMARY_BRANCH: METHOD_ENTER effect=%p context=%p targets=%p filter=%p",effect,context,targets,filter);
-    Obj* result=originalPrimaryMethodAudit?originalPrimaryMethodAudit(self,effect,context,targets,filter,method):nullptr;
-    if(revive) CC_SELECTION_DIAG("CustomComponents/Pick3/PICK3_REVIVE_PRIMARY_CREATOR: phase=METHOD_EXIT entity=%d result=%p",reviveId,result);
-    if(scoped) PickFromThreeOwnerAudit("METHOD_EXIT",effect,context,result);
-    if(scoped) CC_SELECTION_DIAG("CustomComponents/Pick3/PICK_FROM_THREE_PRIMARY_BRANCH: METHOD_EXIT effects=%p",result);
-    return result;
+    if(primaryMethodAuditStack.empty())return;
+    const auto frame=primaryMethodAuditStack.back();primaryMethodAuditStack.pop_back();
+    if(frame.revive) CC_SELECTION_DIAG("CustomComponents/Pick3/PICK3_REVIVE_PRIMARY_CREATOR: phase=METHOD_EXIT entity=%d result=%p",frame.reviveId,result);
+    if(frame.scoped) PickFromThreeOwnerAudit("METHOD_EXIT",effect,context,result);
+    if(frame.scoped) CC_SELECTION_DIAG("CustomComponents/Pick3/PICK_FROM_THREE_PRIMARY_BRANCH: METHOD_EXIT effects=%p",result);
 }
 // Bind only a uniquely matching, still-unbound stock secondary choice.
 // Called after the real selection service processes a validated primary.

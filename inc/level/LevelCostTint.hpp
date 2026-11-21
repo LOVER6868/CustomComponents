@@ -21,12 +21,12 @@ struct TextApi {
     BNM::Method<void> setFace;
     BNM::Method<Color> color;
     BNM::Method<bool> tags,gradient,active;
-    BNM::Method<void> setColor,setTags,setGradient,mesh;
-    bool Valid()const{return cachedColor.IsValid() && face.IsValid() && setFace.IsValid() && label.IsValid() && color.IsValid() && tags.IsValid() && gradient.IsValid() && setColor.IsValid() && setTags.IsValid() && setGradient.IsValid() && mesh.IsValid();}
+    BNM::Method<void> setColor,setTags,setGradient;
+    bool Valid()const{return cachedColor.IsValid() && face.IsValid() && setFace.IsValid() && label.IsValid() && color.IsValid() && tags.IsValid() && gradient.IsValid() && setColor.IsValid() && setTags.IsValid() && setGradient.IsValid();}
 };
 inline const TextApi& Metadata(){static const auto api=[] {
     auto text=BNM::Class("TMPro","TextMeshPro");
-    return TextApi{BNM::Class("PvZCards.Game","CardFrameViewComponent").GetField("SunCostUI").cast<Obj*>(),text.GetField("m_fontColor32").cast<Color32>(),text.GetMethod("get_faceColor",0).cast<Color32>(),text.GetMethod("set_faceColor",1).cast<void>(),text.GetMethod("get_color",0).cast<Color>(),text.GetMethod("get_overrideColorTags",0).cast<bool>(),text.GetMethod("get_enableVertexGradient",0).cast<bool>(),BNM::Class("UnityEngine","Behaviour").GetMethod("get_isActiveAndEnabled",0).cast<bool>(),text.GetMethod("set_color",1).cast<void>(),text.GetMethod("set_overrideColorTags",1).cast<void>(),text.GetMethod("set_enableVertexGradient",1).cast<void>(),text.GetMethod("ForceMeshUpdate",0).cast<void>()};
+    return TextApi{BNM::Class("PvZCards.Game","CardFrameViewComponent").GetField("SunCostUI").cast<Obj*>(),text.GetField("m_fontColor32").cast<Color32>(),text.GetMethod("get_faceColor",0).cast<Color32>(),text.GetMethod("set_faceColor",1).cast<void>(),text.GetMethod("get_color",0).cast<Color>(),text.GetMethod("get_overrideColorTags",0).cast<bool>(),text.GetMethod("get_enableVertexGradient",0).cast<bool>(),BNM::Class("UnityEngine","Behaviour").GetMethod("get_isActiveAndEnabled",0).cast<bool>(),text.GetMethod("set_color",1).cast<void>(),text.GetMethod("set_overrideColorTags",1).cast<void>(),text.GetMethod("set_enableVertexGradient",1).cast<void>()};
 }();return api;}
 inline void ReportFailure(const char* reason){static std::atomic<unsigned> count{0};if(count.fetch_add(1)<8)LOG_WARN("CustomComponents/Level/COST_TINT: unavailable reason=%s",reason);}
 inline Color(*originalPick)(Obj*,int,int,const void*)=nullptr;
@@ -43,19 +43,24 @@ inline void Apply(Obj* frame,bool selected) {
     auto stats=Presentation::CardStats::Metadata();
     const auto color=selected?VisualStyle::CostTint:originalPick(frame,stats.initialCost[frame].Get(),stats.cost[frame].Get(),nullptr);
     auto owner=std::find_if(owned.begin(),owned.end(),[&](auto& item){return item.frame->Get()==frame;});
-    bool dirty=false;
     if(owner!=owned.end()){
         const Color32 face=selected?Color32{255,255,255,255}:owner->face;
-        if(!Same(api.face[text](),face)){api.setFace[text](face);dirty=true;}
+        if(!Same(api.face[text](),face))api.setFace[text](face);
         const bool tags=selected?true:owner->tags,gradient=selected?false:owner->gradient;
-        if(api.tags[text]()!=tags){api.setTags[text](tags);dirty=true;}
-        if(api.gradient[text]()!=gradient){api.setGradient[text](gradient);dirty=true;}
+        if(api.tags[text]()!=tags)api.setTags[text](tags);
+        if(api.gradient[text]()!=gradient)api.setGradient[text](gradient);
     }
-    if(!Same(api.cachedColor[text].Get(),Bytes(color))){api.cachedColor[text].Set(Bytes(color));dirty=true;}
-    if(!Same(api.color[text](),color)){api.setColor[text](color);dirty=true;}
-    if(dirty)api.mesh[text]();
+    if(!Same(api.cachedColor[text].Get(),Bytes(color)))api.cachedColor[text].Set(Bytes(color));
+    if(!Same(api.color[text](),color))api.setColor[text](color);
+    // TMP setters mark the label dirty. Let Unity rebuild its mesh in the
+    // normal canvas pass; forcing a rebuild here can re-enter ScrollRect/TMP
+    // while card inspection is constructing its own text meshes.
 }
 inline void BeginFrame(){for(auto& item:owned)item.seen=false;}
+inline void Touch(Obj* frame){
+    auto found=std::find_if(owned.begin(),owned.end(),[&](auto& item){return item.frame->Get()==frame;});
+    if(found!=owned.end())found->seen=true;
+}
 inline void Present(Obj* frame,bool selected) {
     auto found=std::find_if(owned.begin(),owned.end(),[&](auto& item){return item.frame->Get()==frame;});
     if(selected){

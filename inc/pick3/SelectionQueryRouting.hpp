@@ -286,7 +286,7 @@ inline bool Initialize(bool installOwnFinderHook) {
     bool resolved=false;
     if(installOwnFinderHook) {
         auto find=BNM::Class("PvZCards.Core.Systems.Utilities","CardFromSubsetFinder")
-            .GetMethod("FindCard",2);
+            .GetMethod("FindCard",{std::string_view("subsetQuery"),std::string_view("effect")});
         resolved=find.IsValid();
         if(resolved && stockEffectId.IsValid() && stockEffectGroup.IsValid() && stockCancelled.IsValid())
             CustomComponents::Core::Hooks::Install(find,FindCardHook,originalStockFindCard);

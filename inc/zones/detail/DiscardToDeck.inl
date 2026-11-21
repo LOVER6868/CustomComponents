@@ -1,3 +1,4 @@
+#include "history/RecordWriter.hpp"
 #include "diagnostics/DiagnosticLogging.hpp"
     // =====================================================================
     // 2. ReturnFromDiscardPileToDeck
@@ -105,6 +106,27 @@
         // This records the actual stock-history object identity and the
         // resulting off-board zone, without querying/mutating frontend views.
         const bool inDeckAfter = ZoneTriggeredAbilityPresentationSystem::IsInMaterializedDeckPool(model, cardId);
+        if (inDeckAfter && reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity())
+            Integration::ReplayEventBridge::Publish("discard_pile_to_deck", {
+                {"entityId",cardId},{"ownerId",ctx.playerId},
+                {"deckId",deckId},{"pileId",ctx.discardPileId},
+                {"deckPosition",deckPosition},{"stockRecordCreated",int(record!=nullptr)},
+                {"verifiedInDeck",1}});
+        if(inDeckAfter && reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity()) {
+            Engine::CustomRecords::Record r{};
+            r.model=reinterpret_cast<std::uintptr_t>(model);
+            r.kind=Engine::CustomRecords::Kind::ReturnFromDiscard;
+            r.stage=Engine::CustomRecords::Stage::Committed;
+            r.from=Engine::CustomRecords::Origin::DiscardPile;
+            r.to=Engine::CustomRecords::Origin::Deck;
+            r.entityId=cardId;r.ownerId=ctx.playerId;
+            r.fromZoneId=ctx.discardPileId;r.toZoneId=deckId;
+            r.aux=deckPosition;
+            r.stockHistoryAnchor=Engine::CustomRecordHistoryAnchor::Count(history);
+            r.visual=History::VisualPolicy::NoVisual;
+            r.payload=History::TransferPayload{r.entityId,r.fromZoneId,r.toZoneId,r.amount,r.aux};
+            History::Writer::Commit(r,model);
+        }
         const auto zoneAfter = ZoneTriggeredAbilityPresentationSystem::GetOffBoardZone(model, cardId);
         if constexpr (false) CC_DIAG("CustomComponents/DECK-HANG-DIAG: RECORD-AFTER card=%d record=%p recordCard=%d deck=%d position=%d effectEntity=%d history=%p inDeck=%d zone=%s",
             cardId, record, record ? cardId : -1, deckId, deckPosition,

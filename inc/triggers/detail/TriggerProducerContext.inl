@@ -10,7 +10,7 @@
         if (!entity || !componentName)
             return nullptr;
 
-        auto* components = entityComponents[entity].Get();
+        auto* components = Core::Metadata::Bind(entityComponents,entity).Get();
         if (!components || !components->items)
             return nullptr;
 
@@ -34,7 +34,7 @@
         if (!component)
             return false;
 
-        auto* managedName = customTriggerName[component].Get();
+        auto* managedName = Core::Metadata::Bind(customTriggerName,component).Get();
         return managedName && managedName->str() == eventName;
     }
 
@@ -51,43 +51,38 @@
         return markerMatch || CustomTriggerMatches(entity, eventName);
     }
 
-    inline Obj* ReadObjectFieldByOffset(Obj* object, std::uintptr_t offset) {
-        if (!object)
-            return nullptr;
-        return *reinterpret_cast<Obj**>(
-            reinterpret_cast<std::uintptr_t>(object) + offset
-        );
-    }
-
     inline bool RefreshStockTriggerContext(StockTriggerContext& context) {
         if (!context.triggerSystem)
             return false;
-
-        Obj* instances = ReadObjectFieldByOffset(
-            context.triggerSystem,
-            kTriggerSystemInstancesOffset
-        );
-        Obj* triggeredEffects = ReadObjectFieldByOffset(
-            context.triggerSystem,
-            kTriggerSystemTriggeredEffectsOffset
-        );
-        Obj* finder = ReadObjectFieldByOffset(
-            context.triggerSystem,
-            kTriggerSystemFinderOffset
-        );
+        auto instancesField=producerInstancesField;
+        auto triggeredField=producerTriggeredEffectsField;
+        auto finderField=producerFinderField;
+        Obj* instances=instancesField.IsValid()?instancesField[context.triggerSystem].Get():nullptr;
+        Obj* triggeredEffects=triggeredField.IsValid()?triggeredField[context.triggerSystem].Get():nullptr;
+        Obj* finder=finderField.IsValid()?finderField[context.triggerSystem].Get():nullptr;
+        auto reject = [&](const char* reason) {
+            static std::atomic<unsigned> samples{0};
+            if (samples.fetch_add(1) < 32)
+                LOG_WARN("CustomComponents/CustomTrigger: producer rejected reason=%s system=%p instances=%p triggered=%p finder=%p finderType=%s model=%p fields=%d/%d/%d/%d",
+                    reason, context.triggerSystem, instances, triggeredEffects, finder,
+                    TypeName(finder), finder && finderModelField.IsValid()
+                        ? Core::Metadata::Bind(finderModelField,finder).Get() : nullptr,
+                    int(producerInstancesField.IsValid()),
+                    int(producerTriggeredEffectsField.IsValid()),
+                    int(producerFinderField.IsValid()), int(finderModelField.IsValid()));
+            return false;
+        };
 
         if (!instances || !triggeredEffects || !finder)
-            return false;
+            return reject("missing-injected-value");
 
         if (std::strcmp(TypeName(finder), "GenericEffectEntityFinder`1") != 0)
-            return false;
+            return reject("unexpected-finder-type");
 
-        Obj* model = ReadObjectFieldByOffset(
-            finder,
-            kGenericFinderModelOffset
-        );
+        auto modelField=finderModelField;
+        Obj* model=modelField.IsValid()?modelField[finder].Get():nullptr;
         if (!model)
-            return false;
+            return reject("missing-finder-model");
 
         context.instances = instances;
         context.triggeredEffects = triggeredEffects;
@@ -106,6 +101,14 @@
         }
         std::vector<StockTriggerContext> contexts;
         for(const auto& reference:references) {
+            auto instanceField=producerInstancesField;
+            Obj* system=reference->Get();
+            Obj* instances=system && instanceField.IsValid()?instanceField[system].Get():nullptr;
+            // Every TriggerSystem<T> in one DI scope shares these services.
+            // Keep one coherent producer per scope instead of rooting and
+            // validating every marker specialization on every enqueue.
+            if(instances && std::any_of(contexts.begin(),contexts.end(),
+                [&](const auto& c){return c.instances==instances;}))continue;
             auto lifetime=std::make_shared<Core::ManagedRuntime::Root>(reference->Get());
             StockTriggerContext candidate;
             candidate.lifetime=lifetime;candidate.triggerSystem=lifetime->Get();
@@ -135,7 +138,13 @@
         // injected fields to be populated yet. In this build Finder can still
         // be null when RegisterEffectHandlers runs. RefreshStockTriggerContext
         // resolves Instances/TriggeredEffects/Finder/Model lazily at fire time.
+        if (!originalTriggerSystemRegisterHandlers)
+            return;
         RememberStockTriggerCandidate(static_cast<Obj*>(self));
+        static std::atomic<unsigned> samples{0};
+        if (samples.fetch_add(1) < 3)
+            LOG_INFO("CustomComponents/CustomTrigger: producer registration observed system=%p",
+                self);
         originalTriggerSystemRegisterHandlers(self, router, method);
     }
 
@@ -145,17 +154,13 @@
         if (!stateCheckSystem)
             return nullptr;
 
-        Obj* effectAdder = ReadObjectFieldByOffset(
-            static_cast<Obj*>(stateCheckSystem),
-            kStateCheckEffectAdderOffset
-        );
+        Obj* effectAdder = stateCheckAdderField.IsValid()
+            ? Core::Metadata::Bind(stateCheckAdderField,static_cast<Obj*>(stateCheckSystem)).Get() : nullptr;
         if (!effectAdder)
             return nullptr;
 
-        return ReadObjectFieldByOffset(
-            effectAdder,
-            kStateCheckAdderInstancesOffset
-        );
+        return stateCheckAdderInstancesField.IsValid()
+            ? Core::Metadata::Bind(stateCheckAdderInstancesField,effectAdder).Get() : nullptr;
     }
 
     inline StockTriggerContext* FindStockTriggerContextForEffect(
@@ -169,10 +174,10 @@
 
         const int effectEntityId =
             effectEffectEntityId.IsValid()
-                ? effectEffectEntityId[effect].Get()
+                ? Core::Metadata::Bind(effectEffectEntityId,effect).Get()
                 : -1;
-        const int targetId = effectTargetId[effect].Get();
-        const int sourceId = effectSourceId[effect].Get();
+        const int targetId = Core::Metadata::Bind(effectTargetId,effect).Get();
+        const int sourceId = Core::Metadata::Bind(effectSourceId,effect).Get();
 
         // First choice: exact DI/simulation scope identity.
         //
@@ -315,13 +320,13 @@
         if (!model || id < 0)
             return false;
 
-        auto* entities = modelEntities[model].Get();
+        auto* entities = Core::Metadata::Bind(modelEntities,model).Get();
         if (!entities || !entities->items)
             return false;
 
         for (int i = 0; i < entities->size; ++i) {
             Obj* entity = entities->items->m_Items[i];
-            if (entity && entityId[entity].Get() == id)
+            if (entity && Core::Metadata::Bind(entityId,entity).Get() == id)
                 return true;
         }
         return false;
@@ -331,13 +336,13 @@
         if (!model || id < 0)
             return nullptr;
 
-        auto* entities = modelEntities[model].Get();
+        auto* entities = Core::Metadata::Bind(modelEntities,model).Get();
         if (!entities || !entities->items)
             return nullptr;
 
         for (int i = 0; i < entities->size; ++i) {
             Obj* entity = entities->items->m_Items[i];
-            if (entity && entityId[entity].Get() == id)
+            if (entity && Core::Metadata::Bind(entityId,entity).Get() == id)
                 return entity;
         }
         return nullptr;

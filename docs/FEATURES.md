@@ -22,3 +22,5 @@ This is a map of the card-authoring features, not a list of internal runtime com
 | Change card frames, heralds and stat icons | Presentation extensions | [Presentation](reference/presentation.md) |
 
 The [JSON example index](../examples/README.md) contains the actual snippets. If something behaves differently in a native build, check [compatibility](reference/compatibility.md) before treating a source test as a gameplay test.
+
+- [Lane attack markers, pre-discard death cancellation, duration-aware triggered grants, superpower creation and deck queries](LANES_DEATH_SUPERPOWERS.md).

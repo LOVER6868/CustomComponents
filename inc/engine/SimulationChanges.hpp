@@ -17,7 +17,6 @@ inline Obj* ProcessorModel(Obj* processor){
     static auto metadata=BNM::Class("PvZCards.Engine","EffectCollectionProcessor").GetField("<Instances>k__BackingField").cast<Obj*>();auto field=metadata;
     return processor && field.IsValid()?Match::Provide(field[processor].Get(),BNM::Class("PvZCards.Engine","EntityModel").GetMonoType()):nullptr;
 }
-inline void BeforeComplete(Obj* processor,Obj*){Changed(ProcessorModel(processor));}
 inline void Complete(Obj* processor,Obj*){Obj* model=ProcessorModel(processor);Changed(model);settled.Notify(model);}
-inline bool Initialize(){Engine::EffectGuards::before.Add([](const auto& c){++depth;Changed(Core::ModelRegistry::Get(Engine::RouterContext::RouterModel(c.router)));});Engine::EffectGuards::after.Add([](const auto& c){Changed(Core::ModelRegistry::Get(Engine::RouterContext::RouterModel(c.router)));if(depth)--depth;});Core::ModelRegistry::retired.Add([](auto token){std::lock_guard<std::mutex> guard(lock);revisions.erase(token);});return Events::effectCompletionReady && Events::beforeEffectComplete.Add(BeforeComplete) && Events::afterEffectComplete.Add(Complete);}
+inline bool Initialize(){Engine::EffectGuards::before.Add([](const auto&){++depth;});Engine::EffectGuards::after.Add([](const auto& c){Changed(Core::ModelRegistry::Get(Engine::RouterContext::RouterModel(c.router)));if(depth)--depth;});Core::ModelRegistry::retired.Add([](auto token){std::lock_guard<std::mutex> guard(lock);revisions.erase(token);});return Events::effectCompletionReady && Events::afterEffectComplete.Add(Complete);}
 }

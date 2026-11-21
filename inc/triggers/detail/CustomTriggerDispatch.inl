@@ -18,12 +18,11 @@
     inline Pick3EffectIdentitySnapshot ReadPick3EffectIdentity(Obj* effect) {
         Pick3EffectIdentitySnapshot result;
         if (!effect) return result;
-        const auto* b = reinterpret_cast<const std::uint8_t*>(effect);
-        result.sourceId = *reinterpret_cast<const int*>(b + 0x24);
-        result.targetId = *reinterpret_cast<const int*>(b + 0x28);
-        result.springboardId = *reinterpret_cast<const int*>(b + 0x2C);
-        result.effectEntityId = *reinterpret_cast<const int*>(b + 0x30);
-        result.effectGroupId = *reinterpret_cast<const int*>(b + 0x3C);
+        result.sourceId = Core::Metadata::Bind(effectSourceId,effect).Get();
+        result.targetId = Core::Metadata::Bind(effectTargetId,effect).Get();
+        result.springboardId = Core::Metadata::Bind(effectSpringboardId,effect).Get();
+        result.effectEntityId = Core::Metadata::Bind(effectEffectEntityId,effect).Get();
+        result.effectGroupId = Core::Metadata::Bind(effectGroupId,effect).Get();
         result.valid = true;
         return result;
     }
@@ -36,59 +35,28 @@
         if (!effect || !instances || !entityQueryContextType)
             return nullptr;
 
-        // Exact behavior of Effect::ToEntityQueryContext at RVA 0x227F2F4:
-        //   1) InstanceManager.Acquire(typeof(EntityQueryContext), true)
-        //   2) copy SourceId / TargetId / EffectEntityId / SpringboardId
-        //      into queryContext->EffectContext
-        //   3) queryContext->EffectContext.EffectData.CopyFrom(effect->Data)
-        //
-        // We intentionally reproduce that native body here instead of calling
-        // Effect.ToEntityQueryContext(), which is the call currently hanging
-        // when invoked from the custom StateCheck carrier path.
-        Obj* queryContext = acquire[instances](entityQueryContextType, true);
-        if (!queryContext)
-            return nullptr;
-
-        auto* effectBytes = reinterpret_cast<std::uint8_t*>(effect);
-        auto* queryBytes = reinterpret_cast<std::uint8_t*>(queryContext);
-
-        Obj* effectContext =
-            *reinterpret_cast<Obj**>(queryBytes + 0x18);
-        if (!effectContext) {
-            returnToPool[instances](queryContext);
-            return nullptr;
+        // Use the stock context builder with the verified InstanceManager.
+        // It supplies the injected model and copies EffectData using the game
+        // lifecycle, so this path has no version-specific memory offsets.
+        Obj* queryContext=nullptr;
+        auto error=BNM::TryInvoke([&]{
+            queryContext=Core::Metadata::Bind(effectToEntityQueryContext,effect)(instances);
+        });
+        if(error.IsValid() || !queryContext)return nullptr;
+        if(identitySnapshot && identitySnapshot->valid){
+            auto type=BNM::Class("PvZCards.Engine","EntityQueryContext");
+            auto source=type.GetMethod("set_SourceId",1).cast<void>();
+            auto target=type.GetMethod("set_TargetId",1).cast<void>();
+            auto origin=type.GetMethod("set_EffectEntityId",1).cast<void>();
+            auto springboard=type.GetMethod("set_SpringboardId",1).cast<void>();
+            if(!source.IsValid() || !target.IsValid() || !origin.IsValid() || !springboard.IsValid()){
+                Core::Metadata::Bind(returnToPool,instances)(queryContext);return nullptr;
+            }
+            source[queryContext](identitySnapshot->sourceId);
+            target[queryContext](identitySnapshot->targetId);
+            origin[queryContext](identitySnapshot->effectEntityId);
+            springboard[queryContext](identitySnapshot->springboardId);
         }
-
-        auto* contextBytes = reinterpret_cast<std::uint8_t*>(effectContext);
-
-        const int sourceId =
-            *reinterpret_cast<int*>(effectBytes + 0x24);
-        const int targetId =
-            *reinterpret_cast<int*>(effectBytes + 0x28);
-        const int springboardId =
-            *reinterpret_cast<int*>(effectBytes + 0x2C);
-        const int effectEntityId =
-            *reinterpret_cast<int*>(effectBytes + 0x30);
-
-        // Stock still owns the effect data and validator. Only restore the
-        // pre-Process identity when the caller has an exact scoped snapshot.
-        const bool restore = identitySnapshot && identitySnapshot->valid;
-        *reinterpret_cast<int*>(contextBytes + 0x14) = restore ? identitySnapshot->sourceId : sourceId;
-        *reinterpret_cast<int*>(contextBytes + 0x10) = restore ? identitySnapshot->targetId : targetId;
-        *reinterpret_cast<int*>(contextBytes + 0x18) = restore ? identitySnapshot->effectEntityId : effectEntityId;
-        *reinterpret_cast<int*>(contextBytes + 0x1C) = restore ? identitySnapshot->springboardId : springboardId;
-
-        Obj* destinationData =
-            *reinterpret_cast<Obj**>(contextBytes + 0x20);
-        Obj* sourceData =
-            *reinterpret_cast<Obj**>(effectBytes + 0x10);
-
-        if (!destinationData || !sourceData) {
-            returnToPool[instances](queryContext);
-            return nullptr;
-        }
-
-        effectDataCopyFrom[destinationData](sourceData);
         return queryContext;
     }
 
@@ -123,24 +91,23 @@
         //   require source entity to exist in Model
         //   TriggerValidator.ShouldTriggerEffect(effectEntity, context)
         //   restore SelfId
-        Obj* validator = ReadObjectFieldByOffset(
-            stockFinder,
-            kGenericFinderValidatorOffset
-        );
-        if (!validator)
+        Obj* validator = finderValidatorField.IsValid()
+            ? Core::Metadata::Bind(finderValidatorField,stockFinder).Get() : nullptr;
+        if (!validator || std::strcmp(TypeName(validator),"TriggerValidator")!=0) {
+            LOG_ERR("CustomComponents/CustomTrigger: invalid validator finder=%p validator=%p",stockFinder,validator);
             return false;
+        }
         if (observation) observation->validatorAvailable = true;
 
         const int listenerSourceId =
-            effectEntityGetSource[static_cast<Obj*>(nullptr)](effectEntity);
+            Core::Metadata::Bind(effectEntityGetSource,static_cast<Obj*>(nullptr))(effectEntity);
 
-        auto* contextBytes =
-            reinterpret_cast<std::uint8_t*>(queryContext);
+        auto selfField=BNM::Class("PvZCards.Engine","EntityQueryContext").GetField("SelfId").cast<int>();
+        if(!selfField.IsValid())return false;
         const int previousSelfId =
-            *reinterpret_cast<int*>(contextBytes + 0x20);
+            selfField[queryContext].Get();
 
-        *reinterpret_cast<int*>(contextBytes + 0x20) =
-            listenerSourceId;
+        selfField[queryContext].Set(listenerSourceId);
 
         const bool sourceExists = listenerSourceId >= 0 &&
             ModelContainsEntityId(model, listenerSourceId);
@@ -153,15 +120,14 @@
         bool result = false;
         if (sourceExists) {
             if (observation) observation->validatorCalled = true;
-            result = triggerValidatorShouldTrigger[validator](
+            result = Core::Metadata::Bind(triggerValidatorShouldTrigger,validator)(
                 effectEntity,
                 queryContext
             );
             if (observation) observation->validatorResult = result;
         }
 
-        *reinterpret_cast<int*>(contextBytes + 0x20) =
-            previousSelfId;
+        selfField[queryContext].Set(previousSelfId);
 
         return result;
     }
@@ -195,6 +161,10 @@
 
         const auto producerLease=stockContext->lifetime;
         Obj* model = stockContext->model;
+        // Custom marker events do not pass through the stock generic
+        // TriggerSystem<T> processor. Supply their model at the same shared
+        // accepted-enqueue boundary so every marker type receives a snapshot.
+        CustomComponents::Variables::QueuedTriggerValues::ModelScope snapshotModel(model);
         Obj* instances = stockContext->instances;
         Obj* triggeredEffects = stockContext->triggeredEffects;
         Obj* stockFinder = stockContext->finder;
@@ -212,6 +182,7 @@
             );
             return false;
         }
+        Engine::TriggerDispatch::Scope triggerScope({model,instances,firingEffect,eventName,++Engine::EffectGuards::eventSerial});
 
         if constexpr (CustomComponents::Diagnostics::kVerbose) CC_DIAG(
             "CustomComponents/CustomTrigger: FIRE before ToEntityQueryContext instances=%p",
@@ -245,7 +216,7 @@
             eventSelection=RT::Capture(model,eventIdentity.effectEntityId,
                 eventIdentity.effectGroupId,eventIdentity.sourceId,eventIdentity.selectionSequence);
             if(eventSelection && !TX::ClaimEvent(eventSelection)) {
-                returnToPool[instances](queryContext);
+                Core::Metadata::Bind(returnToPool,instances)(queryContext);
                 return true; // already delivered this exact model/generation
             }
         }
@@ -286,12 +257,12 @@
 
         auto triggerDataClass = BNM::Class("PvZCards.Engine", "TriggerData");
         if (!triggerDataClass.IsValid()) {
-            returnToPool[instances](queryContext);
+            Core::Metadata::Bind(returnToPool,instances)(queryContext);
             return false;
         }
 
         const bool returnedEvent = std::strcmp(eventName, "ReturnedFromDiscardPileTrigger") == 0;
-        const int returnedCardId = effectTargetId[firingEffect].Get();
+        const int returnedCardId = Core::Metadata::Bind(effectTargetId,firingEffect).Get();
         if (returnedEvent)
             DiscardedSystem::BeginReturn(model, returnedCardId, triggeredEffects);
 
@@ -320,7 +291,7 @@
             ? CustomComponents::Queries::InDeckCardGuidOf(proofEntity) : -1;
         const bool hasProof = proofAccepted && proofGuid > 0;
 
-        auto* entities = modelEntities[model].Get();
+        auto* entities = Core::Metadata::Bind(modelEntities,model).Get();
         if (entities && entities->items) {
             for (int i = 0; i < entities->size; ++i) {
                 Obj* effectEntity = entities->items->m_Items[i];
@@ -339,9 +310,9 @@
                 // dispatcher is explicitly invoked, without changing eligibility.
                 const bool tracePlayListener = std::strcmp(eventName, "PlayTrigger") == 0;
                 const bool tracePick3Listener = std::strcmp(eventName, "PickFromThreeTrigger") == 0;
-                const int traceEffectId = tracePlayListener ? entityId[effectEntity].Get() : -1;
+                const int traceEffectId = tracePlayListener ? Core::Metadata::Bind(entityId,effectEntity).Get() : -1;
                 const int traceSourceId = tracePlayListener
-                    ? effectEntityGetSource[static_cast<Obj*>(nullptr)](effectEntity) : -1;
+                    ? Core::Metadata::Bind(effectEntityGetSource,static_cast<Obj*>(nullptr))(effectEntity) : -1;
 
                 // This is the stock GenericEffectEntityFinder<T>::WillTrigger
                 // path.  It sets/restores EntityQueryContext.SelfId and runs
@@ -354,7 +325,7 @@
                 // recent selection or to listeners of other cards.
                 const int listenerSourceForProof = hasProof
                     ? (tracePlayListener ? traceSourceId
-                       : effectEntityGetSource[static_cast<Obj*>(nullptr)](effectEntity))
+                       : Core::Metadata::Bind(effectEntityGetSource,static_cast<Obj*>(nullptr))(effectEntity))
                     : -1;
                 const bool sameSource = listenerSourceForProof > 0 &&
                     listenerSourceForProof == proofSource;
@@ -385,7 +356,7 @@
                         proofEffect,traceEffectId,int(eligible));
                 if (tracePick3Listener) LOG_INFO(
                     "CustomComponents/Pick3/PICK3_VALIDATE: listenerEffect=%d listenerSource=%d priorSelf=%d validationSelf=%d sourceExists=%d validatorAvailable=%d validatorCalled=%d validatorResult=%d eligible=%d",
-                    entityId[effectEntity].Get(), validation.listenerSourceId,
+                    Core::Metadata::Bind(entityId,effectEntity).Get(), validation.listenerSourceId,
                     validation.previousSelfId, validation.validationSelfId,
                     int(validation.sourceExists), int(validation.validatorAvailable),
                     int(validation.validatorCalled), int(validation.validatorResult), int(eligible)
@@ -394,12 +365,12 @@
                     ++rejected;
                     if (tracePick3Listener) LOG_INFO(
                         "CustomComponents/Pick3/PICK3_LISTENER: verdict=rejected listenerEffect=%d listenerSource=%d model=%p",
-                        entityId[effectEntity].Get(),
-                        effectEntityGetSource[static_cast<Obj*>(nullptr)](effectEntity), model);
+                        Core::Metadata::Bind(entityId,effectEntity).Get(),
+                        Core::Metadata::Bind(effectEntityGetSource,static_cast<Obj*>(nullptr))(effectEntity), model);
                     if (tracePlayListener) {
                         LOG_INFO(
                             "CustomComponents/PickFromThreeTrace: CUSTOM_PLAY_LISTENER effect=%d listenerEffect=%d listenerSource=%d verdict=rejected model=%p",
-                            effectSourceId[firingEffect].Get(), traceEffectId, traceSourceId, (void*)model);
+                            Core::Metadata::Bind(effectSourceId,firingEffect).Get(), traceEffectId, traceSourceId, (void*)model);
                         LOG_INFO(
                             "CustomComponents/Pick3/PATCH2_TRIGGER: phase=PLAY_LISTENER_REJECTED listenerEffect=%d listenerSource=%d reason=STOCK_TRIGGER_VALIDATOR_FALSE group=UNKNOWN model=%p",
                             traceEffectId, traceSourceId, (void*)model);
@@ -407,38 +378,38 @@
                     if constexpr (CustomComponents::Diagnostics::kVerbose) CC_DIAG(
                         "CustomComponents/CustomTrigger: REJECT '%s' EffectEntityId=%d SourceId=%d",
                         eventName,
-                        entityId[effectEntity].Get(),
-                        effectEntityGetSource[static_cast<Obj*>(nullptr)](effectEntity)
+                        Core::Metadata::Bind(entityId,effectEntity).Get(),
+                        Core::Metadata::Bind(effectEntityGetSource,static_cast<Obj*>(nullptr))(effectEntity)
                     );
                     continue;
                 }
 
-                Obj* triggerData = acquire[instances](
+                Obj* triggerData = Core::Metadata::Bind(acquire,instances)(
                     reinterpret_cast<Obj*>(triggerDataClass.GetMonoType()),
                     false
                 );
                 if (!triggerData) {
                     if (tracePlayListener)
-                        LOG_ERR("CustomComponents/Pick3/PATCH2_TRIGGER: phase=PLAY_LISTENER_FAILURE listenerEffect=%d reason=TRIGGER_DATA_ACQUIRE_NULL",entityId[effectEntity].Get());
+                        LOG_ERR("CustomComponents/Pick3/PATCH2_TRIGGER: phase=PLAY_LISTENER_FAILURE listenerEffect=%d reason=TRIGGER_DATA_ACQUIRE_NULL",Core::Metadata::Bind(entityId,effectEntity).Get());
                     continue;
                 }
 
-                Obj* context = triggerDataContext[triggerData].Get();
+                Obj* context = Core::Metadata::Bind(triggerDataContext,triggerData).Get();
                 if (!context) {
                     if (tracePlayListener)
-                        LOG_ERR("CustomComponents/Pick3/PATCH2_TRIGGER: phase=PLAY_LISTENER_FAILURE listenerEffect=%d reason=TRIGGER_DATA_CONTEXT_NULL",entityId[effectEntity].Get());
-                    returnToPool[instances](triggerData);
+                        LOG_ERR("CustomComponents/Pick3/PATCH2_TRIGGER: phase=PLAY_LISTENER_FAILURE listenerEffect=%d reason=TRIGGER_DATA_CONTEXT_NULL",Core::Metadata::Bind(entityId,effectEntity).Get());
+                    Core::Metadata::Bind(returnToPool,instances)(triggerData);
                     continue;
                 }
 
-                const int listenerEffectEntityId = entityId[effectEntity].Get();
+                const int listenerEffectEntityId = Core::Metadata::Bind(entityId,effectEntity).Get();
                 const int listenerSourceId =
-                    effectEntityGetSource[static_cast<Obj*>(nullptr)](effectEntity);
+                    Core::Metadata::Bind(effectEntityGetSource,static_cast<Obj*>(nullptr))(effectEntity);
 
-                triggerDataEffectEntityId[triggerData] = listenerEffectEntityId;
-                triggerDataSourceId[triggerData] = listenerSourceId;
-                effectContextCopyFromQuery[context](queryContext);
-                triggeredEffectsAdd[triggeredEffects](triggerData);
+                Core::Metadata::Bind(triggerDataEffectEntityId,triggerData) = listenerEffectEntityId;
+                Core::Metadata::Bind(triggerDataSourceId,triggerData) = listenerSourceId;
+                Core::Metadata::Bind(effectContextCopyFromQuery,context)(queryContext);
+                Core::Metadata::Bind(triggeredEffectsAdd,triggeredEffects)(triggerData);
                 // Preserve verified event-to-listener lineage across the stock
                 // queued-effect boundary. No global GUID or latest-pick guess.
 #if CUSTOMCOMPONENTS_PF3_ENTITY_LINK_ROUTING
@@ -465,7 +436,7 @@
                 ZoneTriggeredAbilityPresentationSystem::RegisterOffBoardTriggerPresentation(
                     model,
                     listenerSourceId,
-                    effectTargetId[firingEffect].Get(),
+                    Core::Metadata::Bind(effectTargetId,firingEffect).Get(),
                     presentationZoneHint
                 );
 
@@ -476,19 +447,19 @@
                 if (tracePlayListener) {
                     LOG_INFO(
                         "CustomComponents/PickFromThreeTrace: CUSTOM_PLAY_LISTENER effect=%d listenerEffect=%d listenerSource=%d verdict=queued model=%p",
-                        effectSourceId[firingEffect].Get(), traceEffectId, traceSourceId, (void*)model);
+                        Core::Metadata::Bind(effectSourceId,firingEffect).Get(), traceEffectId, traceSourceId, (void*)model);
                     // 2.8: immutable integers only; no new managed getters.
                     // Queued means accepted by TriggeredEffectCollection.Add,
                     // NOT processed, PF3-selected, or applied to the model.
                     LOG_INFO(
                         "CustomComponents/Pick3/PATCH2_TRIGGER: phase=PLAY_LISTENER_QUEUED listenerEffect=%d listenerSource=%d dispatchSource=%d model=%p followupApplied=UNKNOWN originGroup=UNAVAILABLE boundary=TRIGGER_COLLECTION_ADD",
                         listenerEffectEntityId, listenerSourceId,
-                        effectSourceId[firingEffect].Get(), (void*)model);
+                        Core::Metadata::Bind(effectSourceId,firingEffect).Get(), (void*)model);
                 }
             }
         }
 
-        returnToPool[instances](queryContext);
+        Core::Metadata::Bind(returnToPool,instances)(queryContext);
         if (returnedEvent)
             DiscardedSystem::FinishReturn(model, returnedCardId);
 
@@ -504,8 +475,8 @@
                 candidates,
                 rejected,
                 queued,
-                effectSourceId[firingEffect].Get(),
-                effectTargetId[firingEffect].Get()
+                Core::Metadata::Bind(effectSourceId,firingEffect).Get(),
+                Core::Metadata::Bind(effectTargetId,firingEffect).Get()
             );
         }
 
@@ -515,7 +486,20 @@
             ObservePick3QueueGate(triggeredEffects);
             LOG_INFO("CustomComponents/Pick3/PICK3_LISTENERS: model=%p expectedModel=%p candidates=%d rejected=%d queued=%d eventSource=%d eventTarget=%d",
                 model, expectedModel, candidates, rejected, queued,
-                effectSourceId[firingEffect].Get(), effectTargetId[firingEffect].Get());
+                Core::Metadata::Bind(effectSourceId,firingEffect).Get(), Core::Metadata::Bind(effectTargetId,firingEffect).Get());
+        }
+        // Single shared observer for *every* named custom trigger sent through
+        // this dispatcher. This reports accepted enqueue count, not effect
+        // resolution or model mutation. Predicted-model scans are suppressed.
+        if (reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity()) {
+            char replayName[52]{};
+            std::snprintf(replayName,sizeof(replayName),"trigger_%s",eventName);
+            Integration::ReplayEventBridge::Publish(replayName, {
+                {"sourceId",eventIdentity.sourceId},{"targetId",eventIdentity.targetId},
+                {"effectEntityId",eventIdentity.effectEntityId},
+                {"groupId",eventIdentity.effectGroupId},
+                {"candidates",candidates},{"rejected",rejected},{"queued",queued},
+                {"queueOnly",1}});
         }
         CC_DIAG(
             "CustomComponents/CustomTrigger: FIRE '%s' candidates=%d rejected=%d queued=%d EventSourceId=%d EventTargetId=%d",
@@ -523,8 +507,8 @@
             candidates,
             rejected,
             queued,
-            effectSourceId[firingEffect].Get(),
-            effectTargetId[firingEffect].Get()
+            Core::Metadata::Bind(effectSourceId,firingEffect).Get(),
+            Core::Metadata::Bind(effectTargetId,firingEffect).Get()
         );
         return true;
     }
@@ -595,6 +579,7 @@
             return false;
         }
 
+        Engine::TriggerDispatch::Scope triggerScope({model,instances,firingEffect,eventName,++Engine::EffectGuards::eventSerial,targetSourceId});
         Obj* queryContext = BuildEntityQueryContextStockEquivalent(firingEffect, instances);
         if constexpr (CustomComponents::Diagnostics::kVerbose) CC_DIAG(
             "CustomComponents/CustomTrigger: FIRE-TARGETED queryContext=%p model=%p finder=%p",
@@ -613,7 +598,7 @@
 
         auto triggerDataClass = BNM::Class("PvZCards.Engine", "TriggerData");
         if (!triggerDataClass.IsValid()) {
-            returnToPool[instances](queryContext);
+            Core::Metadata::Bind(returnToPool,instances)(queryContext);
             return false;
         }
 
@@ -622,7 +607,7 @@
         int rejected = 0;
         int queued = 0;
 
-        auto* entities = modelEntities[model].Get();
+        auto* entities = Core::Metadata::Bind(modelEntities,model).Get();
 
         if constexpr (CustomComponents::Diagnostics::kVerbose) CC_DIAG(
             "CustomComponents/CustomTrigger: FIRE-TARGETED scan begin entities=%p size=%d",
@@ -652,7 +637,7 @@
                 ++triggerMatches;
 
                 const int listenerSourceId =
-                    effectEntityGetSource[static_cast<Obj*>(nullptr)](effectEntity);
+                    Core::Metadata::Bind(effectEntityGetSource,static_cast<Obj*>(nullptr))(effectEntity);
                 if (listenerSourceId != targetSourceId)
                     continue;
 
@@ -660,7 +645,7 @@
 
                 if constexpr (CustomComponents::Diagnostics::kVerbose) CC_DIAG(
                     "CustomComponents/CustomTrigger: FIRE-TARGETED listener match EffectEntityId=%d SourceId=%d event='%s'",
-                    entityId[effectEntity].Get(),
+                    Core::Metadata::Bind(entityId,effectEntity).Get(),
                     listenerSourceId,
                     eventName
                 );
@@ -676,45 +661,45 @@
                     if constexpr (CustomComponents::Diagnostics::kVerbose) CC_DIAG(
                         "CustomComponents/CustomTrigger: REJECT-TARGETED '%s' EffectEntityId=%d SourceId=%d",
                         eventName,
-                        entityId[effectEntity].Get(),
+                        Core::Metadata::Bind(entityId,effectEntity).Get(),
                         listenerSourceId
                     );
                     continue;
                 }
 
-                Obj* triggerData = acquire[instances](
+                Obj* triggerData = Core::Metadata::Bind(acquire,instances)(
                     reinterpret_cast<Obj*>(triggerDataClass.GetMonoType()),
                     false
                 );
                 if (!triggerData)
                     continue;
 
-                Obj* context = triggerDataContext[triggerData].Get();
+                Obj* context = Core::Metadata::Bind(triggerDataContext,triggerData).Get();
                 if (!context) {
-                    returnToPool[instances](triggerData);
+                    Core::Metadata::Bind(returnToPool,instances)(triggerData);
                     continue;
                 }
 
-                triggerDataEffectEntityId[triggerData] =
-                    entityId[effectEntity].Get();
-                triggerDataSourceId[triggerData] = listenerSourceId;
-                effectContextCopyFromQuery[context](queryContext);
-                triggeredEffectsAdd[triggeredEffects](triggerData);
+                Core::Metadata::Bind(triggerDataEffectEntityId,triggerData) =
+                    Core::Metadata::Bind(entityId,effectEntity).Get();
+                Core::Metadata::Bind(triggerDataSourceId,triggerData) = listenerSourceId;
+                Core::Metadata::Bind(effectContextCopyFromQuery,context)(queryContext);
+                Core::Metadata::Bind(triggeredEffectsAdd,triggeredEffects)(triggerData);
 
 
                 ZoneTriggeredAbilityPresentationSystem::RegisterOffBoardTriggerPresentation(
                     model,
                     listenerSourceId,
-                    effectTargetId[firingEffect].Get()
+                    Core::Metadata::Bind(effectTargetId,firingEffect).Get()
                 );
 
                 ++queued;
             }
         }
 
-        returnToPool[instances](queryContext);
+        Core::Metadata::Bind(returnToPool,instances)(queryContext);
 
-        CC_DIAG(
+        LOG_INFO(
             "CustomComponents/CustomTrigger: FIRE-TARGETED '%s' TargetSourceId=%d sourceMatches=%d triggerMatches=%d rejected=%d queued=%d IgnoreTriggerConditions=%d EventSourceId=%d EventTargetId=%d",
             eventName,
             targetSourceId,
@@ -723,8 +708,8 @@
             rejected,
             queued,
             ignoreTriggerConditions ? 1 : 0,
-            effectSourceId[firingEffect].Get(),
-            effectTargetId[firingEffect].Get()
+            Core::Metadata::Bind(effectSourceId,firingEffect).Get(),
+            Core::Metadata::Bind(effectTargetId,firingEffect).Get()
         );
 
         return true;

@@ -1,0 +1,7 @@
+{
+  "$type": "PvZCards.Engine.Components.ModifySunCostEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "SunCostAmount": -2,
+    "BuffDuration": "EndOfTurn"
+  }
+}

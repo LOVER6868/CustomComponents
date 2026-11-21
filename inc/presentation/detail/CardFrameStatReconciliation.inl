@@ -12,6 +12,11 @@
     inline BNM::Field<int> frameInitialSunCost;
 
     inline BNM::Method<int> componentCalculateAttack;
+    inline std::atomic<bool> frameStatsDirty{true};
+    inline bool IsMappedCardView(Obj* view){
+        static auto type=BNM::Class("PvZCards.Game","CardViewComponent");
+        return view && type.IsValid() && BNM::IsA(view,type);
+    }
     // Generic hand-entry synchronization. Stock GrantAbilityPresentation remains
     // the sole contributor of custom abilities to SpecialAbilityChecker.
     inline BNM::Field<int> frameMaxHealth;
@@ -31,9 +36,13 @@
     inline BNM::Method<void> checkerAddSpecialAbilities;
     inline BNM::Field<Obj*> stateAbilities;
     inline bool traitSyncReady = false;
+    struct FrameTraits {bool known=false;std::vector<int> abilities;};
+    inline Core::WeakObjectSettings<FrameTraits> frameTraits;
+    inline std::shared_ptr<Core::ManagedRuntime::Root> traitChecker;
     // A minimal EntityState is constructed solely for its initialized Abilities
     // list. No factory injection, stat mutation or new hook is needed.
 
+    inline void InvalidateFrameView(Obj*);
     using CardLoadedFn = void (*)(void*, Obj*, const void*);
     inline CardLoadedFn originalCardLoaded = nullptr;
 
@@ -65,6 +74,10 @@
         CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/VIEWTRACE: OnCardLoaded ENTER view=%p data=%p", self, data);
         if (view) TraceFrameForCard(view, "OnCardLoaded BEFORE");
         originalCardLoaded(self, data, method);
+        // The mapper may have bound a prefab before its async frame existed.
+        // Mark the completed asset boundary for both local and opponent views.
+        frameStatsDirty = true;
+        InvalidateFrameView(view);
         if (view) TraceFrameForCard(view, "OnCardLoaded AFTER");
     }
 
@@ -75,12 +88,30 @@
 
     // Exact model/entity/view association, captured only after stock mapper registration.
     // This avoids guessing the EntityModel from a CardId shared across matches.
-    struct FrameViewBinding { Obj* view = nullptr; Obj* model = nullptr; int id = -1; bool shownInHand = false; };
+    struct FrameViewBinding { Obj* view = nullptr; Obj* model = nullptr; int id = -1; bool shownInHand = false;
+        // Never trust an entity ID across an association change or a new view.
+        std::uint64_t lastRevision = ~std::uint64_t{0}; bool explicitDirty = true;
+    };
     inline std::array<FrameViewBinding, 256> frameViewBindings{};
+    inline void InvalidateFrameView(Obj* view){
+        if(!view)return;
+        for(auto& binding:frameViewBindings)
+            if(binding.view==view){binding.explicitDirty=true;frameStatsDirty=true;}
+    }
     // A new EntityModel means a new match's CardViews. Never reuse pointers
     // or entity IDs bound to the previous scene.
     inline Obj* boundFrameModel = nullptr;
-    inline bool frameStatsDirty = true;
+    inline void InvalidateCard(int id){
+        if(id<0){frameStatsDirty=true;return;}
+        const auto model=Core::SceneViewContext::ModelIdentity();
+        for(auto& binding:frameViewBindings){
+            if(binding.id!=id || !binding.view ||
+               (model && reinterpret_cast<std::uintptr_t>(binding.model)!=model))continue;
+            binding.explicitDirty=true;
+            frameStatsDirty=true;
+        }
+    }
+
 
     // Deferred *visual-only* verification for a stock-created lane frame.
     // Return tickets exist only on the client that ran the custom transfer;
@@ -137,14 +168,30 @@
     }
     inline void RefreshFrameTraits(Obj* frame,Obj* entity) {
         if(!frame || !entity || !traitSyncReady || !frameSetSpecialAbilitySprites.IsValid()) return;
+        static auto type=BNM::Class("PvZCards.Game","CardFrameViewComponent");
+        static auto icons=type.GetField("CardFrameIconView").cast<Obj*>();
+        static auto board=type.GetField("CardFrameOnBoardSpriteView").cast<Obj*>();
+        if(!icons.IsValid() || !board.IsValid() || !Core::Metadata::Bind(icons,frame).Get() || !Core::Metadata::Bind(board,frame).Get())return;
         Obj* state=stateClass.CreateNewInstance();Core::ManagedRuntime::Root stateRoot(state);
-        Obj* checker=checkerClass.CreateNewInstance();Core::ManagedRuntime::Root checkerRoot(checker);
-        if(!stateRoot.Get() || !checkerRoot.Get()) return;
-        stateCtor[state]();checkerCtor[checker]();
+        if(!traitChecker || !traitChecker->Get()){
+            traitChecker=std::make_shared<Core::ManagedRuntime::Root>(checkerClass.CreateNewInstance());
+            if(traitChecker->Get())Core::Metadata::Bind(checkerCtor,traitChecker->Get())();
+        }
+        Obj* checker=traitChecker?traitChecker->Get():nullptr;
+        if(!stateRoot.Get() || !checker) return;
+        stateCtor[state]();
         Obj* abilities=stateAbilities[state].Get();
         if(!abilities) return;
         checkerAddSpecialAbilities[checker](abilities,entity);
-        frameSetSpecialAbilitySprites[frame](state);
+        const auto* list=reinterpret_cast<BNM::Structures::Mono::List<int>*>(abilities);
+        if(!Engine::EntityAccess::Valid(list))return;
+        std::vector<int> signature(list->items->m_Items,list->items->m_Items+list->size);
+        const auto previous=frameTraits.Get(frame);
+        if(previous.known && previous.abilities==signature)return;
+        // Rebuilding unchanged sprites can restart native icon presentation
+        // and load assets during unrelated plays/Level changes.
+        const auto error=BNM::TryInvoke([&]{Core::Metadata::Bind(frameSetSpecialAbilitySprites,frame)(state);});
+        if(!error.IsValid())frameTraits.Set(frame,{true,std::move(signature)});
     }
     inline void BindFrameView(Obj* view, Obj* model, int id) {
         if (!view || !model || id < 0) return;
@@ -184,12 +231,12 @@
         CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/VIEWTRACE: AddViewObject ENTER mapper=%p model=%p entity=%d view=%p type=%s",
                  self, model, entityId, view, TraceObjectType(view));
         // Do not assume every ViewObject is CardViewComponent.
-        if (view && std::strcmp(TraceObjectType(view), "CardViewComponent") == 0)
+        if (view && IsMappedCardView(view))
             TraceFrameForCard(view, "AddViewObject BEFORE", entityId, model);
         originalAddViewObject(self, entityId, view, method);
         CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/VIEWTRACE: AddViewObject EXIT mapper=%p entity=%d view=%p",
                  self, entityId, view);
-        if (view && std::strcmp(TraceObjectType(view), "CardViewComponent") == 0) {
+        if (view && IsMappedCardView(view)) {
             BindFrameView(view, model, entityId);
             TraceFrameForCard(view, "AddViewObject AFTER", entityId, model);
         }
@@ -204,16 +251,9 @@
         frameStatsDirty = true;
         for(auto& binding:frameViewBindings)
             if(view && binding.view==view && cardViewEntityId.IsValid() &&
-               binding.id==cardViewEntityId[view].Get()) binding.shownInHand=true;
+               binding.id==cardViewEntityId[view].Get()) {
+                binding.shownInHand=true;binding.explicitDirty=true;
+            }
         if (view) TraceFrameForCard(view, "ShowInHand AFTER");
         Engine::Events::afterShowInHand.Notify(view);
     }
-
-
-
-
-
-
-
-
-

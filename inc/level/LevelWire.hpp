@@ -5,7 +5,11 @@
 namespace CustomComponents::Level::Wire {
 // Private, versioned GameCommandDto protobuf extension; native fields are untouched.
 inline constexpr std::uint32_t Field=50001;
-struct Choice {bool present=false;bool valid=true;int entry=-1;};
+// The quoted cost is simulation-local state, not part of the network extension.
+// The host validates the play once, before resources/hand state can change.
+struct Choice {bool present=false;bool valid=true;int entry=-1;
+    bool quoted=false;int total=0,extra=0,attack=0,health=0;
+};
 inline void Varint(std::vector<std::uint8_t>& bytes,std::uint64_t value){do{auto b=std::uint8_t(value&127);value>>=7;bytes.push_back(b|(value?128:0));}while(value);}
 inline bool Read(const std::uint8_t* data,std::size_t size,std::size_t& pos,std::uint64_t& value){value=0;for(int shift=0;shift<64;shift+=7){if(pos==size)return false;auto b=data[pos++];if(shift==63 && b>1)return false;value|=std::uint64_t(b&127)<<shift;if(!(b&128))return true;}return false;}
 inline std::vector<std::uint8_t> Encode(int entry) {std::vector<std::uint8_t> bytes;if(entry < -1 || entry>=1024)return bytes;Varint(bytes,std::uint64_t(Field)<<3);Varint(bytes,(std::uint64_t(1)<<32)|std::uint32_t(entry+1));return bytes;}

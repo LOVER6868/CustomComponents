@@ -9,6 +9,7 @@
 // game's SelectTargetService yet. This separation is crucial for PvP safety.
 #include <cstdint>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <deque>
 #include <mutex>
@@ -22,6 +23,7 @@
 #include <BNM/Exceptions.hpp>
 #include "log.h"
 #include "core/SceneViewContext.hpp"
+#include "core/SharedHookEvents.hpp"
 #include "pick3/PickFromThreeCore.hpp"
 #include "presentation/detail/Pick3SpriteCache.hpp"
 #include "queries/InDeckQuery.hpp"
@@ -138,6 +140,20 @@ inline std::vector<Candidate> EnumerateCardDatabase(Obj* query,int effectId,Obj*
     }
     CC_DIAG("CustomComponents/Pick3/DB5: QUERY_MATCHES effect=%d matched=%d usable=%zu (filtered by JSON Query)",
              effectId, matches->size, candidates.size());
+    // Diagnose Junior's missing popup without relaxing pick-three authority,
+    // query constraints, ownership, or the stock selection service.
+    static std::atomic<unsigned> candidateSamples{0};
+    if(candidateSamples.fetch_add(1)<60){
+        int sourceGuid=-1;
+        Obj* association=effect?Engine::EntityAccess::Component(effect,"EffectEntity"):nullptr;
+        static auto source=BNM::Class("PvZCards.Engine.Components","EffectEntity").GetField("SourceId").cast<int>();
+        if(model && association && source.IsValid()){
+            Obj* owner=Engine::EntityAccess::Find(model,source[association].Get());
+            sourceGuid=Engine::BoardPlacement::Guid(owner);
+        }
+        LOG_INFO("CustomComponents/Pick3/DB5_CANDIDATES: sourceGuid=%d effect=%d matched=%d eligible=%zu firstGuid=%d",
+            sourceGuid,effectId,matches->size,candidates.size(),candidates.empty()?-1:candidates.front().cardGuid);
+    }
     return candidates;
 }
 
@@ -148,6 +164,12 @@ using ShouldSecondaryFn = bool (*)(void*, int, void*, void*, const void*);
 inline FinderFn originalFindValid = nullptr;
 inline ShouldPrimaryFn originalShouldPrimary = nullptr;
 inline ShouldSecondaryFn originalShouldSecondary = nullptr;
+// Fighter-to-fighter effects use the same shared stock selection hooks, but
+// cannot use stock lane-only validation. The owner in ReturnToLaneTargeting
+// provides exact descriptor/phase-scoped callbacks (nullptr = not handled).
+inline Obj* (*fighterFindValid)(void*,void*,const void*) = nullptr;
+inline bool (*fighterShouldSecondary)(void*,int,void*,void*,bool*) = nullptr;
+
 inline std::mutex snapshotMutex;
 inline PreviewRequest nextRequest;
 // The current PlayCardCommand gesture is the immediate play's actual card.
@@ -756,6 +778,11 @@ static bool ShouldPrimaryHook(void* self, void* filter, void* candidates, const 
     return value;
 }
 static bool ShouldSecondaryHook(void* self, int primary, void* filter, void* candidates, const void* method) {
+    if(fighterShouldSecondary){
+        bool handled=false;
+        const bool answer=fighterShouldSecondary(self,primary,filter,candidates,&handled);
+        if(handled)return answer;
+    }
     if (!originalShouldSecondary) return false;
     if (!enabled || !filter || !EnumModes::IsPickFromThree(selectionType[filter].Get()))
         return originalShouldSecondary(self, primary, filter, candidates, method);
@@ -775,6 +802,11 @@ static bool ShouldSecondaryHook(void* self, int primary, void* filter, void* can
 }
 
 static Obj* FindValidHook(void* self, void* blocking, const void* method) {
+    if(fighterFindValid){
+        // An owned, pooled fighter list is returned for only phase-1 custom
+        // pair choices; all unrelated selection paths remain completely stock.
+        if(Obj* selected=fighterFindValid(self,blocking,method))return selected;
+    }
     if (!originalFindValid) return nullptr;
     if (!enabled || !self || !blocking ||
         !finderClass.IsValid() || !blockingEffectClass.IsValid() ||
@@ -1407,7 +1439,7 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
 }
 
 inline Obj*(*originalCreateByMethod)(Obj*,Obj*,Obj*,Obj*,Obj*,const void*)=nullptr;
-static Obj* CreateByMethod(Obj* self,Obj* effect,Obj* context,Obj* targets,Obj* filter,const void* method) {
+static Obj* CreateByMethodImplementation(Obj* self,Obj* effect,Obj* context,Obj* targets,Obj* filter,const void* method) {
     const int mode=filter && selectionType.IsValid()?selectionType[filter].Get():-1;
     if(!EnumModes::IsPickFromThree(mode) || !additionalTargetType.IsValid() || additionalTargetType[filter].Get()!=1)return originalCreateByMethod(self,effect,context,targets,filter,method);
     // Creation uses its stock placement/failure path after choosing the card.
@@ -1429,6 +1461,12 @@ static Obj* CreateByMethod(Obj* self,Obj* effect,Obj* context,Obj* targets,Obj* 
     struct Restore {Obj* filter;int mode;~Restore(){selectionType[filter].Set(mode);}} restore{filter,mode};
     LOG_INFO("CustomComponents/Pick3: no legal primary/additional pair; skipping effect=%d",Engine::Match::Id(effect));
     return originalCreateByMethod(self,effect,context,targets,filter,method);
+}
+static Obj* CreateByMethod(Obj* self,Obj* effect,Obj* context,Obj* targets,Obj* filter,const void* method) {
+    Core::SharedHookEvents::primaryTargetMethod.Notify(self,effect,context,targets,filter,nullptr,false);
+    Obj* result=CreateByMethodImplementation(self,effect,context,targets,filter,method);
+    Core::SharedHookEvents::primaryTargetMethod.Notify(self,effect,context,targets,filter,result,true);
+    return result;
 }
 
 // A queued popup already owns the manual choice, even before UGUI has had
@@ -1559,9 +1597,7 @@ inline bool Initialize(bool requested, bool useStockManualRuntime = false) {
     finderEntityFinder = finder.GetField("<EntityFinder>k__BackingField");
     entityFinderModel = BNM::Class("PvZCards.Engine", "EntityFinder").GetField("Model");
     getEntityById = modelClass.GetMethod("GetEntityById", 1).cast<Obj*>();
-    getComponent = entityClass.GetMethod("GetComponent", {
-        BNM::Class("System", "Type").GetCompileTimeClass()
-    }).cast<Obj*>();
+    getComponent = entityClass.GetMethod("GetComponent", 1).cast<Obj*>();
     cardGuid = cardClass.GetMethod("GetGuid", 1).cast<int>();
     auto shouldPrimary = chooser.GetMethod("ShouldAddChooseTargetEffects", 2);
     auto shouldSecondary = chooser.GetMethod("ShouldAddChooseTargetEffects", 3);

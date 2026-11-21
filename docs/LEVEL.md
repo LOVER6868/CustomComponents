@@ -30,6 +30,8 @@ See [level multiplier](../examples/variables/level-spent-multiplier.json), [snap
 
 ## Timing and cleanup
 
+The AI receives affordable Level variants alongside ordinary legal plays. Each variant preserves the stock play's targets and placement, carries its choice through prediction copies, and is scored by the game's AI. `Level/AI_OPTIONS` reports enumeration; it does not prove that a variant was chosen. Check the resulting payment and stats in a device capture.
+
 Level applies normal `ModifiableInt` cost/attack/health modifiers while the card is in hand; changing modes does **not** produce a stock `BuffEffect` or fire buff triggers. The selected cost affects the hand glow and available drag targets. The game’s shake gesture cycles the choices, and the selected cost gets a blue tint. Level keeps committed payment information for play effects. Hand choices reset as the card moves between zones. Don't assume that an effect running long after a card has left its play state can still read its former Level value; snapshot it when needed.
 
 The card UI cycles the available modes, updates costs and stats, and synchronizes choices for supported multiplayer paths. For affordability rules and trick restrictions, see [Play requirements](reference/play-requirements.md). Any new Level UI behavior should be tested in both the hand preview and the actual play, not just in the JSON loader.

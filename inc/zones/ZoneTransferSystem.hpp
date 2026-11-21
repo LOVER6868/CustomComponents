@@ -1,10 +1,17 @@
+#include "engine/FighterPair.hpp"
 #include "effects/PlayFromDeckToLaneEffectDescriptor.hpp"
+#include "zones/DeckLaneCreation.hpp"
 #include "engine/BoardPlacement.hpp"
 #include "engine/DeckCreation.hpp"
 #include "engine/EntityAccess.hpp"
 #include "engine/CardTypes.hpp"
 #include "core/HookRegistry.hpp"
 #pragma once
+#include "history/DomainRecords.hpp"
+#include "integration/ReplayEventBridge.hpp"
+#include "engine/CustomRecords.hpp"
+#include "engine/MatchAccess.hpp"
+#include "engine/CustomRecordHistoryAnchor.hpp"
 #include "diagnostics/DiagnosticLogging.hpp"
 
 #include <BNM/BasicMonoStructures.hpp>
@@ -16,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "effects/SwapPositionEffectDescriptor.hpp"
 #include "effects/RemoveFromDiscardPileEffectDescriptor.hpp"
 #include "zones/DiscardFromHandSystem.hpp"
 #include "zones/DiscardProvenanceSystem.hpp"
@@ -36,7 +44,7 @@
 #include "diagnostics/DiagnosticLogging.hpp"
 #include "log.h"
 
-namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
+namespace CustomComponents::Systems::ZoneTransferSystem {
 
     using Obj = BNM::IL2CPP::Il2CppObject;
     template<typename T> using MonoList = BNM::Structures::Mono::List<T>;
@@ -63,6 +71,9 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
     inline BNM::Method<void> handAddCard;
     inline BNM::Method<void> handRemoveContainingCard;
     inline BNM::Method<void> discardAddCard;
+    inline BNM::Method<void> deckAddCardAt;
+    inline BNM::Method<void> lanePlayCard;
+    inline BNM::Method<int> lanePlayCardWithPlacement;
     inline BNM::Field<Obj*> handModifierEntities;
     inline BNM::Class handModifierClass;
 
@@ -93,7 +104,6 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
     inline BNM::Field<Obj*> createDeckSystemModel;
     inline BNM::Field<Obj*> createDeckSystemModifier;
     inline BNM::Field<Obj*> createDeckSystemHistory;
-    inline BNM::Method<void> deckAddCardAt;
 
     // ---------------------------------------------------------------------
     // ReturnFromDiscardPileToLane routing
@@ -102,7 +112,6 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
     inline BNM::Field<Obj*> moveLaneSystemModel;
     inline BNM::Field<Obj*> moveLaneSystemModifier;
     inline BNM::Field<Obj*> moveLaneSystemHistory;
-    inline BNM::Method<void> lanePlayCard;
     inline BNM::Class environmentPlacerClass;
     inline BNM::Method<void> environmentPlacerCtor, environmentPlaceCard;
     inline BNM::Field<int> laneEnvironmentId;
@@ -164,7 +173,7 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
     #include "zones/detail/DiscardRevivePairLegality.inl"
     #include "zones/detail/DeckLaneSource.inl"
     #include "zones/detail/ReturnToLaneTargeting.inl"
-    #include "zones/detail/DiscardToLane.inl"
+    #include "zones/detail/LaneTransferExecution.inl"
     #include "zones/detail/HandToDiscard.inl"
     // =====================================================================
     // Registration / hooks
@@ -176,7 +185,7 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
     }
 
     inline bool Pick3CanTransferPhysicalPair(Obj* model,int effect,int card,int lane,int player) {
-        if(FindComponent(FindEntity(model,effect),"PlayFromDeckToLaneEffectDescriptor"))return CheckDeckLanePair(model,card,lane,player);
+        if(FindComponent(FindEntity(model,effect),"PlayFromDeckToLaneEffectDescriptor"))return CheckDeckLanePair(model,card,lane,player,FindEntity(model,effect));
         return Pick3CanRevivePhysicalPair(model,card,lane,player);
     }
 
@@ -259,7 +268,19 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
             );
         }
 
-        return true;
+        using K=CustomFieldBridgeSystem::FieldKind;
+        auto deckType=BNM::Class("PvZCards.Engine.Components","PlayFromDeckToLaneEffectDescriptor");
+        auto deckBase=BNM::Class("PvZCards.Engine.Components","MoveCardToLanesEffectDescriptor");
+        auto returnLaneType=BNM::Class("PvZCards.Engine.Components","ReturnFromDiscardPileToLaneEffectDescriptor");
+        return Core::ComponentLifecycle::Patch(deckType,deckBase) &&
+            CustomFieldBridgeSystem::Register("PvZCards.Engine.Components","PlayFromDeckToLaneEffectDescriptor",
+                "PvZCards.Engine.Components","MoveCardToLanesEffectDescriptor",
+                {{"PluckFailSafe",K::Bool},{"ForceFaceDown",K::Bool},{"GrantTeamup",K::Bool},
+                 {"GrantAquatic",K::Bool},{"CreationPosition",K::String}},false) &&
+            Core::ComponentLifecycle::Patch(returnLaneType,deckBase) &&
+            CustomFieldBridgeSystem::Register("PvZCards.Engine.Components","ReturnFromDiscardPileToLaneEffectDescriptor",
+                "PvZCards.Engine.Components","MoveCardToLanesEffectDescriptor",
+                {{"ForceFaceDown",K::Bool},{"CreationPosition",K::String}},false);
     }
 
     inline bool InstallHooks() {
@@ -301,6 +322,14 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
             "PvZCards.Core.Systems.Utilities",
             "DeckModifier"
         );
+        auto deckElement = BNM::Class(
+            "PvZCards.Engine.Components",
+            "DeckElement"
+        );
+        auto deckPoolModifier = BNM::Class(
+            "PvZCards.Core.Systems.Utilities",
+            "CardPoolModifier`1"
+        ).GetGeneric({deckElement.GetCompileTimeClass()});
         auto laneModifier = BNM::Class(
             "PvZCards.Core.Systems.Utilities",
             "LaneModifier"
@@ -387,7 +416,8 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
             !deckAssociation.IsValid() || !handAssociation.IsValid() ||
             !discardPile.IsValid() || !hand.IsValid() ||
             !discardModifierClass.IsValid() || !handModifierClass.IsValid() ||
-            !deckModifier.IsValid() ||
+            !deckModifier.IsValid() || !deckElement.IsValid() ||
+            !deckPoolModifier.IsValid() ||
             !laneModifier.IsValid() || !laneComponentClass.IsValid() ||
             !laneElementClass.IsValid() || !returnDescriptor.IsValid() ||
             !returnRuntime.IsValid() || !returnSystem.IsValid() ||
@@ -425,6 +455,7 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
         handAddCard = handModifierClass.GetMethod("AddCard", 2).cast<void>();
         handRemoveContainingCard = handModifierClass.GetMethod("RemoveCardFromContainingHand", 1).cast<void>();
         discardAddCard = discardModifierClass.GetMethod("AddCard", 2).cast<void>();
+        deckAddCardAt = deckPoolModifier.GetMethod("AddCardAt", 3).cast<void>();
         handModifierEntities = handModifierClass.GetField("<Entities>k__BackingField");
         discardModifierEntities = discardModifierClass.GetField("<Entities>k__BackingField");
 
@@ -441,7 +472,6 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
         createDeckSystemModel = createDeckSystem.GetField("<Model>k__BackingField");
         createDeckSystemModifier = createDeckSystem.GetField("<DeckModifier>k__BackingField");
         createDeckSystemHistory = createDeckSystem.GetField("<History>k__BackingField");
-        deckAddCardAt = deckModifier.GetMethod("AddCardAt", 3).cast<void>();
 
         moveLaneRuntimeOrder = moveLaneRuntime.GetField("OrderInLane");
         moveLaneSystemModel = moveLaneSystem.GetField("<Entities>k__BackingField");
@@ -451,6 +481,11 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
         laneElementIds = laneElementClass.GetField("LaneIds");
         laneGetNumFightersForPlayer = laneComponentClass.GetMethod("GetNumFightersForPlayer", 1).cast<int>();
         laneGetNumTotalFighters = laneComponentClass.GetMethod("GetNumTotalFighters", 0).cast<int>();
+        lanePlayCard = laneModifier.GetMethod(
+            "PlayCardInLane",
+            {"cardId", "laneId", "playerId"}
+        ).cast<void>();
+        lanePlayCardWithPlacement = laneModifier.GetMethod("PlayCardInLane", 1).cast<int>();
         environmentPlacerClass = BNM::Class("PvZCards.Core.Systems.Utilities", "EnvironmentPlacer");
         environmentPlacerCtor = environmentPlacerClass.GetMethod(".ctor", 1).cast<void>();
         const auto intType=BNM::Class("System", "Int32").GetCompileTimeClass();
@@ -461,19 +496,11 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
         LOG_INFO("CustomComponents/ReturnToLane: environmentReady=%d",
             int(environmentPlacerClass.IsValid() && environmentPlacerCtor.IsValid() &&
                 environmentPlaceCard.IsValid() && laneEnvironmentId.IsValid() && createEnvironmentRecordSetCard.IsValid()));
-        lanePlayCard = laneModifier.GetMethod(
-            "PlayCardInLane",
-            {BNM::Class("System", "Int32").GetCompileTimeClass(),
-             BNM::Class("System", "Int32").GetCompileTimeClass(),
-             BNM::Class("System", "Int32").GetCompileTimeClass()}
-        ).cast<void>();
-
         historyAddRecordByType = history.GetMethod(
             "AddRecord",
             {systemType.GetCompileTimeClass()}
         ).cast<Obj*>();
-        historyAppendRecord=history.GetMethod("AddRecord",
-            {BNM::Class("PvZCards.Engine","Record").GetCompileTimeClass()}).cast<void>();
+        historyAppendRecord = history.GetMethod("AddRecord", {"record"}).cast<void>();
         historyInstances=history.GetField("<Instances>k__BackingField").cast<Obj*>();
         historyRecords=history.GetField("Records").cast<MonoList<Obj*>*>();
 
@@ -522,19 +549,21 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
             !getPlayerIdFromCard.IsValid() || !discardRemoveCard.IsValid() ||
             !handAddCard.IsValid() || !discardModifierEntities.IsValid() ||
             !handModifierEntities.IsValid() || !handRemoveContainingCard.IsValid() ||
-            !discardAddCard.IsValid() ||
+            !discardAddCard.IsValid() || !deckAddCardAt.IsValid() ||
+            !lanePlayCard.IsValid() || !lanePlayCardWithPlacement.IsValid() ||
             !returnDeckPosition.IsValid() || !returnSystemModel.IsValid() ||
             !returnSystemDiscardModifier.IsValid() ||
             !returnSystemHandModifier.IsValid() || !returnSystemHistory.IsValid() ||
             !createDeckDescriptorPosition.IsValid() ||
             !createDeckRuntimeCardGuid.IsValid() || !createDeckRuntimePosition.IsValid() ||
             !createDeckSystemModel.IsValid() || !createDeckSystemModifier.IsValid() ||
-            !createDeckSystemHistory.IsValid() || !deckAddCardAt.IsValid() ||
+            !createDeckSystemHistory.IsValid() ||
             !moveLaneRuntimeOrder.IsValid() || !moveLaneSystemModel.IsValid() ||
             !moveLaneSystemModifier.IsValid() || !moveLaneSystemHistory.IsValid() ||
-            !lanePlayCard.IsValid() || !laneModifierModel.IsValid() ||
+ !laneModifierModel.IsValid() ||
             !laneElementIds.IsValid() || !laneGetNumFightersForPlayer.IsValid() ||
             !laneGetNumTotalFighters.IsValid() || !historyAddRecordByType.IsValid() ||
+            !historyAppendRecord.IsValid() ||
             !returnedDeckRecordSetCardId.IsValid() ||
             !returnedDeckRecordSetDeckId.IsValid() ||
             !cardIdDataCreateFromEntity.IsValid() ||
@@ -635,5 +664,6 @@ namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem {
                InstallHooks() && moveToDiscardEffectPileId.IsValid() && Targeting::Initialize();
     }
 
-} // namespace CustomComponents::Systems::DiscardPileZoneEffectsSystem
+} // namespace CustomComponents::Systems::ZoneTransferSystem
+
 

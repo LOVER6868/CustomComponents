@@ -2,6 +2,7 @@
 #include "core/HookRegistry.hpp"
 #include "pick3/AutomaticChoicePolicy.hpp"
 #pragma once
+#include "history/DomainRecords.hpp"
 // Discover v1.0b UI port for PickFromThree. Only presentation code was ported.
 // PF3 target finding, ChooseTargetBlockingEffect, submission, replication and
 // animation queue ownership stay in their original systems.
@@ -69,6 +70,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         return false;
     }
     inline void CaptureGroupStats(Group& group,Obj* model) {
+        group.model=model;
         group.stats.clear();group.stats.reserve(group.ids.size());
         for(std::size_t i=0;i<group.ids.size();++i) {
             Obj* entity=Engine::EntityAccess::Find(model,group.ids[i]);
@@ -77,6 +79,14 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         }
     }
     inline void Publish(const Group& g) {
+        if(g.model){History::Record r;r.kind=History::Kind::SelectionRequest;r.visual=History::VisualPolicy::NoVisual;
+            r.entityId=r.effectId=g.source;r.ownerId=g.player;r.correlationId=(std::uint64_t(std::uint32_t(g.source))<<32)|std::uint32_t(g.serial);
+            History::SelectionPayload payload;payload.effect=g.source;payload.group=g.serial;payload.owner=g.player;
+            payload.phase=History::SelectionPhase::Options;payload.entities=g.ids;payload.guids=g.guids;
+            for(const auto& snapshot:g.stats){payload.costs.push_back(snapshot.stats.cost);payload.attacks.push_back(snapshot.stats.attack);payload.maxHealths.push_back(snapshot.stats.maxHealth);payload.damages.push_back(snapshot.stats.damage);}
+            r.payload=std::move(payload);
+            History::Writer::Commit(std::move(r),g.model);
+        }
         std::lock_guard<std::mutex> l(groupsMutex);
         groups.clear();groups.push_back(g);
     }
@@ -138,7 +148,6 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
 
         // Unity members
         inline BNM::Method<Obj*> cameraMain;                  // Camera.main
-        inline BNM::Method<bool> cameraOrthographic;
         inline BNM::Method<float> cameraOrthographicSize;
         inline BNM::Method<Vec3> cameraViewportToWorld;       // Camera.ViewportToWorldPoint(Vector3)
         inline BNM::Method<Obj*> componentTransform, componentGameObject;
@@ -188,16 +197,13 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         inline BNM::Method<void> gameObjectSetLayer;
         inline BNM::Method<void> objectDestroy;                // Object.Destroy(Object)
         inline BNM::Method<Bounds> rendererBounds;
-        inline BNM::Method<bool> rendererEnabled;
         inline BNM::Method<int> rendererGetOrder, rendererGetLayer;
         inline BNM::Method<void> rendererSetOrder, rendererSetLayer;
-        inline BNM::Method<int> groupGetOrder, groupGetLayer;  // UnityEngine.Rendering.SortingGroup (optional)
-        inline BNM::Method<void> groupSetOrder, groupSetLayer;
-        inline BNM::Method<void> spriteRendererSetSprite, spriteRendererSetColor;
+                inline BNM::Method<void> spriteRendererSetSprite, spriteRendererSetColor;
         inline BNM::Method<Color> spriteRendererGetColor;
         inline BNM::Method<Obj*> spriteCreate;                 // Sprite.Create(Texture2D, Rect, Vector2, float)
         inline BNM::Method<Obj*> whiteTexture;                 // Texture2D.whiteTexture
-        inline BNM::MonoType *rendererType = nullptr, *sortingGroupType = nullptr, *spriteRendererType = nullptr;
+        inline BNM::MonoType *rendererType = nullptr, *spriteRendererType = nullptr;
         inline bool ready = false;
 
         inline uintptr_t (*gcNew)(Obj*, bool) = nullptr;
@@ -226,6 +232,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         };
 
         struct State {
+            Core::ModelRegistry::Token historyModel=0;
             bool shown = false;
             int source = -1;
             int serial = -1;
@@ -234,6 +241,8 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             int count = 0;
             int loaded = 0;
             bool laidOut = false;
+            Obj* loadingRoot = nullptr;
+            uintptr_t loadingRootHandle = 0;
             bool refreshed = false;
             Obj* scrim = nullptr;         // GameObject
             uintptr_t scrimHandle = 0;
@@ -324,7 +333,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             bool any = false;
             float minX = 0, minY = 0, maxX = 0, maxY = 0, z = 0;
             for (Obj* renderer : Children(view, rendererType, false)) {     // active objects only
-                if (!renderer || (rendererEnabled.IsValid() && !rendererEnabled[renderer]())) continue;
+                if (!renderer) continue;
                 const Bounds b = rendererBounds[renderer]();
                 if (b.extents.x <= 0.0001f && b.extents.y <= 0.0001f) continue;
                 const float x0 = b.center.x - b.extents.x, x1 = b.center.x + b.extents.x;
@@ -351,15 +360,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
                 if (first) { state.sortingLayer = rendererGetLayer[renderer](); state.lowestOrder = order; first = false; }
                 state.lowestOrder = std::min(state.lowestOrder, order);
             }
-            if (sortingGroupType) {
-                for (Obj* group : Children(view, sortingGroupType)) {
-                    if (!group) continue;
-                    const int order = groupGetOrder[group]() + kSortingBoost;
-                    groupSetOrder[group](order);
-                    state.lowestOrder = std::min(state.lowestOrder, order);
-                }
-            }
-        }
+}
 
         inline void MakeScrim(Obj* camera, float depth) {
             Obj* texture = whiteTexture[static_cast<Obj*>(nullptr)]();
@@ -768,6 +769,11 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
                                props ? "the mulligan's values" : "fallback");
         }
 
+        inline void RecordUi(const char* phase){
+            if(!state.historyModel)return;
+            const std::uint64_t correlation=(std::uint64_t(std::uint32_t(state.source))<<32)|std::uint32_t(state.serial);
+            History::Domain::Presentation(Core::ModelRegistry::Get(state.historyModel),"pf3",phase,{state.source},correlation);
+        }
         inline void Hide(const char* why);
         inline float EaseOutCubic(float t) { const float u = 1 - t; return 1 - u * u * u; }
         inline float Smooth(float t) { t=std::clamp(t,0.f,1.f);return t*t*(3-2*t); }
@@ -794,6 +800,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             }
             state.animating=false;
             state.exiting=true;
+            RecordUi("exit-started");
             state.exitChosen=index;
             state.exitClock=0;
             for (int i=0;i<state.count;i++) {
@@ -937,6 +944,12 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         // Called when all views have loaded: column layout at hand-card size, sorting, scrim, Choose buttons.
         inline void BeginExit(int index);
         inline void LayOut() {
+            // Keep the loader active while hiding its hierarchy geometrically.
+            // Restore scale before computing world-space child positions.
+            if(state.loadingRoot){
+                Obj* transform=gameObjectTransform[state.loadingRoot]();
+                if(transform)transformSetLocalScale[transform](Vec3(1,1,1));
+            }
             Obj* camera = cameraMain[static_cast<Obj*>(nullptr)]();
             if (!camera) { LOG_ERR("CustomComponents/Pick3/DiscoverUI: no main camera"); return; }
             Obj* cameraTransform = componentTransform[camera]();
@@ -983,6 +996,10 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             PICK3_DISCOVER_LOG("CustomComponents/Pick3/DiscoverUI: laid out %d card(s); sorting layer %d, lowest order %d, object layer %d; scrim %s",
                                state.count, state.sortingLayer, state.lowestOrder, state.layer, state.scrim ? "made" : "missing");
             state.laidOut = true;
+            RecordUi("presented");
+            // The creation parent has hidden every partially loaded child.
+            // Reveal only after all native asset callbacks and layout finish.
+            if(state.loadingRoot)gameObjectSetActive[state.loadingRoot](true);
             if (state.deferredExit) {
                 const int deferredChoice=state.deferredExitChoice;
                 PF3_REPAIR_TRACE("CustomComponents/Pick3/REPAIR175: EXIT_LATE_LAYOUT effect=%d group=%d loaded=%d/%d choice=%d",
@@ -1100,6 +1117,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         }
         inline void Hide(const char* why) {
             if (!state.shown) return;
+            RecordUi("hidden");
             Obj* viewMapper = cardViewMapper ? mapperViewMapper[cardViewMapper].Get() : nullptr;
             for (int i = 0; i < state.count; i++) {
                 Slot& slot = state.slots[i];
@@ -1123,6 +1141,8 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             }
             if (state.scrim) DestroyObject(state.scrim);
             Unpin(state.scrimHandle);
+            if(state.loadingRoot)DestroyObject(state.loadingRoot);
+            Unpin(state.loadingRootHandle);
             if (state.customPrompt) DestroyObject(state.customPrompt);
             Unpin(state.customPromptHandle);
             if (state.prompt) transformSetPosition[state.prompt](state.promptWas);
@@ -1206,8 +1226,14 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             state.shown = true;
             state.source = group.source;
             state.serial = group.serial;
+            state.historyModel=Core::ModelRegistry::Identify(group.model,true);
+            RecordUi("loading");
             state.holder = holder;
             state.count = std::min<int>(static_cast<int>(group.ids.size()), kMaxOptions);
+            state.loadingRoot=Pin(NewObject("SprigDiscoverLoading"),state.loadingRootHandle);
+            if(!state.loadingRoot){Hide("creation-parent-unavailable");return;}
+            Obj* loadingTransform=gameObjectTransform[state.loadingRoot]();
+            if(loadingTransform)transformSetLocalScale[loadingTransform](Vec3(0,0,0));
             Obj* viewMapper = mapperViewMapper[cardViewMapper].Get();
             PICK3_DISCOVER_LOG("CustomComponents/Pick3/DiscoverUI: screen for card %d #%d: %d option(s); engine model %p, view mapper model %p",
                                group.source, group.serial, state.count, group.model,
@@ -1226,7 +1252,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
                     LOG_ERR("CustomComponents/Pick3/DiscoverUI: could not make the view request for card %d", slot.id);
                     continue;
                 }
-                mapperCreateCardAsync[cardViewMapper](data, slot.callback, rootView, false);
+                mapperCreateCardAsync[cardViewMapper](data, slot.callback, state.loadingRoot, false);
             }
         }
 
@@ -1326,7 +1352,6 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             auto spriteRenderer = BNM::Class("UnityEngine", "SpriteRenderer");
             auto sprite = BNM::Class("UnityEngine", "Sprite");
             auto texture2d = BNM::Class("UnityEngine", "Texture2D");
-            auto sortingGroup = BNM::Class("UnityEngine.Rendering", "SortingGroup");
 
             bool ok = task.IsValid() && mapper.IsValid() && viewMapper.IsValid() && cardView.IsValid() &&
                       holder.IsValid() && cardIdDataClass.IsValid() && camera.IsValid() && component.IsValid() &&
@@ -1346,7 +1371,6 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             cardViewDesiredScale = cardView.GetMethod("GetDesiredScale", 0).cast<Vec3>();
 
             cameraMain = camera.GetMethod("get_main", 0).cast<Obj*>();
-            cameraOrthographic = camera.GetMethod("get_orthographic", 0).cast<bool>();
             cameraOrthographicSize = camera.GetMethod("get_orthographicSize", 0).cast<float>();
             cameraViewportToWorld = camera.GetMethod("ViewportToWorldPoint", {std::string_view("position")}).cast<Vec3>();
             componentTransform = component.GetMethod("get_transform", 0).cast<Obj*>();
@@ -1433,7 +1457,6 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
                 }
                 {
                     auto overlay = BNM::Class("PvZCards.CardInspection", "CardInspectionOverlayView");
-                    if (!overlay.IsValid()) overlay = BNM::Class("PvZCards.Game", "CardInspectionOverlayView");
                     if (overlay.IsValid()) overlayViewType = overlay.GetMonoType();
                 }
                 auto animator = BNM::Class("UnityEngine", "Animator");
@@ -1459,7 +1482,6 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             }
             objectDestroy = object.GetMethod("Destroy", 1).cast<void>();
             rendererBounds = renderer.GetMethod("get_bounds", 0).cast<Bounds>();
-            rendererEnabled = renderer.GetMethod("get_enabled", 0).cast<bool>();
             rendererGetOrder = renderer.GetMethod("get_sortingOrder", 0).cast<int>();
             rendererSetOrder = renderer.GetMethod("set_sortingOrder", 1).cast<void>();
             rendererGetLayer = renderer.GetMethod("get_sortingLayerID", 0).cast<int>();
@@ -1470,13 +1492,6 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             whiteTexture = texture2d.GetMethod("get_whiteTexture", 0).cast<Obj*>();
             rendererType = renderer.GetMonoType();
             spriteRendererType = spriteRenderer.GetMonoType();
-            if (sortingGroup.IsValid()) {
-                groupGetOrder = sortingGroup.GetMethod("get_sortingOrder", 0).cast<int>();
-                groupSetOrder = sortingGroup.GetMethod("set_sortingOrder", 1).cast<void>();
-                groupGetLayer = sortingGroup.GetMethod("get_sortingLayerID", 0).cast<int>();
-                groupSetLayer = sortingGroup.GetMethod("set_sortingLayerID", 1).cast<void>();
-                if (groupGetOrder.IsValid() && groupSetOrder.IsValid()) sortingGroupType = sortingGroup.GetMonoType();
-            }
 
             // Action<CardView>: the type of CreateCardAsync's second parameter.
             if (createCardAsync.IsValid()) {
@@ -1503,14 +1518,14 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
                  rendererGetLayer.IsValid() && rendererSetLayer.IsValid() && spriteRendererSetSprite.IsValid() &&
                  spriteRendererSetColor.IsValid() && spriteCreate.IsValid() && whiteTexture.IsValid() && gcNew && gcFree;
             if (!ok) {
-                LOG_ERR("CustomComponents/Pick3/DiscoverUI: screen members missing (task %d/%d mapper %d/%d remove %d get %d showInHand %d callback %d camera %d/%d/%d/%d component %d/%d/%d transform %d/%d/%d/%d gameObject %d/%d/%d destroy %d renderer %d/%d/%d/%d/%d/%d sprite %d/%d/%d/%d gc %d)",
+                LOG_ERR("CustomComponents/Pick3/DiscoverUI: screen members missing (task %d/%d mapper %d/%d remove %d get %d showInHand %d callback %d camera %d/%d/%d component %d/%d/%d transform %d/%d/%d/%d gameObject %d/%d/%d destroy %d renderer %d/%d/%d/%d/%d/%d sprite %d/%d/%d gc %d)",
                         taskMapper.IsValid(), taskRootView.IsValid(), mapperViewMapper.IsValid(), mapperCreateCardAsync.IsValid(),
                         viewMapperRemove.IsValid(), viewMapperGet.IsValid(), cardViewShowInHand.IsValid(), callbackClass != nullptr,
-                        cameraMain.IsValid(), cameraOrthographic.IsValid(), cameraOrthographicSize.IsValid(), cameraViewportToWorld.IsValid(),
+                        cameraMain.IsValid(), cameraOrthographicSize.IsValid(), cameraViewportToWorld.IsValid(),
                         componentTransform.IsValid(), componentGameObject.IsValid(), componentsInChildren.IsValid(),
                         transformGetPosition.IsValid(), transformSetPosition.IsValid(), transformGetLocalScale.IsValid(), transformSetLocalScale.IsValid(),
                         gameObjectCtor.IsValid(), gameObjectAddComponent.IsValid(), gameObjectTransform.IsValid(), objectDestroy.IsValid(),
-                        rendererBounds.IsValid(), rendererEnabled.IsValid(), rendererGetOrder.IsValid(), rendererSetOrder.IsValid(),
+                        rendererBounds.IsValid(), rendererGetOrder.IsValid(), rendererSetOrder.IsValid(),
                         rendererGetLayer.IsValid(), rendererSetLayer.IsValid(), spriteRendererSetSprite.IsValid(), spriteRendererSetColor.IsValid(),
                         spriteCreate.IsValid(), whiteTexture.IsValid(), gcNew != nullptr && gcFree != nullptr);
                 return false;
@@ -1565,6 +1580,12 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         if(!hasRequest)return;
         Pick3::Submission::SetPopupInputCapture(false);
         Pick3::Submission::FinishTransaction(activeRequest,accepted);
+        if(activeOfferModel){History::Record r;r.kind=History::Kind::Presentation;r.visual=History::VisualPolicy::NoVisual;
+            r.entityId=r.effectId=activeRequest.effectEntityId;r.ownerId=activeRequest.ownerPlayerId;
+            History::SelectionPayload payload;payload.effect=activeRequest.effectEntityId;payload.group=activeRequest.effectGroupId;
+            payload.owner=activeRequest.ownerPlayerId;payload.phase=accepted?History::SelectionPhase::Dismissed:History::SelectionPhase::Cancelled;
+            payload.chosen=chosenIndices;r.payload=std::move(payload);History::Writer::Commit(std::move(r),activeOfferModel);
+        }
         CloseGroup(activeRequest.effectEntityId,activeRequest.effectGroupId,-1);
         if (!accepted || (!Ui::state.exiting && !Ui::state.deferredExit))
             Ui::Hide(accepted?"stock selection completed":"selection failed");
@@ -1909,13 +1930,11 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
             static int priorState=-999,priorPhase=-999,priorEffect=-999,priorGroup=-999;
             static unsigned transitions=0;
             if((h.state!=priorState || h.phase!=priorPhase || h.effectEntityId!=priorEffect || h.effectGroupId!=priorGroup) && ++transitions<=180) {
-                // GameInputStateHolder's injected pointers are fixed in this
-                // exact IL2CPP build (dump.cs: queue=0x10, gameModel=0x40).
-                // Observation only: never dereference the referenced model.
-                Obj* holderQueue=h.holder?*reinterpret_cast<Obj**>(reinterpret_cast<std::uint8_t*>(h.holder)+0x10):nullptr;
-                Obj* holderGameModel=h.holder?*reinterpret_cast<Obj**>(reinterpret_cast<std::uint8_t*>(h.holder)+0x40):nullptr;
-                PF3_REPAIR_TRACE("CustomComponents/Pick3/REPAIR175: PHASE_OWNER seq=%u holderGameModel=%p holderQueue=%p targetingEffect=%p inputState=%d",
-                    transitions,(void*)holderGameModel,(void*)holderQueue,(void*)h.effect,h.state);
+                // The holder's private queue/model fields are intentionally not
+                // read here. This trace only needs the observed holder identity;
+                // field offsets are version-specific and add no gameplay signal.
+                PF3_REPAIR_TRACE("CustomComponents/Pick3/REPAIR175: PHASE_OWNER seq=%u holder=%p targetingEffect=%p inputState=%d",
+                    transitions,(void*)h.holder,(void*)h.effect,h.state);
                 PF3_REPAIR_TRACE("CustomComponents/Pick3/REPAIR175: TURN_PHASE seq=%u holder=%p valid=%d state=%d targetPhase=%d effect=%d group=%d owner=%d local=%d remote=%d service=%p boundModel=%p offers=%d queued=%d shown=%d exit=%d deferred=%d",
                     transitions,(void*)h.holder,int(h.valid),h.state,h.phase,h.effectEntityId,h.effectGroupId,
                     Pick3::TargetBridge::LocalPlayerId(),int(Pick3::Submission::Local()),int(Pick3::Submission::Remote()),

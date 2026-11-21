@@ -21,7 +21,7 @@ namespace CustomComponents::Pick3::CreationProvenance {
 using Obj = BNM::IL2CPP::Il2CppObject;
 inline int (*originalFindCard)(void*, Obj*, Obj*, const void*) = nullptr;
 inline int (*originalFindCardInLane)(void*,Obj*,int,Obj*,const void*)=nullptr;
-inline Obj* (*originalDrawCreate)(void*, Obj*, const void*) = nullptr;
+inline void (*originalAddToHand)(Obj*, Obj*, Obj*, Obj*, const void*) = nullptr;
 inline void (*originalPlaceSource)(void*, Obj*, Obj*, const void*) = nullptr;
 inline void (*originalTransformCard)(void*, Obj*, int, int, const void*) = nullptr;
 inline BNM::Field<int> entityId;
@@ -98,7 +98,7 @@ static void RecordCostHook(void* self, Obj* effect, int appliedDelta, const void
 
 inline std::atomic<unsigned> events{0},bindingEvents{0};
 inline bool traceEnabled=false;
-// Optional verified binding callback: invoked only after stock CreateCard returned.
+// Optional verified binding callback: invoked only after stock AddCardToHand returned.
 inline void (*onVerifiedDatabaseDraw)(int sourceEffect, int createdId) = nullptr;
 struct PendingDraw { Obj* effect; int sourceId; int guid; int group=-1; std::uint64_t sequence=0; Transaction::Ref transaction; };
 inline std::mutex pendingMutex;
@@ -203,10 +203,12 @@ inline Obj* BindProducedCard(Obj* created,Obj* effect,Obj* model) {
         effect, entityId, matching.sourceId, matching.guid, bound ? 1 : 0);
     return created;
 }
-static Obj* DrawCreateHook(void* self,Obj* effect,const void* method) {
-    Obj* created=originalDrawCreate(self,effect,method);
-    Obj* model=self && drawEntityModel.IsValid()?drawEntityModel[static_cast<Obj*>(self)].Get():nullptr;
-    return BindProducedCard(created,effect,model);
+static void AddToHandHook(Obj* self,Obj* effect,Obj* hand,Obj* created,const void* method) {
+    originalAddToHand(self,effect,hand,created,method);
+    // Creation alone does not establish a successful draw.
+    if(!created || !Engine::EntityAccess::Component(created,"HandElement"))return;
+    Obj* model=self && drawEntityModel.IsValid()?drawEntityModel[self].Get():nullptr;
+    BindProducedCard(created,effect,model);
 }
 static void PlaceSourceHook(void* self, Obj* card, Obj* effect, const void* method) {
     // Called after the stock method so its normal work completes unmodified.
@@ -235,9 +237,9 @@ inline bool Initialize(bool diagnostics=false) {
     auto placer = BNM::Class("PvZCards.Core.Systems.Utilities", "CreatedCardPlacer");
     auto transform = BNM::Class("PvZCards.Core.Systems", "TransformIntoCardFromSubsetSystem");
     auto entity = BNM::Class("PvZCards.Engine", "Entity");
-    auto find = finder.GetMethod("FindCard", 2);
+    auto find = finder.GetMethod("FindCard", {std::string_view("subsetQuery"),std::string_view("effect")});
     auto findLane=finder.GetMethod("FindCard",3);
-    auto create = draw.GetMethod("CreateCard", 1);
+    auto addToHand = draw.GetMethod("AddCardToHand", 3);
     auto source = placer.GetMethod("AddCreatedCardEffect", 2);
     auto transformCard = transform.GetMethod("TransformCard", 3);
     drawEntityModel=draw.GetField("<Model>k__BackingField").cast<Obj*>();
@@ -246,7 +248,7 @@ inline bool Initialize(bool diagnostics=false) {
     createdCardGuid=createdCardClass.GetField("Guid").cast<int>();
     entityId = entity.GetField("<Id>k__BackingField").cast<int>();
     // Fail closed: all methods must resolve before installing any hook.
-    if (!find.IsValid() || !findLane.IsValid() || !create.IsValid() || !source.IsValid() ||
+    if (!find.IsValid() || !findLane.IsValid() || !addToHand.IsValid() || !source.IsValid() ||
         !entityId.IsValid() || !drawEntityModel.IsValid() ||
         !createdGetComponent.IsValid() || !createdCardGuid.IsValid()) {
         LOG_ERR("CustomComponents/Pick3/CREATION_TRACE: preflight=failed no-hooks");
@@ -254,7 +256,7 @@ inline bool Initialize(bool diagnostics=false) {
     }
     CustomComponents::Core::Hooks::Install(find, FindCardHook, originalFindCard);
     CustomComponents::Core::Hooks::Install(findLane,FindCardInLaneHook,originalFindCardInLane);
-    CustomComponents::Core::Hooks::Install(create, DrawCreateHook, originalDrawCreate);
+    CustomComponents::Core::Hooks::Install(addToHand, AddToHandHook, originalAddToHand);
     CustomComponents::Core::Hooks::Install(source, PlaceSourceHook, originalPlaceSource);
     if(diagnostics && transformCard.IsValid())CustomComponents::Core::Hooks::Install(transformCard, TransformCardHook, originalTransformCard);
     auto modifyCostSystem = BNM::Class("PvZCards.Core.Systems", "ModifySunCostSystem");
@@ -281,10 +283,10 @@ inline bool Initialize(bool diagnostics=false) {
         originalRecordCost ? 1 : 0, recordCost.IsValid() ? 1 : 0,
         costEffectTargetId.IsValid() ? 1 : 0, costEffectEntityId.IsValid() ? 1 : 0,
         costSystemEntities.IsValid() ? 1 : 0, costEffectDelta.IsValid() ? 1 : 0);
-    const bool ready = originalFindCard && originalFindCardInLane && originalDrawCreate && originalPlaceSource;
-    LOG_INFO("CustomComponents/Pick3/CREATION_BINDING: ready=%d finder=%d laneFinder=%d draw=%d placement=%d trace=%d",int(ready),int(originalFindCard!=nullptr),int(originalFindCardInLane!=nullptr),int(originalDrawCreate!=nullptr),int(originalPlaceSource!=nullptr),int(diagnostics));
+    const bool ready = originalFindCard && originalFindCardInLane && originalAddToHand && originalPlaceSource;
+    LOG_INFO("CustomComponents/Pick3/CREATION_BINDING: ready=%d finder=%d laneFinder=%d draw=%d placement=%d trace=%d",int(ready),int(originalFindCard!=nullptr),int(originalFindCardInLane!=nullptr),int(originalAddToHand!=nullptr),int(originalPlaceSource!=nullptr),int(diagnostics));
     CC_SELECTION_DIAG("CustomComponents/Pick3/CREATION_TRACE: ready=%d finder=%d draw=%d placer=%d transform=%d drawBinding=1 otherAdaptersReadOnly=1 maxEvents=200",
-        ready ? 1 : 0, originalFindCard ? 1 : 0, originalDrawCreate ? 1 : 0,
+        ready ? 1 : 0, originalFindCard ? 1 : 0, originalAddToHand ? 1 : 0,
         originalPlaceSource ? 1 : 0, originalTransformCard ? 1 : 0);
     return ready;
 }

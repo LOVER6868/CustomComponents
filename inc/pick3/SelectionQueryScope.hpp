@@ -1,6 +1,8 @@
 #include "diagnostics/DiagnosticLogging.hpp"
 #include "core/HookRegistry.hpp"
+#include "core/Performance.hpp"
 #pragma once
+#include <optional>
 // CustomComponents 2.5: read-only stock EntityFinder query-caller observation.
 // No persistent pointer identity and no change to query return values.
 // Effect::ToEntityQueryContext is intentionally NOT detoured: earlier trigger
@@ -73,6 +75,14 @@ inline void RunQuery(Obj* self, Obj* query, Obj* context, Obj* matches, const vo
     if(!context && ++missingContext<=48) CC_SELECTION_DIAG("CustomComponents/Pick3/PATCH2_PROVENANCE: phase=FINDER_CONTEXT_MISSING event=%u reason=NULL_CONTEXT readOnly=1",n);
     if(mismatch && n<=kFinderCap) CC_SELECTION_DIAG("CustomComponents/Pick3/PATCH2_PROVENANCE: phase=FINDER_CONTEXT_OVERRIDE event=%u reason=STOCK_EXTERNAL_CONTEXT readOnly=1",n);
     Scope scope({context,contextModel?contextModel:model,effect,0,n});
+    const bool ai=Core::Performance::aiDepth!=0;
+    // Reuse the existing EntityFinder hook. No overlapping detour.
+    // Only attribute a query to AI when executing under its native or
+    // custom candidate/model hook, not under ordinary gameplay queries.
+    std::optional<Core::Performance::Scope> aiQueryTime;
+    if(ai)aiQueryTime.emplace(Core::Performance::Area::AiQuery,"AI-EntityFinder.RunQuery",effect);
+    if(ai && n<192) LOG_INFO("CustomComponents/AI/PF3_QUERY: finder=%p query=%p context=%p model=%p effect=%d origin=%d",
+        self,query,context,contextModel?contextModel:model,effect,Provenance::active.effect);
     if(originalRunQuery) originalRunQuery(self,query,context,matches,method);
     else LOG_ERR("CustomComponents/Pick3/PATCH2_PROVENANCE: phase=ORIGINAL_MISSING boundary=ENTITY_FINDER_RUNQUERY event=%u",n);
     if(n<=kFinderCap) CC_SELECTION_DIAG("CustomComponents/Pick3/PATCH2_PROVENANCE: phase=FINDER_EXIT event=%u effect=%d context=%p restored=1 readOnly=1",n,effect,(void*)context);

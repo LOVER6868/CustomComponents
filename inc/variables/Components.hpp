@@ -1,3 +1,4 @@
+#include "core/NativeConstruction.hpp"
 #pragma once
 #include "variables/Storage.hpp"
 #include "core/ManagedQuery.hpp"
@@ -13,10 +14,12 @@ struct Runtime:Obj {
     Str* ValueSource=nullptr;
     Str* Owner=nullptr;
     Str* ActiveZones=nullptr;
+    Str* Duration=nullptr;
+    Str* ExecutionTiming=nullptr;
     int Value=0;
     Obj* Query=nullptr;Obj* OwnerQuery=nullptr;
     BNM_CustomClass(Runtime,BNM::CompileTimeClassBuilder("PvZCards.Engine.Effects","SetVariableEffect","EngineLib.dll").Build(),BNM::CompileTimeClassBuilder("PvZCards.Engine.Effects","GrantAbilityEffect","EngineLib.dll").Build(),{});
-    void Construct(){BNM_CallCustomMethodOrigin(Construct,this);}
+    void Construct(){Core::NativeConstruction::Base(this);}
     BNM_CustomMethod(Construct,false,BNM::Defaults::Get<void>(),".ctor");
     BNM_CustomField(Variable,BNM::Defaults::Get<Str*>(),"Variable");
     BNM_CustomField(Operation,BNM::Defaults::Get<Str*>(),"Operation");
@@ -25,6 +28,8 @@ struct Runtime:Obj {
     BNM_CustomField(ValueSource,BNM::Defaults::Get<Str*>(),"ValueSource");
     BNM_CustomField(Owner,BNM::Defaults::Get<Str*>(),"Owner");
     BNM_CustomField(ActiveZones,BNM::Defaults::Get<Str*>(),"ActiveZones");
+    BNM_CustomField(Duration,BNM::Defaults::Get<Str*>(),"Duration");
+    BNM_CustomField(ExecutionTiming,BNM::Defaults::Get<Str*>(),"ExecutionTiming");
     BNM_CustomField(Value,BNM::Defaults::Get<int>(),"Value");
     BNM_CustomField(Query,QueryType(),"Query");
     BNM_CustomField(OwnerQuery,QueryType(),"OwnerQuery");
@@ -35,7 +40,7 @@ struct Runtime:Obj {
         Reference(this,&Expression,from?from->Expression:nullptr);
         Reference(this,&ValueSource,from?from->ValueSource:nullptr);
         Reference(this,&Owner,from?from->Owner:nullptr);
-        Reference(this,&ActiveZones,from?from->ActiveZones:nullptr);
+        Reference(this,&ActiveZones,from?from->ActiveZones:nullptr);Reference(this,&Duration,from?from->Duration:nullptr);Reference(this,&ExecutionTiming,from?from->ExecutionTiming:nullptr);
         Value=from?from->Value:0;
         Core::ManagedQuery::CopyOwnedField(this,BNM::Class(this).GetField("Query").cast<Obj*>(),from?from->Query:nullptr,instances);Core::ManagedQuery::CopyOwnedField(this,BNM::Class(this).GetField("OwnerQuery").cast<Obj*>(),from?from->OwnerQuery:nullptr,instances);}
     void HandleReturnToPool(Obj* instances){
@@ -45,7 +50,7 @@ struct Runtime:Obj {
         Reference(this,&Expression,nullptr);
         Reference(this,&ValueSource,nullptr);
         Reference(this,&Owner,nullptr);
-        Reference(this,&ActiveZones,nullptr);
+        Reference(this,&ActiveZones,nullptr);Reference(this,&Duration,nullptr);Reference(this,&ExecutionTiming,nullptr);
         Value=0;
         Core::ManagedQuery::ClearOwnedField(this,BNM::Class(this).GetField("Query").cast<Obj*>(),instances);Core::ManagedQuery::ClearOwnedField(this,BNM::Class(this).GetField("OwnerQuery").cast<Obj*>(),instances);BNM_CallCustomMethodOrigin(HandleReturnToPool,this,instances);}
     BNM_CustomMethod(DeepCopyFrom,false,BNM::Defaults::Get<void>(),"DeepCopyFrom",BNM::Defaults::Get<Obj*>(),BNM::CompileTimeClassBuilder("PvZCards.Engine","InstanceManager","EngineLib.dll").Build());
@@ -60,6 +65,8 @@ struct Descriptor:Obj {
     Str* ValueSource=nullptr;
     Str* Owner=nullptr;
     Str* ActiveZones=nullptr;
+    Str* Duration=nullptr;
+    Str* ExecutionTiming=nullptr;
     int Value=0;
     Obj* Query=nullptr;Obj* OwnerQuery=nullptr;
     BNM_CustomClass(Descriptor,BNM::CompileTimeClassBuilder("PvZCards.Engine.Components","SetVariableEffectDescriptor","EngineLib.dll").Build(),BNM::CompileTimeClassBuilder("PvZCards.Engine.Components","GrantAbilityEffectDescriptor","EngineLib.dll").Build(),{});
@@ -70,6 +77,8 @@ struct Descriptor:Obj {
     BNM_CustomField(ValueSource,BNM::Defaults::Get<Str*>(),"ValueSource");
     BNM_CustomField(Owner,BNM::Defaults::Get<Str*>(),"Owner");
     BNM_CustomField(ActiveZones,BNM::Defaults::Get<Str*>(),"ActiveZones");
+    BNM_CustomField(Duration,BNM::Defaults::Get<Str*>(),"Duration");
+    BNM_CustomField(ExecutionTiming,BNM::Defaults::Get<Str*>(),"ExecutionTiming");
     BNM_CustomField(Value,BNM::Defaults::Get<int>(),"Value");
     BNM_CustomField(Query,QueryType(),"Query");
     BNM_CustomField(OwnerQuery,QueryType(),"OwnerQuery");
@@ -82,7 +91,7 @@ struct Descriptor:Obj {
         Reference(this,&Expression,from?from->Expression:nullptr);
         Reference(this,&ValueSource,from?from->ValueSource:nullptr);
         Reference(this,&Owner,from?from->Owner:nullptr);
-        Reference(this,&ActiveZones,from?from->ActiveZones:nullptr);
+        Reference(this,&ActiveZones,from?from->ActiveZones:nullptr);Reference(this,&Duration,from?from->Duration:nullptr);Reference(this,&ExecutionTiming,from?from->ExecutionTiming:nullptr);
         Value=from?from->Value:0;
         Core::ManagedQuery::CopyOwnedField(this,BNM::Class(this).GetField("Query").cast<Obj*>(),from?from->Query:nullptr,instances);Core::ManagedQuery::CopyOwnedField(this,BNM::Class(this).GetField("OwnerQuery").cast<Obj*>(),from?from->OwnerQuery:nullptr,instances);}
     void HandleReturnToPool(Obj* instances){
@@ -92,7 +101,7 @@ struct Descriptor:Obj {
         Reference(this,&Expression,nullptr);
         Reference(this,&ValueSource,nullptr);
         Reference(this,&Owner,nullptr);
-        Reference(this,&ActiveZones,nullptr);
+        Reference(this,&ActiveZones,nullptr);Reference(this,&Duration,nullptr);Reference(this,&ExecutionTiming,nullptr);
         Value=0;
         Core::ManagedQuery::ClearOwnedField(this,BNM::Class(this).GetField("Query").cast<Obj*>(),instances);Core::ManagedQuery::ClearOwnedField(this,BNM::Class(this).GetField("OwnerQuery").cast<Obj*>(),instances);BNM_CallCustomMethodOrigin(HandleReturnToPool,this,instances);}
     BNM_CustomMethod(DeepCopyFrom,false,BNM::Defaults::Get<void>(),"DeepCopyFrom",BNM::Defaults::Get<Obj*>(),BNM::CompileTimeClassBuilder("PvZCards.Engine","InstanceManager","EngineLib.dll").Build());
@@ -109,6 +118,7 @@ inline bool Convert(Obj* object,Obj* instances,Obj*,Obj*& result){
     Reference(to,&to->ValueSource,from->ValueSource);
     Reference(to,&to->Owner,from->Owner);
     Reference(to,&to->ActiveZones,from->ActiveZones);
+    Reference(to,&to->Duration,from->Duration);Reference(to,&to->ExecutionTiming,from->ExecutionTiming);
     to->Value=from->Value;
     if(!Core::ManagedQuery::CopyOwnedField(to,BNM::Class(to).GetField("Query").cast<Obj*>(),from->Query,instances) || !Core::ManagedQuery::CopyOwnedField(to,BNM::Class(to).GetField("OwnerQuery").cast<Obj*>(),from->OwnerQuery,instances)){Core::ManagedPool::Return(instances,result);result=nullptr;}return true;
 }
@@ -121,6 +131,6 @@ inline bool InitializeDescriptors(){
         if(!Core::ComponentLifecycle::Patch(BNM::Class(pair.first,pair.second),BNM::Class(pair.first,base)))return false;
     }
     if(!Core::ComponentLifecycle::PatchVirtual(BNM::Class("PvZCards.Engine.Components","SetVariableEffectDescriptor"),BNM::Class("PvZCards.Engine.Components","GrantAbilityEffectDescriptor"),BNM::Class("PvZCards.Engine.Components","RemovableEffectDescriptor"),"ToRemovalEffect",2))return false;
-    return Engine::AbilityConversion::Add(Convert) && Bridge::Register("PvZCards.Engine.Components","SetVariableEffectDescriptor","PvZCards.Engine.Components","GrantAbilityEffectDescriptor",{{"Variable",K::String},{"Operation",K::String},{"ValueType",K::String},{"Expression",K::String},{"ValueSource",K::String},{"Owner",K::String},{"ActiveZones",K::String},{"Value",K::Int32}},false);
+    return Engine::AbilityConversion::Add(Convert) && Bridge::Register("PvZCards.Engine.Components","SetVariableEffectDescriptor","PvZCards.Engine.Components","GrantAbilityEffectDescriptor",{{"Variable",K::String},{"Operation",K::String},{"ValueType",K::String},{"Expression",K::String},{"ValueSource",K::String},{"Owner",K::String},{"ActiveZones",K::String},{"Duration",K::String},{"ExecutionTiming",K::String},{"Value",K::Int32}},false);
 }
 }

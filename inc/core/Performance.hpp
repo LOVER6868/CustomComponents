@@ -3,18 +3,21 @@
 #include <algorithm>
 #include <chrono>
 #include <mutex>
+#include <string>
 #include "log.h"
 namespace CustomComponents::Core::Performance {
-enum class Area {EntityCopy,StockEntityCopy,StockQueue,FrameReconciliation,EffectRouter,StockEffectRouter,SubsetFinder,CreationBinding,TargetFinder,AbilityExpiry,KeywordExpiry,Count};
+enum class Area {EntityCopy,StockEntityCopy,StockQueue,FrameReconciliation,EffectRouter,StockEffectRouter,SubsetFinder,CreationBinding,TargetFinder,AbilityExpiry,KeywordExpiry,AiCandidateStep,AiModelCopy,AiQuery,AiCustomHook,LevelHighlight,LevelQuote,VariableSnapshot,TriggerPreparation,NativeTrigger,EffectPreparation,Maintenance,AiScorerPoll,VariableQuery,Count};
 inline bool enabled=false;
-inline const char* names[]={"entity-copy-total","entity-copy-stock","animation-queue-stock","frame-reconciliation","effect-router-total","effect-router-stock","subset-finder","creation-binding","target-finder","ability-expiry","keyword-expiry"};
-struct Sample {unsigned calls=0;double sum=0,maximum=0,selfSum=0,selfMaximum=0;};
+inline const char* names[]={"entity-copy-total","entity-copy-stock","animation-queue-stock","frame-reconciliation","effect-router-total","effect-router-stock","subset-finder","creation-binding","target-finder","ability-expiry","keyword-expiry","ai-candidate-step","ai-model-copy","ai-query","ai-custom-hook","level-highlight","level-quote","variable-snapshot","trigger-variable-preparation","native-trigger-dispatch","effect-preparation","system-maintenance","ai-scorer-poll","variable-query"};
+struct Sample {unsigned calls=0;double sum=0,maximum=0,selfSum=0,selfMaximum=0;std::string maximumLabel;int maximumEffect=-1,maximumTarget=-1;};
 inline std::array<Sample,static_cast<unsigned>(Area::Count)> samples;
 inline std::mutex mutex;
 inline unsigned slowReports=0;
 inline auto lastReport=std::chrono::steady_clock::now();
 struct Scope;
 inline thread_local Scope* current=nullptr;
+inline thread_local unsigned aiDepth=0;
+struct AiScope {AiScope(){++aiDepth;}~AiScope(){--aiDepth;} AiScope(const AiScope&)=delete;AiScope& operator=(const AiScope&)=delete;};
 struct Scope {
     Area area;std::chrono::steady_clock::time_point start;bool active;
     Scope* parent=nullptr;double children=0;const char* label;int effect,target;
@@ -32,8 +35,8 @@ struct Scope {
         bool report=false;
         {
             std::lock_guard<std::mutex> lock(mutex);auto& s=samples[static_cast<unsigned>(area)];
-            ++s.calls;s.sum+=ms;s.maximum=std::max(s.maximum,ms);s.selfSum+=own;s.selfMaximum=std::max(s.selfMaximum,own);
-            if(ms>=16.0 && slowReports<64){++slowReports;report=true;}
+            ++s.calls;s.sum+=ms;if(ms>s.maximum){s.maximum=ms;s.maximumLabel=label?label:"none";s.maximumEffect=effect;s.maximumTarget=target;}s.selfSum+=own;s.selfMaximum=std::max(s.selfMaximum,own);
+            if(ms>=16.0 && slowReports<8){++slowReports;report=true;}
         }
         if(report)LOG_INFO("CustomComponents/PerformanceSlow: area=%s label=%s effect=%d target=%d totalMs=%.3f selfMs=%.3f nestedMs=%.3f",names[static_cast<unsigned>(area)],label?label:"none",effect,target,ms,own,children);
     }
@@ -41,6 +44,7 @@ struct Scope {
 inline void Report() {
     if(!enabled)return;const auto now=std::chrono::steady_clock::now();std::lock_guard<std::mutex> lock(mutex);
     if(now-lastReport<std::chrono::seconds(3))return;lastReport=now;
-    for(unsigned i=0;i<samples.size();++i){auto& s=samples[i];if(s.calls)LOG_INFO("CustomComponents/Performance: area=%s calls=%u totalMs=%.3f maxMs=%.3f avgMs=%.3f selfTotalMs=%.3f selfMaxMs=%.3f",names[i],s.calls,s.sum,s.maximum,s.sum/s.calls,s.selfSum,s.selfMaximum);s={};}
+    slowReports=0;
+    for(unsigned i=0;i<samples.size();++i){auto& s=samples[i];if(s.calls)LOG_INFO("CustomComponents/Performance: area=%s calls=%u totalMs=%.3f maxMs=%.3f avgMs=%.3f selfTotalMs=%.3f selfMaxMs=%.3f worst=%s effect=%d target=%d",names[i],s.calls,s.sum,s.maximum,s.sum/s.calls,s.selfSum,s.selfMaximum,s.maximumLabel.c_str(),s.maximumEffect,s.maximumTarget);s={};}
 }
 }

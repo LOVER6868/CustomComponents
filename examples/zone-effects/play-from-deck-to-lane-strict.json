@@ -1,0 +1,10 @@
+{
+  "$type": "PvZCards.Engine.Components.PlayFromDeckToLaneEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "PluckFailSafe": false,
+    "ForceFaceDown": false,
+    "GrantTeamup": false,
+    "GrantAquatic": false,
+    "CreationPosition": "Stock"
+  }
+}

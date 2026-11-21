@@ -7,13 +7,11 @@
 namespace CustomComponents::Core::ManagedQuery {
 using Obj=ManagedRuntime::Obj;
 inline BNM::Method<Obj*> CopyMethod() {
-    static auto method=BNM::Class("PvZCards.Engine","EntityQueryUtils").GetMethod("DeepCopy",
-        {BNM::Class("PvZCards.Engine","EntityQuery").GetCompileTimeClass(),BNM::Class("PvZCards.Engine","InstanceManager").GetCompileTimeClass()}).cast<Obj*>();
+    static auto method=BNM::Class("PvZCards.Engine","EntityQueryUtils").GetMethod("DeepCopy",2).cast<Obj*>();
     return method;
 }
 inline BNM::Method<Obj*> ReturnMethod() {
-    static auto method=BNM::Class("PvZCards.Engine","EntityQueryUtils").GetMethod("ReturnToPool",
-        {BNM::Class("PvZCards.Engine","EntityQuery").GetCompileTimeClass(),BNM::Class("PvZCards.Engine","InstanceManager").GetCompileTimeClass()}).cast<Obj*>();
+    static auto method=BNM::Class("PvZCards.Engine","EntityQueryUtils").GetMethod("ReturnToPool",2).cast<Obj*>();
     return method;
 }
 // The field must own its query. This is intentionally separate from primitive

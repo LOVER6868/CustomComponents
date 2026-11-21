@@ -1,0 +1,13 @@
+{
+  "$type": "PvZCards.Engine.Components.CreateCardInSuperpowersFromSubset, EngineLib",
+  "$data": {
+    "AmountToCreate": 1,
+    "SubsetQuery": {
+      "$type": "PvZCards.Engine.Queries.HasComponentQuery, EngineLib",
+      "$data": {
+        "ComponentType": "PvZCards.Engine.Components.Superpower, EngineLib"
+      }
+    },
+    "DeckPosition": "Random"
+  }
+}

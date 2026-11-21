@@ -8,6 +8,13 @@ inline bool Initialize(bool request, bool pve, bool pvp, int thresholdMs,
                        bool prePlayLifecycleTrace = false) {
     if (!request) return true;
     Engine::PlayValidation::deferPrimaryQuery=[](Obj* filter){return AdditionalSelection::Get(filter).first;};
+    Engine::PlayValidation::validDatabaseSelection=[](Obj* model,Obj* /*card*/,Obj* effect){
+        Obj* filter=Engine::EntityAccess::Component(effect,"PrimaryTargetFilter");
+        if(!filter || !TargetBridge::selectionType.IsValid() || !TargetBridge::targetFilterQuery.IsValid())return false;
+        if(TargetBridge::selectionType[filter].Get()!=EnumModes::kPickFromThreeCardDatabase)return false;
+        Obj* query=TargetBridge::targetFilterQuery[filter].Get();
+        return query && !TargetBridge::EnumerateCardDatabase(query,Engine::Match::Id(effect),model).empty();
+    };
     Engine::HandPlayability::beforeRefresh.Add([](int card){
         // Only local, in-hand candidate hints are invalidated. Committed
         // selection transactions and service proofs keep their own lifetime.
@@ -54,11 +61,10 @@ inline bool Initialize(bool request, bool pve, bool pvp, int thresholdMs,
     highlightPlayableCardsClass=BNM::Class("PvZCards.Game","HighlightPlayableCardsCommand");
     executeHighlightPlayableCards=highlightPlayableCardsClass.GetMethod("Execute",0).cast<void>();
     // Observe stock's own command execution; never manually call it.
-    const auto stockHighlightMethod = highlightPlayableCardsClass.GetMethod("Execute", 0);
-    if (stockHighlightMethod.IsValid())
-        CustomComponents::Core::Hooks::Install(stockHighlightMethod, StockHighlightExecuteObserved, originalStockHighlightExecute);
+    const bool highlightObserved=Engine::HandPlayability::beforeHighlight.Add(StockHighlightExecuteBefore) &&
+        Engine::HandPlayability::afterHighlight.Add(StockHighlightExecuteAfter);
     CC_SELECTION_DIAG("CustomComponents/Pick3/HAND_HIGHLIGHTS: phase=STOCK_OBSERVER_SETUP installed=%d manualExecution=0",
-             originalStockHighlightExecute ? 1 : 0);
+             highlightObserved ? 1 : 0);
 
     highlightCommandInputState=highlightPlayableCardsClass.GetField("<GameInputState>k__BackingField").cast<int>();
     highlightCommandPlayCache=highlightPlayableCardsClass.GetField("<PlayCache>k__BackingField").cast<Obj*>();
@@ -181,8 +187,12 @@ inline bool Initialize(bool request, bool pve, bool pvp, int thresholdMs,
         .cast<BNM::Structures::Mono::List<Obj*>*>();
     trickCardComponentClass = BNM::Class("PvZCards.Engine.Components", "Card");
     const auto startMethod = BNM::Class("PvZCards.Game", "StartCardDragCommand").GetMethod("Execute", 0);
-    if (startMethod.IsValid()) CustomComponents::Core::Hooks::Install(startMethod, TrickStartDragTrace, originalTrickStartDrag);
+    trickStartCardIdField=BNM::Class("PvZCards.Game","StartCardDragCommand").GetField("<CardEntityId>k__BackingField").cast<int>();
+    // Level::Selection owns this game method; subscribe instead of detouring it.
+    const bool startDragObserved=startMethod.IsValid() &&
+        Core::SharedHookEvents::startCardDrag.Add(TrickStartDragObserved);
     const auto updateMethod = BNM::Class("PvZCards.Game", "UpdateCardDragPositionCommand").GetMethod("Execute", 0);
+    trickUpdateDragModelField=BNM::Class("PvZCards.Game","UpdateCardDragPositionCommand").GetField("<DragModel>k__BackingField").cast<Obj*>();
     if (updateMethod.IsValid()) CustomComponents::Core::Hooks::Install(updateMethod, TrickUpdateDragTrace, originalTrickUpdateDrag);
     const auto topDraggedMethod = BNM::Class("PvZCards.Game", "ViewEntityOverlapFinder").GetMethod("GetTopDraggedEntityId", 2);
     // Read-only cache and UI boundaries. Avoid manual command execution.
@@ -212,6 +222,12 @@ inline bool Initialize(bool request, bool pve, bool pvp, int thresholdMs,
     CC_SELECTION_DIAG("CustomComponents/Pick3/TRICK_CACHE: SETUP getPlays=%d firstValid=%d topDragged=%d readOnly=1 overlaps=opaque", originalTrickCachedPlays?1:0, originalTrickFirstValid?1:0, originalTrickTopDragged?1:0);
 
     trickGestureField = playCardCommandClass.GetField("<EntityGestureData>k__BackingField").cast<Obj*>();
+    auto gestureClass=BNM::Class("PvZCards.Game","EntityGestureData");
+    trickGestureSource=gestureClass.GetField("SourceEntity").cast<int>();
+    trickGestureTarget=gestureClass.GetField("TargetEntity").cast<int>();
+    trickGestureHandled=gestureClass.GetField("Handled").cast<bool>();
+    trickGestureOrder=gestureClass.GetField("OrderInTargetLocation").cast<int>();
+    trickEntityId=BNM::Class("PvZCards.Engine","Entity").GetField("<Id>k__BackingField").cast<int>();
     const auto stopDragMethod = stopDragClass.GetMethod("Execute", 0);
     if (stopDragMethod.IsValid())
         CustomComponents::Core::Hooks::Install(stopDragMethod, TrickStopDragTrace, originalTrickStopDrag);
@@ -260,7 +276,7 @@ inline bool Initialize(bool request, bool pve, bool pvp, int thresholdMs,
     CC_SELECTION_DIAG("CustomComponents/Pick3/PICK_FROM_THREE_ELIGIBILITY: phase=SETUP hasAnyTargets=%d observerOnly=1", originalTrickHasAnyTargets ? 1 : 0);
     // This stock method is 56 bytes long, unlike the unsafe 8-byte cache
     // getter. Preserve the precise PickFromThree metadata observer.
-    const auto firstEffectMethod = BNM::Class("PvZCards.Core.Utilities", "EffectEntityUtils").GetMethod("GetFirstOnPlayTriggeredAndTargetedEffectEntity", {BNM::Class("System","Int32").GetCompileTimeClass()});
+    const auto firstEffectMethod = BNM::Class("PvZCards.Core.Utilities", "EffectEntityUtils").GetMethod("GetFirstOnPlayTriggeredAndTargetedEffectEntity", {std::string_view("cardId")});
     if (firstEffectMethod.IsValid()) CustomComponents::Core::Hooks::Install(firstEffectMethod, FirstTargetedEffectObserved, originalFirstTargetedEffect);
     CC_SELECTION_DIAG("CustomComponents/Pick3/RETURN_TO_LANE_METADATA: phase=SETUP hook=%d",originalFirstTargetedEffect?1:0);
     const auto targetingMethod = BNM::Class("PvZCards.Core.Utilities", "OneTimeEffectValidator").GetMethod("IsTargetingValid", 3);
@@ -298,8 +314,10 @@ inline bool Initialize(bool request, bool pve, bool pvp, int thresholdMs,
     if(preselectedAuditMethod.IsValid()) CustomComponents::Core::Hooks::Install(preselectedAuditMethod, PickFromThreePrimaryPreselectedAudit, originalPrimaryPreselectedAudit);
     if(primaryListAuditMethod.IsValid()) CustomComponents::Core::Hooks::Install(primaryListAuditMethod, PickFromThreePrimaryListAudit, originalPrimaryTargetListAudit);
     if(primaryNormalAuditMethod.IsValid()) CustomComponents::Core::Hooks::Install(primaryNormalAuditMethod, PickFromThreePrimaryNormalAudit, originalPrimaryNormalAudit);
-    if(primaryMethodAuditMethod.IsValid()) CustomComponents::Core::Hooks::Install(primaryMethodAuditMethod, PickFromThreePrimaryMethodAudit, originalPrimaryMethodAudit);
-    CC_SELECTION_DIAG("CustomComponents/Pick3/PICK_FROM_THREE_PRIMARY_BRANCH: SETUP normal=%d method=%d auditOnly=1 substitution=0", originalPrimaryNormalAudit?1:0, originalPrimaryMethodAudit?1:0);
+    // TargetBridge owns CreateEffectsBasedOnTargetMethod; audit the same call.
+    const bool primaryMethodObserved=primaryMethodAuditMethod.IsValid() && TargetBridge::originalCreateByMethod &&
+        Core::SharedHookEvents::primaryTargetMethod.Add(PickFromThreePrimaryMethodObserved);
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PICK_FROM_THREE_PRIMARY_BRANCH: SETUP normal=%d method=%d auditOnly=1 substitution=0", originalPrimaryNormalAudit?1:0, primaryMethodObserved?1:0);
     const auto contextAuditMethod=BNM::Class("PvZCards.Core.Systems.Utilities", "SecondaryTargetContextSetter").GetMethod("SetSecondaryTargetingContext",2);
     if(contextAuditMethod.IsValid()) CustomComponents::Core::Hooks::Install(contextAuditMethod, PickFromThreeSecondaryContextAudit, originalSecondaryContextAudit);
     const auto baseAuditEffect=BNM::Class("PvZCards.Engine", "Effect");
@@ -351,7 +369,7 @@ inline bool Initialize(bool request, bool pve, bool pvp, int thresholdMs,
     CC_SELECTION_DIAG("CustomComponents/Pick3/TRICK_EFFECT_PATH: SETUP burst=%d isTargeted=%d effectTargets=%d readOnly=1 initialZoneExperiment=%d scope=712,713 burstOnly=1", originalBurstTargetsTrace?1:0, originalEffectIsTargeted?1:0, originalEffectValidTargets?1:0, kDeferredPick3InitialZoneExperiment?1:0);
     CC_SELECTION_DIAG("CustomComponents/Pick3/TRICK_SECONDARY: SETUP burst=%d create=%d finder=skipped-ambiguous-overload readOnly=1", originalBurstTargetsTrace?1:0, originalCreateSecondaryTrace?1:0);
     CC_SELECTION_DIAG("CustomComponents/Pick3/TRICK_IDENTITY: SETUP entitiesField=%d entityIdField=%d cardGuidField=%d readOnly=1", trickEntitiesField.IsValid()?1:0, trickEntityIdField.IsValid()?1:0, TargetBridge::databaseCardGuid.IsValid()?1:0);
-    CC_SELECTION_DIAG("CustomComponents/Pick3/TRICK_TARGET_IDS: SETUP field=%d start=%d update=%d topDragged=%d readOnly=1", trickTargetIdsField.IsValid()?1:0, originalTrickStartDrag?1:0, originalTrickUpdateDrag?1:0, originalTrickTopDragged?1:0);
+    CC_SELECTION_DIAG("CustomComponents/Pick3/TRICK_TARGET_IDS: SETUP field=%d start=%d update=%d topDragged=%d readOnly=1", trickTargetIdsField.IsValid()?1:0, startDragObserved?1:0, originalTrickUpdateDrag?1:0, originalTrickTopDragged?1:0);
     CC_SELECTION_DIAG("CustomComponents/Pick3/TRICK_PLACE_DIAG: SETUP stopDrag=%d validTargets=%d gestureField=%d readOnly=1",
              originalTrickStopDrag ? 1 : 0, originalTrickValidTargets ? 1 : 0,
              trickGestureField.IsValid() ? 1 : 0);

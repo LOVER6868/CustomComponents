@@ -29,6 +29,7 @@ struct Value {
     std::shared_ptr<Bindings> bindings;
 };
 using Ref=std::shared_ptr<const Value>;
+inline void (*onState)(const Ref&,int)=nullptr;
 inline std::mutex lock;
 inline std::atomic<std::uint64_t> epoch{1};
 inline constexpr std::size_t capacity=1024;
@@ -102,7 +103,7 @@ inline Ref Make(Model model,int source,const Picked::SelectionSnapshot& s) {
     auto bindings=std::make_shared<Bindings>();bindings->produced.resize(cards.size(),-1);
     auto r=std::make_shared<const Value>(Value{model,epoch.load(),s.sequence,
         s.selection.effectEntityId,s.selection.effectGroupId,source,std::move(cards),bindings});
-    values.push_back(r);return r;
+    values.push_back(r);if(onState)onState(r,0);return r;
 }
 inline bool BindProduced(const Ref& r,int guid,int entity) {
     if(!Current(r) || guid<=0 || entity<=0) return false;
@@ -124,11 +125,11 @@ inline int LiveTarget(const Ref& r,std::size_t index) {
 }
 inline void Reject(const Ref& r) {
     if(!Current(r)) return;
-    std::lock_guard<std::mutex> guard(r->bindings->lock);r->bindings->cancelled=true;r->bindings->completed=true;
+    std::lock_guard<std::mutex> guard(r->bindings->lock);if(r->bindings->completed)return;r->bindings->cancelled=true;r->bindings->completed=true;if(onState)onState(r,6);
 }
 inline void Complete(const Ref& r) {
     if(!Current(r)) return;
-    std::lock_guard<std::mutex> guard(r->bindings->lock);r->bindings->completed=true;
+    std::lock_guard<std::mutex> guard(r->bindings->lock);if(r->bindings->completed)return;r->bindings->completed=true;if(onState)onState(r,2);
 }
 inline bool Resolve(Model model,int effect,int candidate,bool guidDomain,bool& out) {
 #if CUSTOMCOMPONENTS_PF3_TRANSACTION_PIPELINE && CUSTOMCOMPONENTS_PF3_TRANSACTION_ROUTING

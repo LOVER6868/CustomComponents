@@ -16,6 +16,39 @@
             deckForPlayer[player] = deck;
         }
         originalProcessDraw(self, effect, method);
+        static auto entities=BNM::Class("PvZCards.Core.Systems","DrawCardSystem").GetField("<Entities>k__BackingField").cast<Obj*>();
+        static auto drawn=BNM::Class("PvZCards.Engine.Effects","DrawCardEffect").GetMethod("get_DrawnCardId",0).cast<int>();
+        Obj* model=self && entities.IsValid()?Core::Metadata::Bind(entities,self).Get():nullptr;
+        static thread_local Obj* traceModel=nullptr;static thread_local unsigned traceCount=0;
+        if(traceModel!=model){traceModel=model;traceCount=0;}
+        const bool presentationModel = model &&
+            reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity();
+        if (effect && presentationModel && traceCount++<96)
+            LOG_INFO("CustomComponents/Draw/DELIVERY: player=%d hand=%d deck=%d drawn=%d",Core::Metadata::Bind(effectPlayer,effect).Get(),Core::Metadata::Bind(drawHandId,effect)(),Core::Metadata::Bind(drawDeckId,effect)(),drawn.IsValid()?Core::Metadata::Bind(drawn,effect)():-1);
+        // v3 recorder observer: only observe the actual presentation game model.
+        // The stock draw has already completed. No GC references are retained,
+        // no disk writes, no callbacks into the game's effect router.
+        if (effect && presentationModel && drawn.IsValid()) {
+            if (auto callback = CustomComponents::Integration::ReplayDrawObserver::Listener()) {
+                const int drawnId = Core::Metadata::Bind(drawn,effect)();
+                if (drawnId >= 0) {
+                    const int handId = Core::Metadata::Bind(drawHandId,effect)();
+                    Obj* cardEntity = FindEntity(model,drawnId);
+                    const int cardGuidValue = cardEntity ? GuidOf(cardEntity) : -1;
+                    int owner = -1;
+                    // Effect.PlayerId is often -1; read the hand's stock Owner
+                    // component when available, otherwise report unknown.
+                    Obj* handEntity = FindEntity(model,handId);
+                    Obj* ownerComponent = FindComponent(handEntity,"Owner");
+                    static auto ownerIdField = BNM::Class(
+                        "PvZCards.Engine.Components","Owner").GetField("OwnerId").cast<int>();
+                    if (ownerComponent && ownerIdField.IsValid())
+                        owner = Core::Metadata::Bind(ownerIdField,ownerComponent).Get();
+                    callback(handId,Core::Metadata::Bind(drawDeckId,effect)(),
+                        drawnId,cardGuidValue,Core::Metadata::Bind(effectPlayer,effect).Get(),owner);
+                }
+            }
+        }
     }
 
     // CardFromSubsetFinder still owns all subset semantics. We only change its

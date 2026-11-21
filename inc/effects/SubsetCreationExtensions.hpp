@@ -15,6 +15,12 @@ inline BNM::Class descriptorClass,runtimeClass;
 struct CreationData {int guid;bool faceDown,teamup,front;unsigned char padding;};
 struct Placement {int card,lane,player,order;};
 static_assert(sizeof(CreationData)==8 && sizeof(Placement)==16);
+inline BNM::MethodBase FindCreateSubsetOverload(){
+    auto factory=BNM::Class("PvZCards.Core.Systems.Utilities","CardCreationDataFactory");
+    auto effect=BNM::Class("PvZCards.Engine.Effects","CreateCardFromSubsetEffect");
+    for(auto candidate:factory.GetMethods())if(auto* info=candidate.GetInfo();info&&std::string_view(info->name)=="Create"&&info->parameters_count==1&&BNM::Class(info->parameters[0]).GetClass()==effect.GetClass())return candidate;
+    return {};
+}
 inline void Save(Core::WeakObjectSettings<Settings>& store,Obj* object,Settings value){store.Set(object,value,Enabled(value));}
 inline void ReadMap(Obj* object,Obj* properties) {
     if(!object || !properties || object->klass!=descriptorClass.GetClass())return;
@@ -98,12 +104,21 @@ inline bool Initialize() {
     auto granter=BNM::Class("PvZCards.Core.Systems.Utilities","CreatedCardAbilityGranter");
     granterHistory=granter.GetField("<History>k__BackingField").cast<Obj*>();
     auto record=BNM::Class("PvZCards.Engine.Records","AbilityGrantedRecord");
-    grantedRecordType=record.GetMonoType();addRecord=BNM::Class("PvZCards.Engine","History").GetMethod("AddRecord",1).cast<Obj*>();
+    grantedRecordType=record.GetMonoType();addRecord=BNM::Class("PvZCards.Engine","History").GetMethod("AddRecord",{std::string_view("record")}).cast<Obj*>();
     defaults=record.GetMethod("SetDefaultIdsFromEffect",1).cast<void>();setTarget=record.GetMethod("set_TargetId",1).cast<void>();
     setAbility=record.GetMethod("set_AbilityType",1).cast<void>();setValue=record.GetMethod("set_AbilityValue",1).cast<void>();
     if(!descriptorClass.IsValid() || !runtimeClass.IsValid() || !getOrAdd.IsValid() || !addCounter.IsValid() || !effectEntityId.IsValid() || !aquaticType || !granterHistory.IsValid() || !grantedRecordType || !addRecord.IsValid() || !defaults.IsValid() || !setTarget.IsValid() || !setAbility.IsValid() || !setValue.IsValid())return false;
     Engine::BoardPlacement::augment=[](Obj* entity,Engine::BoardPlacementPolicy::Card& traits){
         Obj* descriptor=Engine::EntityAccess::Component(entity,"CreateCardFromSubsetEffectDescriptor");const auto value=descriptors.Get(descriptor);traits.teamup|=value.teamup;traits.aquatic|=value.aquatic;
+        // Deck-to-lane physical transfers need the same prospective grants in
+        // targeting preflight; mutation only happens after the source is removed.
+        Obj* deck=Engine::EntityAccess::Component(entity,"PlayFromDeckToLaneEffectDescriptor");
+        if(deck) {
+            static auto team=BNM::Class("PvZCards.Engine.Components","PlayFromDeckToLaneEffectDescriptor").GetField("GrantTeamup").cast<bool>();
+            static auto aquatic=BNM::Class("PvZCards.Engine.Components","PlayFromDeckToLaneEffectDescriptor").GetField("GrantAquatic").cast<bool>();
+            if(team.IsValid())traits.teamup|=team[deck].Get();
+            if(aquatic.IsValid())traits.aquatic|=aquatic[deck].Get();
+        }
     };
     Engine::SubsetSelection::hasAquaticCreationGrant=[](Obj* effect){return effect && effect->klass==runtimeClass.GetClass() && effects.Get(effect).aquatic;};
     Systems::CustomFieldBridgeSystem::beforeProperties.Add(ReadProperties);
@@ -113,7 +128,7 @@ inline bool Initialize() {
         Core::Hooks::Install(descriptorClass.GetMethod("ToEffect",2),ToEffect,originalToEffect) &&
         Core::Hooks::Install(runtimeClass.GetMethod("DeepCopyFrom",2),EffectCopy,originalEffectCopy) &&
         Core::Hooks::Install(runtimeClass.GetMethod("HandleReturnToPool",1),EffectReturn,originalEffectReturn) &&
-        Core::Hooks::Install(BNM::Class("PvZCards.Core.Systems.Utilities","CardCreationDataFactory").GetMethod("Create",{BNM::CompileTimeClassBuilder("PvZCards.Engine.Effects","CreateCardFromSubsetEffect","EngineLib.dll").Build()}),Create,originalCreate) &&
+        Core::Hooks::Install(FindCreateSubsetOverload(),Create,originalCreate) &&
         Core::Hooks::Install(BNM::Class("PvZCards.Core.Systems.Utilities","CreatedCardPlacer").GetMethod("PlaceOrDestroyCard",4),Place,originalPlace) &&
         Core::Hooks::Install(granter.GetMethod("RecordGrantedAbilities",3),Record,originalRecord);
 }

@@ -24,17 +24,25 @@ inline void TrickLogIntList(const char* stage, unsigned seq, int cardId, IntList
     }
     CC_SELECTION_DIAG("CustomComponents/Pick3/TRICK_TARGET_IDS: phase=%s seq=%u card=%d count=%d ids=[%s]%s", stage, seq, cardId, count, ids, count>maxPrint?" truncated=1":"");
 }
-inline void TrickStartDragTrace(Obj* self, const void* method) {
-    const unsigned seq = ++trickStartObservations;
-    if (seq <= 100) CC_SELECTION_DIAG("CustomComponents/Pick3/TRICK_DRAG_LIFE: phase=START_ENTER seq=%u card=%d", seq, self ? *reinterpret_cast<const int*>(reinterpret_cast<const std::uint8_t*>(self)+0x48) : -1);
-    if (originalTrickStartDrag) originalTrickStartDrag(self, method);
-    if (seq <= 100) CC_SELECTION_DIAG("CustomComponents/Pick3/TRICK_DRAG_LIFE: phase=START_EXIT seq=%u", seq);
+inline thread_local unsigned dragObservedSequence=0;
+inline void TrickStartDragObserved(Obj* self, bool after) {
+    if (!after) {
+        dragObservedSequence=++trickStartObservations;
+        if (dragObservedSequence <= 100) {
+            auto cardId=trickStartCardIdField;
+            CC_SELECTION_DIAG("CustomComponents/Pick3/TRICK_DRAG_LIFE: phase=START_ENTER seq=%u card=%d",
+                dragObservedSequence,self&&cardId.IsValid()?cardId[self].Get():-1);
+        }
+    } else if (dragObservedSequence <= 100) {
+        CC_SELECTION_DIAG("CustomComponents/Pick3/TRICK_DRAG_LIFE: phase=START_EXIT seq=%u",dragObservedSequence);
+    }
 }
 inline void TrickUpdateDragTrace(Obj* self, const void* method) {
     if (originalTrickUpdateDrag) originalTrickUpdateDrag(self, method);
     const unsigned seq=++trickUpdateObservations;
     if (seq <= 15 || seq%80==0) {
-        Obj* model = self ? *reinterpret_cast<Obj* const*>(reinterpret_cast<const std::uint8_t*>(self)+0x50) : nullptr;
+        auto dragModel=trickUpdateDragModelField;
+        Obj* model=self&&dragModel.IsValid()?dragModel[self].Get():nullptr;
         const int cardId = model && trickDraggedCardField.IsValid() ? trickDraggedCardField[model].Get() : -1;
         CC_SELECTION_DIAG("CustomComponents/Pick3/TRICK_DRAG_LIFE: phase=UPDATE seq=%u card=%d", seq, cardId);
     }
@@ -75,22 +83,15 @@ inline int TrickTopDraggedTrace(Obj* self, Obj* overlapped, int cardId, const vo
     return result;
 }
 
-// These are read-only native field snapshots from the matching IL2CPP dump:
-// StopCardDragCommand.ReleasePosition at 0x40 and EntityGestureData at 0x10.
 // The pooled stock target list remains opaque and is neither retained nor freed.
 inline void TrickStopDragTrace(Obj* self, const void* method) {
     const unsigned seq = ++trickDragObservations;
     Obj* model = self && trickDragModelField.IsValid() ? trickDragModelField[self].Get() : nullptr;
     const int cardId = model && trickDraggedCardField.IsValid() ? trickDraggedCardField[model].Get() : -1;
     const int inHand = model && trickInHandField.IsValid() ? int(trickInHandField[model].Get()) : -1;
-    float x = 0, y = 0, z = 0;
-    if (self) {
-        const auto* release = reinterpret_cast<const float*>(reinterpret_cast<const std::uint8_t*>(self) + 0x40);
-        x = release[0]; y = release[1]; z = release[2];
-    }
     if (seq <= 160)
-        CC_SELECTION_DIAG("CustomComponents/Pick3/TRICK_PLACE_DIAG: STOP_DRAG_ENTER seq=%u cardEntity=%d inHand=%d release=(%.3f,%.3f,%.3f) dragModel=%p stock=1",
-                 seq, cardId, inHand, double(x), double(y), double(z), model);
+        CC_SELECTION_DIAG("CustomComponents/Pick3/TRICK_PLACE_DIAG: STOP_DRAG_ENTER seq=%u cardEntity=%d inHand=%d dragModel=%p stock=1",
+                 seq, cardId, inHand, model);
     // CRASH_ISO: disable the IL2CPP GetComponent identity probe during StopDrag.
     // The two observed crashes occur after STOP_DRAG_ENTER and inside BNM::TryInvoke.
     // Preserve stock drag and all gameplay target-selection paths.

@@ -1,4 +1,5 @@
 #pragma once
+#include "history/DomainRecords.hpp"
 #include <algorithm>
 #include <string_view>
 #include "abilities/OverhealToHealth.hpp"
@@ -9,6 +10,7 @@
 #include "engine/BoardPlacement.hpp"
 #include "engine/MatchAccess.hpp"
 #include "engine/SimulationChanges.hpp"
+#include "engine/BuffRecords.hpp"
 #include "log.h"
 
 namespace CustomComponents::Abilities::OverhealToHealth {
@@ -44,7 +46,9 @@ inline bool EnqueueStockBuff(Obj* target,Obj* heal,int bonus){
     auto attack=buffType.GetMethod("set_AttackDelta",1).cast<void>();
     auto duration=buffType.GetField("BuffDuration").cast<int>();
     auto effectFields=effectType;
-    if(!health.IsValid() || !attack.IsValid() || !duration.IsValid()){
+    auto copyBase=effectType.GetMethod("DeepCopyFrom",2).cast<void>();
+    auto validation=effectType.GetField("RequiresTargetValidation").cast<bool>();
+    if(!health.IsValid() || !attack.IsValid() || !duration.IsValid() || !copyBase.IsValid() || !validation.IsValid()){
         Core::ManagedPool::Return(instances,buff);return false;
     }
     auto* array=effectType.NewArray<Obj*>(1);
@@ -54,6 +58,7 @@ inline bool EnqueueStockBuff(Obj* target,Obj* heal,int bonus){
     }
     bool queued=false;
     auto error=BNM::TryInvoke([&]{
+        copyBase[buff](heal,instances);
         for(const char* member:{"PlayerId","SourceId","TargetId","SpringboardId","EffectEntityId","EffectGroupId","SortingIndex"}){
             auto f=effectFields.GetField(member).cast<int>();
             if(f.IsValid())f[buff].Set(f[heal].Get());
@@ -61,6 +66,13 @@ inline bool EnqueueStockBuff(Obj* target,Obj* heal,int bonus){
         attack[buff](0);
         health[buff](bonus);
         duration[buff].Set(0); // Stock EffectDuration.Permanent
+        // Healing may have made the original damaged-target query false.
+        // The heal was already validated; this derived buff has its own target.
+        validation[buff].Set(false);
+        // This amount is already final. Reusing the heal descriptor would
+        // run its multiplier/target-dependent amount logic a second time.
+        auto origin=effectType.GetField("EffectEntityId").cast<int>();
+        if(origin.IsValid())Core::Metadata::Bind(origin,buff).Set(-1);
         if(Core::ManagedRuntime::writeBarrier)
             Core::ManagedRuntime::writeBarrier(array,reinterpret_cast<void**>(&array->m_Items[0]),buff);
         else array->m_Items[0]=buff;
@@ -99,7 +111,10 @@ static void Heal(Obj* system,Obj* effect,const void* method){
     const int restored=std::clamp(before-std::max(0,damage[afterHealth].Get()),0,before);
     const int extra=requested-restored;
     if(extra>0){
-        if(EnqueueStockBuff(afterTarget,effect,extra)){
+        const bool queued=EnqueueStockBuff(afterTarget,effect,extra);
+        History::Domain::Emit(model,History::Kind::HealingRule,
+            History::HealingPayload{targetId[effect].Get(),requested,restored,extra,queued},targetId[effect].Get());
+        if(queued){
             Engine::SimulationChanges::Changed(model);
             LOG_INFO("CustomComponents/OverhealToHealth: target=%d requested=%d restored=%d buff=%d",
                 targetId[effect].Get(),requested,restored,extra);
@@ -107,6 +122,6 @@ static void Heal(Obj* system,Obj* effect,const void* method){
     }
 }
 inline bool InitializeSystem(){
-    return Core::Hooks::Install(BNM::Class("PvZCards.Core.Systems","HealSystem").GetMethod("ProcessEffect",1),Heal,originalHeal);
+    return Engine::BuffRecords::Initialize() && Core::Hooks::Install(BNM::Class("PvZCards.Core.Systems","HealSystem").GetMethod("ProcessEffect",1),Heal,originalHeal);
 }
 }

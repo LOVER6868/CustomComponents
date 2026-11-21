@@ -16,6 +16,8 @@ inline Desired Grants(Obj* model){
 inline bool Active(Obj* model,Obj* card){if(Abilities::SelfTeleport::Direct(card))return true;auto desired=Grants(model);auto found=desired.find(Engine::Match::Id(card));return found!=desired.end() && !found->second.empty();}
 inline void Reconcile(Obj* model){
     if(!model || reconciling)return;struct Guard{Guard(){reconciling=true;}~Guard(){reconciling=false;}}guard;
+    const auto& prior = ModelIndex(model);
+    if (prior.grants.empty() && prior.grantedTargets.empty() && prior.grantsInspected) return;
     auto desired=Grants(model);auto& index=ModelIndex(model);auto cards=index.grantedTargets;
     if(!index.grantsInspected){cards=index.cards;index.grantsInspected=true;}
     index.grantedTargets.clear();for(auto& [id,sources]:desired){cards.push_back(id);index.grantedTargets.push_back(id);}std::sort(cards.begin(),cards.end());cards.erase(std::unique(cards.begin(),cards.end()),cards.end());auto counterField=GrantableAbilityRuntime::countersField;auto entriesField=GrantableAbilityRuntime::entriesField;

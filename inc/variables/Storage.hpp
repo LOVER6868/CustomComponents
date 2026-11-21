@@ -2,7 +2,7 @@
 #include <cmath>
 #include <BNM/ClassesManagement.hpp>
 #include <BNM/Defaults.hpp>
-#include "variables/Values.hpp"
+#include "variables/TimedValues.hpp"
 #include "core/CustomComponentRegistry.hpp"
 #include "core/CustomFieldBridgeSystem.hpp"
 #include "core/ComponentLifecycle.hpp"
@@ -10,6 +10,7 @@
 #include "core/ManagedReference.hpp"
 #include "engine/MatchAccess.hpp"
 #include "engine/SimulationChanges.hpp"
+#include "history/RecordWriter.hpp"
 namespace CustomComponents::Variables {
 using Obj=BNM::IL2CPP::Il2CppObject;using Str=BNM::Structures::Mono::String;
 namespace Bridge=Systems::CustomFieldBridgeSystem;
@@ -17,25 +18,69 @@ inline std::string Text(Str* s,std::string fallback={}){return s?s->str():fallba
 inline void Reference(Obj* owner,Str** slot,Str* value){if(Core::ManagedRuntime::writeBarrier)Core::ManagedRuntime::writeBarrier(owner,reinterpret_cast<void**>(slot),value);else *slot=value;}
 struct Component:Obj {
     Str* Data=nullptr;
+    Str* TimedData=nullptr;
     BNM_CustomClass(Component,BNM::CompileTimeClassBuilder("PvZCards.Engine.Components","Variables","EngineLib.dll").Build(),BNM::CompileTimeClassBuilder("PvZCards.Engine.Components","MarkerComponent","EngineLib.dll").Build(),{});
     BNM_CustomField(Data,BNM::Defaults::Get<Str*>(),"Data");
-    void DeepCopyFrom(Obj* source,Obj*){Reference(this,&Data,source?reinterpret_cast<Component*>(source)->Data:nullptr);}
-    void HandleReturnToPool(Obj*){Reference(this,&Data,nullptr);}
+    BNM_CustomField(TimedData,BNM::Defaults::Get<Str*>(),"TimedData");
+    void DeepCopyFrom(Obj* source,Obj*){Reference(this,&Data,source?reinterpret_cast<Component*>(source)->Data:nullptr);Reference(this,&TimedData,source?reinterpret_cast<Component*>(source)->TimedData:nullptr);}
+    void HandleReturnToPool(Obj*){Reference(this,&Data,nullptr);Reference(this,&TimedData,nullptr);}
     BNM_CustomMethod(DeepCopyFrom,false,BNM::Defaults::Get<void>(),"DeepCopyFrom",BNM::Defaults::Get<Obj*>(),BNM::CompileTimeClassBuilder("PvZCards.Engine","InstanceManager","EngineLib.dll").Build());
     BNM_CustomMethod(HandleReturnToPool,false,BNM::Defaults::Get<void>(),"HandleReturnToPool",BNM::CompileTimeClassBuilder("PvZCards.Engine","InstanceManager","EngineLib.dll").Build());
 };
 struct Cached {std::shared_ptr<Core::ManagedRuntime::Root> payload;std::shared_ptr<const Table> table;};
 inline Core::WeakObjectSettings<Cached> tables;
-inline Component* State(Obj* card,bool create=false){return reinterpret_cast<Component*>(Engine::Match::Component(card,BNM::Class("PvZCards.Engine.Components","Variables").GetMonoType(),create));}
+inline Component* State(Obj* card,bool create=false){
+    Obj* existing=Engine::EntityAccess::Component(card,"Variables");
+    if(existing || !create)return reinterpret_cast<Component*>(existing);
+    static auto type=BNM::Class("PvZCards.Engine.Components","Variables");
+    return reinterpret_cast<Component*>(type.IsValid()?Engine::Match::Component(card,type.GetMonoType(),true):nullptr);
+}
+inline void (*onVariableOwnerWritten)(Obj*,Obj*)=nullptr;
 inline std::shared_ptr<const Table> Stored(Obj* card){
     auto* state=State(card);if(!state)return std::make_shared<const Table>();auto cached=tables.Get(state);
     if(cached.table && ((state->Data && cached.payload && cached.payload->Get()==reinterpret_cast<Obj*>(state->Data)) || (!state->Data && !cached.payload)))return cached.table;
     auto decoded=Decode(Text(state->Data));if(!decoded)return {};
     auto table=std::make_shared<const Table>(std::move(*decoded));tables.Set(state,{state->Data?std::make_shared<Core::ManagedRuntime::Root>(reinterpret_cast<Obj*>(state->Data),true):nullptr,table});return table;
 }
+inline void RecordWrite(Obj* model,Obj* card,bool timed,std::string before,const std::string& after){
+    History::Record r;r.kind=History::Kind::VariableChanged;r.visual=History::VisualPolicy::NoVisual;
+    r.entityId=Engine::Match::Id(card);r.payload=History::VariablePayload{r.entityId,timed,std::move(before),after};
+    History::Writer::Commit(std::move(r),model);
+}
 inline bool Write(Obj* model,Obj* card,const Table& table){
-    auto encoded=Encode(table);if(encoded.empty())return false;auto* state=State(card,true);if(!state)return false;if(Text(state->Data)==encoded)return true;
-    Reference(state,&state->Data,BNM::CreateMonoString(encoded));tables.Set(state,{},false);Engine::SimulationChanges::Changed(model);return true;
+    auto encoded=Encode(table);if(encoded.empty())return false;auto* state=State(card,true);if(!state)return false;
+    if(onVariableOwnerWritten)onVariableOwnerWritten(model,card);
+    if(Text(state->Data)==encoded)return true;
+    const auto before=Text(state->Data);
+    Reference(state,&state->Data,BNM::CreateMonoString(encoded));tables.Set(state,{},false);Engine::SimulationChanges::Changed(model);
+    RecordWrite(model,card,false,before,encoded);return true;
+}
+struct CachedTimed {std::shared_ptr<Core::ManagedRuntime::Root> payload;std::shared_ptr<const TimedTable> rows;};
+inline Core::WeakObjectSettings<CachedTimed> timedTables;
+inline std::optional<TimedTable> Timed(Obj* card){
+    auto* state=State(card);if(!state)return TimedTable{};
+    auto cached=timedTables.Get(state);
+    if(cached.rows && ((state->TimedData && cached.payload && cached.payload->Get()==reinterpret_cast<Obj*>(state->TimedData)) || (!state->TimedData && !cached.payload)))return *cached.rows;
+    auto decoded=DecodeTimed(Text(state->TimedData));if(!decoded)return {};
+    auto rows=std::make_shared<const TimedTable>(*decoded);
+    timedTables.Set(state,{state->TimedData?std::make_shared<Core::ManagedRuntime::Root>(reinterpret_cast<Obj*>(state->TimedData),true):nullptr,rows});
+    return decoded;
+}
+inline bool WriteTimed(Obj* model,Obj* card,const TimedTable& table){
+    auto encoded=EncodeTimed(table);if(encoded.empty())return false;auto* state=State(card,true);if(!state)return false;
+    if(onVariableOwnerWritten)onVariableOwnerWritten(model,card);
+    if(Text(state->TimedData)==encoded)return true;
+    const auto before=Text(state->TimedData);
+    Reference(state,&state->TimedData,BNM::CreateMonoString(encoded));Engine::SimulationChanges::Changed(model);
+    RecordWrite(model,card,true,before,encoded);return true;
+}
+inline bool ExpireTimed(Obj* model,int duration){
+    auto api=Engine::EntityAccess::Api();auto* entities=model && api.entities.IsValid()?api.entities[model].Get():nullptr;
+    if(!Engine::EntityAccess::Valid(entities))return false;bool changed=false;
+    for(int i=0;i<entities->size;++i){Obj* card=entities->items->m_Items[i];if(!card || !Engine::EntityAccess::Component(card,"Card"))continue;
+        auto* state=State(card);if(!state || !state->TimedData)continue;auto values=DecodeTimed(Text(state->TimedData));if(!values)continue;
+        auto n=std::erase_if(*values,[&](const auto& row){return row.duration==duration;});if(n && WriteTimed(model,card,*values))changed=true;
+    }return changed;
 }
 inline bool Integer(Obj* boxed,int& value){
     if(!boxed || !boxed->klass)return false;std::string_view name=boxed->klass->name;
@@ -65,5 +110,5 @@ inline void ReadSerialized(Obj* object,Obj* serialized){
     if(!object || !object->klass || std::string_view(object->klass->name)!="Variables")return;
     auto error=BNM::TryInvoke([&]{ReadSerializedCore(object,serialized);});if(error.IsValid())LOG_ERR("CustomComponents/Variables: malformed serialized Values table");
 }
-inline bool InitializeStorage(){using K=Bridge::FieldKind;return CustomComponentRegistry::Register({"Variables","PvZCards.Engine.Components","EngineLib.dll","MarkerComponent","PvZCards.Engine.Components","EngineLib.dll"}) && Core::ComponentLifecycle::Patch(BNM::Class("PvZCards.Engine.Components","Variables"),BNM::Class("PvZCards.Engine.Components","MarkerComponent")) && Bridge::Register("PvZCards.Engine.Components","Variables","PvZCards.Engine.Components","MarkerComponent",{{"Data",K::String}},false) && Bridge::beforeProperties.Add(ReadDefaults) && Bridge::afterDeserialize.Add(ReadSerialized);}
+inline bool InitializeStorage(){using K=Bridge::FieldKind;return CustomComponentRegistry::Register({"Variables","PvZCards.Engine.Components","EngineLib.dll","MarkerComponent","PvZCards.Engine.Components","EngineLib.dll"}) && Core::ComponentLifecycle::Patch(BNM::Class("PvZCards.Engine.Components","Variables"),BNM::Class("PvZCards.Engine.Components","MarkerComponent")) && Bridge::Register("PvZCards.Engine.Components","Variables","PvZCards.Engine.Components","MarkerComponent",{{"Data",K::String},{"TimedData",K::String}},false) && Bridge::beforeProperties.Add(ReadDefaults) && Bridge::afterDeserialize.Add(ReadSerialized);}
 }

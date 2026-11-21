@@ -1,5 +1,9 @@
 #include "core/HookRegistry.hpp"
 #pragma once
+#include "history/DomainRecords.hpp"
+#include "integration/ReplayEventBridge.hpp"
+#include "core/SceneViewContext.hpp"
+
 #include "diagnostics/DiagnosticLogging.hpp"
 
 #include <BNM/BasicMonoStructures.hpp>
@@ -243,6 +247,20 @@ namespace CustomComponents::Systems::DiscardFromDeckSystem {
             if (priorCardId >= 0 &&
                 !DeckContainsCard(model, deckId, priorCardId)) {
                 DiscardedSystem::Mark(model, priorCardId, DiscardedSystem::Source::Deck);
+                Obj* moved=FindEntity(model,priorCardId);
+                Obj* membership=FindComponent(moved,"DiscardPileElement");
+                if(membership){
+                    History::Record fact;fact.kind=History::Kind::ZoneTransfer;fact.visual=History::VisualPolicy::NoVisual;
+                    fact.entityId=priorCardId;fact.from=History::Origin::Deck;fact.to=History::Origin::DiscardPile;
+                    History::TransferPayload payload{priorCardId,deckId,effectDiscardPileId[effect].Get(),-1,-1};
+                    payload.stockRecorded=true;fact.payload=std::move(payload);History::Writer::Commit(std::move(fact),model);
+                }
+                if (reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity())
+                    Integration::ReplayEventBridge::Publish("discard_deck_to_pile", {
+                        {"entityId",priorCardId},{"deckId",deckId},
+                        {"pileId",effectDiscardPileId[effect].Get()},
+                        {"effectTargetId",cardId},{"customRoute",int(ours)},
+                        {"verifiedDeckRemoval",1}});
             }
         }
 

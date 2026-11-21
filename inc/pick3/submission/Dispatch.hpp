@@ -253,7 +253,7 @@ inline bool Submit(const PreviewRequest& request, const std::vector<int>& indice
     // EffectCollectionProcessor.ProcessEffects during this selection.
     if (request.mode == SelectionMode::CardDatabase && Local())
         CustomComponents::Systems::CustomTriggerSystem::WatchPick3ResumeEffects(
-            svc ? *reinterpret_cast<Obj**>(reinterpret_cast<std::uint8_t*>(svc) + 0x30) : nullptr,
+            svc && localServiceEffects.IsValid() ? localServiceEffects[svc].Get() : nullptr,
             request.effectEntityId, request.effectGroupId);
     // Lock before entering game-owned code: it may synchronously re-enter UI.
     lastEffect = request.effectEntityId; lastGroup = request.effectGroupId;

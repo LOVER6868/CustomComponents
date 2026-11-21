@@ -1,4 +1,6 @@
 #pragma once
+#include "integration/ReplayEventBridge.hpp"
+
 #include "diagnostics/DiagnosticLogging.hpp"
 // Scoped selection results shared by PickFromThree submission and downstream
 // EntityQuery.Matches. CardDatabase GUIDs are NOT live Entity.Id values.
@@ -224,6 +226,17 @@ inline void ObserveCompletion(int effectId, int groupId, bool success) {
         return;
     }
     entry->observation = success ? SnapshotObservation::CallbackSuccessObserved : SnapshotObservation::CallbackFailureObserved;
+    // Explicitly observational; callback success does NOT prove model commit.
+    // For CardDatabase options an EntityId may not exist yet (=-1).
+    for (std::size_t i=0;i<entry->selection.cards.size();++i) {
+        const auto& card=entry->selection.cards[i];
+        Integration::ReplayEventBridge::Publish("pick_three_callback", {
+            {"effectEntityId",effectId},{"groupId",groupId},
+            {"optionIndex",static_cast<int>(i)},
+            {"entityId",card.entityId},{"cardGuid",card.cardGuid},
+            {"boundEntityId",card.boundEntityId},
+            {"callbackSuccess",int(success)}, {"modelCommitProven",0}});
+    }
     LogSnapshotLocked("CALLBACK_OBSERVED", *entry);
 }
 

@@ -9,6 +9,7 @@
 namespace CustomComponents::Components {
 
     struct ReturnFromDiscardPileToDeckEffectDescriptor : BNM::IL2CPP::Il2CppObject {
+        std::uint8_t inherited[0x10]{};
         BNM_CustomClass(
             ReturnFromDiscardPileToDeckEffectDescriptor,
             BNM::CompileTimeClassBuilder(

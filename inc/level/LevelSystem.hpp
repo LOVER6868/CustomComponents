@@ -1,6 +1,7 @@
 #pragma once
 #include "level/LevelSelectionController.hpp"
 #include "queries/LeveledQuery.hpp"
+#include "level/LevelAi.hpp"
 namespace CustomComponents::Level {
 inline bool Initialize(){
 #define LEVEL_STEP(call,name) if(!(call)){LOG_ERR("CustomComponents/Level: initialization failed at " name);return false;}
@@ -11,6 +12,7 @@ inline bool Initialize(){
     LEVEL_STEP(Plays::InitializeEffectMetadata(),"queued play metadata");
     LEVEL_STEP(InitializeRuntime(),"payment and departure");
     LEVEL_STEP(Selection::InitializeSelection(),"hand presentation");
+    LEVEL_STEP(Ai::Initialize(),"AI level options");
 #undef LEVEL_STEP
     LOG_INFO("CustomComponents/Level: ready wireVersion=1 gesture=hand-only handModes=synchronized");return true;
 }

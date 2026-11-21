@@ -64,7 +64,7 @@ namespace CustomComponents::Presentation::Pick3SpriteCache {
         handle = 0;
     }
     inline void ReportManagedError(const char* stage, const BNM::Exception& ex) {
-        const auto cls = ex.ClassName(), msg = ex.Message();
+        const auto cls = std::string("managed exception"), msg = std::string("details unavailable");
         LOG_ERR("CustomComponents/Pick3/CACHE: EXCEPTION stage=%s class=%s message=%s",
                 stage, cls.c_str(), msg.c_str());
     }
@@ -234,7 +234,7 @@ namespace CustomComponents::Presentation::Pick3SpriteCache {
         for (int id : r.ids) if (id < 0) {
             LOG_ERR("CustomComponents/Pick3/CACHE: LOAD_SKIP negative cardId"); return;
         }
-        auto* ids = intClass.NewList<std::int32_t>();
+        auto* ids = intClass.NewList<std::int32_t>(); // sprig-lint: allow managed-global request receives an IL2CPP GC root immediately below
         if (!ids) { LOG_ERR("CustomComponents/Pick3/CACHE: LOAD_SKIP List<int> unavailable"); return; }
         r.idsRoot = Root(reinterpret_cast<Obj*>(ids));
         if (!r.idsRoot) return;

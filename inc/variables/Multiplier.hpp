@@ -1,5 +1,9 @@
 #pragma once
 #include "variables/Resolver.hpp"
+#include "queries/LaneQueries.hpp"
+#include "engine/ZoneChanges.hpp"
+#include <mutex>
+#include <map>
 namespace CustomComponents::Variables {
 struct VariableMultiplier:Obj {
     unsigned char inherited[0x10]{};Str* Expression=nullptr;Str* Aggregation=nullptr;Str* Owner=nullptr;
@@ -39,6 +43,55 @@ inline std::optional<int> LevelSpentFactor(Obj* spec,Context c){
 // Query ownership retains the old aggregation semantics. PrimaryTarget deliberately
 // selects the ONE recipient of the current runtime effect; a separate runtime
 // effect is generated for each selected primary card by the stock creator.
+// A death-triggered effect may be evaluated after the source loses LaneElement.
+// LastLane is stock game state and retains its actual former lane. Never infer
+// a location from the event target or from a displayed card definition.
+// A dying source may no longer carry either LaneElement or LastLane when
+// its death-triggered multiplier executes. Capture its REAL lane before stock
+// removal, keyed by match generation and entity ID (no inferred location).
+inline std::mutex departedLaneMutex;
+inline std::map<std::pair<Core::ModelRegistry::Token,int>,int> departedLaneOrders;
+inline void CaptureDepartedLane(Obj* model,int card){
+    if(!model || card<0)return;
+    Obj* entity=Find(model,card);auto order=Queries::LaneTopology::Order(model,entity);
+    if(!order)return;
+    auto token=Core::ModelRegistry::Identify(model,true);
+    std::lock_guard<std::mutex> guard(departedLaneMutex);
+    if(departedLaneOrders.size()>8192){
+        for(auto it=departedLaneOrders.begin();it!=departedLaneOrders.end();){
+            if(!Core::ModelRegistry::Get(it->first.first))it=departedLaneOrders.erase(it);else ++it;
+        }
+    }
+    departedLaneOrders[{token,card}]=*order;
+}
+inline std::optional<int> CapturedLane(Obj* model,int card){
+    if(!model || card<0)return {};
+    auto token=Core::ModelRegistry::Identify(model);
+    std::lock_guard<std::mutex> guard(departedLaneMutex);
+    auto it=departedLaneOrders.find({token,card});return it==departedLaneOrders.end()?std::nullopt:std::optional<int>(it->second);
+}
+inline std::optional<int> LastKnownOrder(Obj* model,Obj* entity){
+    if(auto current=Queries::LaneTopology::Order(model,entity))return current;
+    if(!entity)return {};
+    if(auto captured=CapturedLane(model,Engine::Match::Id(entity)))return captured;
+    // Use the game's own LastLane lookup first; it accounts for the source
+    // losing LaneElement while a death effect is being resolved.
+    static auto lastLane=BNM::Class("PvZCards.Engine.Components","LastLane").GetMethod("GetLastLaneId",1).cast<int>();
+    if(lastLane.IsValid()){
+        const int laneId=lastLane[static_cast<Obj*>(nullptr)](entity);
+        if(laneId>=0){
+            if(auto order=Queries::LaneTopology::Order(model,Find(model,laneId)))return order;
+        }
+    }
+    Obj* last=Engine::EntityAccess::Component(entity,"LastLane");
+    static auto laneField=BNM::Class("PvZCards.Engine.Components","LastLane").GetField("LaneId").cast<int>();
+    if(!last || !laneField.IsValid())return {};
+    return Queries::LaneTopology::Order(model,Find(model,laneField[last].Get()));
+}
+inline std::optional<int> CurrentOrLastLaneDistance(Obj* model,Obj* source,Obj* target){
+    auto a=LastKnownOrder(model,source),b=LastKnownOrder(model,target);
+    return a && b?std::optional<int>(std::abs(*a-*b)):std::nullopt;
+}
 inline std::optional<int> VariableFactor(VariableMultiplier* spec,Context c){
     if(!spec || !c.model)return {};
     auto field=BNM::Class("PvZCards.Engine.Components","QueryMultiplier").GetField("Query").cast<Obj*>();
@@ -49,7 +102,7 @@ inline std::optional<int> VariableFactor(VariableMultiplier* spec,Context c){
     if(ownerMode=="PrimaryTarget"){
         // Query describes potentially many entities; it has no well-defined
         // meaning alongside this per-recipient mode.
-        if(query || !c.runtime || c.target<0)return {};
+        if(query || c.target<0)return {};
         if(auto* card=Find(c.model,c.target))owners.push_back(card);
     }else if(ownerMode=="Self"){
         if(query)return {};
@@ -66,6 +119,18 @@ inline std::optional<int> VariableFactor(VariableMultiplier* spec,Context c){
     std::int64_t total=0;bool first=true;
     for(Obj* owner:owners){
         auto lookup=[&](std::string_view name)->std::optional<Value>{
+            if(name=="LaneDistance" && ownerMode=="PrimaryTarget") {
+                const auto distance=CurrentOrLastLaneDistance(c.model,Find(c.model,c.source),owner);
+                if(!distance){
+                    static std::atomic<unsigned> laneSamples{0};
+                    if(laneSamples.fetch_add(1)<40){
+                        auto* origin=Find(c.model,c.source);
+                        LOG_WARN("CustomComponents/Variables/LANE_DISTANCE_CONTEXT: effect=%d source=%d sourceExists=%d sourceLaneValid=%d target=%d targetLaneValid=%d",
+                            c.effect,c.source,int(origin!=nullptr),int(bool(LastKnownOrder(c.model,origin))),c.target,int(bool(LastKnownOrder(c.model,owner))));
+                    }
+                }
+                return distance?std::optional<Value>(Value{Kind::Int,{*distance}}):std::nullopt;
+            }
             if(auto v=Read(c.model,owner,name))return v;
             // A bare stat name is not required to be registered as a variable.
             if(auto stat=Engine::CardStatValues::Read(owner,name))return Value{Kind::Int,{*stat}};
@@ -88,9 +153,19 @@ static int Specific(Obj* self,Obj* multiplier,Obj* entity,Obj* effect,int contex
     if(name!="VariableMultiplier" && name!="LevelSpentMultiplier")return originalSpecific(self,multiplier,entity,effect,context,method);
     auto field=BNM::Class("PvZCards.Core.Systems.Utilities","MultiplierCalculator").GetField("<Model>k__BackingField").cast<Obj*>();
     if(!field.IsValid())return 0;
-    Context c{field[self].Get(),Source(entity),Field(effect,"TargetId"),Engine::Match::Id(entity),effect};
-    if(name=="LevelSpentMultiplier")return LevelSpentFactor(multiplier,c).value_or(0);
-    return VariableFactor(reinterpret_cast<VariableMultiplier*>(multiplier),c).value_or(0);
+    const int linkedSource=Source(entity);
+    Context c{field[self].Get(),linkedSource>=0?linkedSource:Field(effect,"SourceId"),
+        Field(effect,"TargetId"),Engine::Match::Id(entity),effect};
+    c.source=ResolveSource(c.model,c.source,c.effect,c.target);
+    const auto factor=name=="LevelSpentMultiplier"?LevelSpentFactor(multiplier,c):
+        VariableFactor(reinterpret_cast<VariableMultiplier*>(multiplier),c);
+    if(name=="VariableMultiplier"){
+        static std::atomic<unsigned> samples{0};
+        if(samples.fetch_add(1)<80) LOG_INFO("CustomComponents/Variables/MULTIPLIER: effectEntity=%d source=%d recipient=%d factor=%d valid=%d expression=%s",
+            c.effect,c.source,c.target,factor.value_or(0),int(bool(factor)),
+            Text(reinterpret_cast<VariableMultiplier*>(multiplier)->Expression).c_str());
+    }
+    return factor.value_or(0);
 }
 inline std::optional<int> BindingFactor(Context c,Obj* entity){
     Obj* multiplier=Engine::EntityAccess::Component(entity,"VariableMultiplier");std::optional<int> n;
@@ -109,6 +184,7 @@ inline bool InitializeMultiplier(){using K=Bridge::FieldKind;
         CustomComponentRegistry::Register({"LevelSpentMultiplier","PvZCards.Engine.Components","EngineLib.dll","QueryMultiplier","PvZCards.Engine.Components","EngineLib.dll"}) &&
         Core::ComponentLifecycle::Patch(BNM::Class("PvZCards.Engine.Components","LevelSpentMultiplier"),base) &&
         // The single existing native hook services VariableMultiplier and LevelSpentMultiplier.
-        Core::Hooks::Install(BNM::Class("PvZCards.Core.Systems.Utilities","MultiplierCalculator").GetMethod("CalculateMultiplierSpecificValue",4),Specific,originalSpecific);
+        Core::Hooks::Install(BNM::Class("PvZCards.Core.Systems.Utilities","MultiplierCalculator").GetMethod("CalculateMultiplierSpecificValue",4),Specific,originalSpecific) &&
+        Engine::ZoneChanges::beforeLaneRemove.Add(CaptureDepartedLane);
 }
 }

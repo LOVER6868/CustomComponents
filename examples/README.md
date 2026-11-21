@@ -24,3 +24,5 @@ When an example includes an effect entity, keep its nested `components` array in
 | [configuration](configuration/README.md) | INI settings |
 
 For what each custom field does, use the [documentation](../docs/README.md). If you need an entire stock card wrapper, start from your current card data; don't assume a one-component recipe can be loaded as a whole card.
+
+[Shared systems](shared-systems/README.md): lane markers, pending-death cancellation, superpower creation, deck counts and selection extensions.

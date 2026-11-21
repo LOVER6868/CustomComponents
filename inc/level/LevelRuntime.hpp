@@ -2,6 +2,7 @@
 #pragma once
 #include <thread>
 #include <tuple>
+#include <string_view>
 #include "level/LevelEffectMetadata.hpp"
 #include "level/LevelStats.hpp"
 #include "engine/BoardPlacement.hpp"
@@ -29,6 +30,22 @@ inline int PlayInt(Obj* play,const char* name){
     auto field=std::string_view(name)=="CardId"?card:std::string_view(name)=="PlayerId"?player:kind;return play?field[play].Get():-1;
 }
 inline int EffectInt(Obj* effect,const char* name){static auto type=BNM::Class("PvZCards.Engine","Effect");static auto target=type.GetField("TargetId").cast<int>();static auto player=type.GetField("PlayerId").cast<int>();auto field=std::string_view(name)=="TargetId"?target:player;return effect?field[effect].Get():-1;}
+// The stock turn-blocking effect records the active player's ID. Main-phase
+// and zombie-surprise phase are the two normal windows in which hand mode can
+// be changed; matching the card owner gives plants their turn and zombies
+// their surprise turn using the same authoritative phase queue as stock.
+inline bool ActivePlayerTurn(Obj* model,Obj* card){
+    if(!model || !card)return false;
+    Obj* instances=Engine::Match::Instances(card);
+    Obj* queue=Engine::Match::Provide(instances,BNM::Class("PvZCards.Engine","EffectCollection").GetMonoType());
+    if(!queue)return false;
+    auto peek=BNM::Class(queue).GetMethod("Peek",0).cast<Obj*>();
+    Obj* phase=peek.IsValid()?peek[queue]():nullptr;
+    if(!phase || !phase->klass || !phase->klass->name)return false;
+    const std::string_view name=phase->klass->name;
+    if(name!="MainPhaseBlockingEffect" && name!="SurprisePhaseBlockingEffect")return false;
+    return EffectInt(phase,"PlayerId")==Engine::BoardPlacement::Owner(card);
+}
 inline std::shared_ptr<const Definition> DefinitionFor(Obj* card){return definitions.Get(Engine::EntityAccess::Component(card,"Level"));}
 inline int Available(Obj* model,int player) {
     Obj* owner=Engine::EntityAccess::Find(model,player);Obj* counter=Engine::EntityAccess::Component(owner,"SunCounter");auto get=BNM::Class("PvZCards.Core.Systems.Utilities","SunCountCalculator").GetMethod("GetAvailableSun",1).cast<int>();
@@ -36,7 +53,7 @@ inline int Available(Obj* model,int player) {
 }
 inline int BaseCost(Obj* card) {
     auto* selected=reinterpret_cast<Application*>(Engine::EntityAccess::Component(card,"LevelApplication"));
-    if(Engine::EntityAccess::Component(card,"IsFree") || (selected && selected->InHandSelection && selected->WasFree))return 0;
+    if(Engine::EntityAccess::Component(card,"FreeSunCost") || (selected && selected->InHandSelection && selected->WasFree))return 0;
     Obj* value=Stats::Value(card,"SunCost","SunCostValue");return value?std::max(0,Stats::WithoutLevel(value)):-1;
 }
 inline Quote QuoteFor(Obj* model,Obj* card,int entry) {
@@ -80,28 +97,67 @@ static bool Validate(Obj* self,Obj* play,Obj* errors,const void* method) {
     Obj* card=Engine::EntityAccess::Find(model,PlayInt(play,"CardId"));auto quote=QuoteFor(model,card,choice.entry);
     auto previous=costComponent;int prior=overrideCost;struct RestoreCost{Obj* previous;int value;~RestoreCost(){costComponent=previous;overrideCost=value;}}restoreCost{previous,prior};costComponent=Engine::EntityAccess::Component(card,"SunCost");overrideCost=quote.valid?quote.total:std::numeric_limits<int>::max();
     const bool stock=originalValidate(self,play,errors,method);costComponent=previous;overrideCost=prior;
-    return stock && choice.valid && choice.entry==SelectedEntry(card) && quote.valid && quote.affordable && Engine::BoardPlacement::Owner(card)==PlayInt(play,"PlayerId") && Engine::EntityAccess::Component(card,"HandElement");
+    // A received Level choice is transported with the Play DTO. The host
+    // simulation often lacks the client's preview-only LevelApplication.
+    // Comparing with SelectedEntry(card) here wrongly rejects valid leveled
+    // plays before Prepare() can commit their stats. Ownership, definition,
+    // selected entry, affordability and stock validation remain enforced.
+    const bool allowed=stock && choice.valid && quote.valid && quote.affordable &&
+        Engine::BoardPlacement::Owner(card)==PlayInt(play,"PlayerId") &&
+        Engine::EntityAccess::Component(card,"HandElement");
+    if(allowed){
+        // Preserve the accepted quote on the Play sidecar, which QueuePlay
+        // transfers onto PlayCardEffect. Do not recompute from sun after the
+        // cost has been consumed or from a different frontend projection.
+        choice.quoted=true;choice.total=quote.total;choice.extra=quote.extra;
+        choice.attack=quote.attack;choice.health=quote.health;
+        Plays::choices.Set(play,choice);
+    }
+    if(!allowed){static std::atomic<unsigned> samples{0};if(samples.fetch_add(1)<48)
+        LOG_WARN("CustomComponents/Level/VALIDATE_REJECT: card=%d entry=%d selected=%d valid=%d stock=%d quote=%d affordable=%d cost=%d",
+            PlayInt(play,"CardId"),choice.entry,SelectedEntry(card),int(choice.valid),int(stock),int(quote.valid),int(quote.affordable),quote.total);}
+    return allowed;
 }
 inline Obj* ModelFor(Obj* router){return Core::ModelRegistry::Get(Engine::RouterContext::RouterModel(router));}
+inline Quote ExecutionQuote(Obj* model,Obj* card,const Wire::Choice& choice){
+    if(!card || !DefinitionFor(card))return {};
+    if(choice.quoted){
+        // Validator verified stock playability and resources. The effect can
+        // execute after the normal stock payment, which changes Available().
+        auto definition=DefinitionFor(card);
+        if(choice.entry<0 || choice.entry>=int(definition->entries.size()))return {};
+        return {true,true,choice.total,choice.extra,choice.attack,choice.health};
+    }
+    return QuoteFor(model,card,choice.entry);
+}
 inline bool IsPlay(Obj* effect){return effect && effect->klass && std::string_view(effect->klass->name)=="PlayCardEffect";}
 inline bool Guard(const Engine::EffectGuards::Context& context,int) {
     if(!IsPlay(context.effect))return true;auto choice=Plays::effects.Get(context.effect);
     if(!choice.present)return true;
     if(choice.valid && choice.entry<0)return SelectedEntry(Engine::EntityAccess::Find(ModelFor(context.router),EffectInt(context.effect,"TargetId")))<0;
-    Obj* model=ModelFor(context.router);Obj* card=Engine::EntityAccess::Find(model,EffectInt(context.effect,"TargetId"));auto quote=QuoteFor(model,card,choice.entry);
-    return choice.valid && choice.entry==SelectedEntry(card) && quote.valid && quote.affordable && Engine::EntityAccess::Component(card,"HandElement") && Engine::BoardPlacement::Owner(card)==EffectInt(context.effect,"PlayerId");
+    Obj* model=ModelFor(context.router);Obj* card=Engine::EntityAccess::Find(model,EffectInt(context.effect,"TargetId"));auto quote=ExecutionQuote(model,card,choice);
+    // The model receiving a PlayCardEffect may not carry the frontend preview
+    // selection. Trust only the transported entry after simulation-side checks.
+    const bool allowed=choice.valid && quote.valid && quote.affordable &&
+        Engine::EntityAccess::Component(card,"HandElement") &&
+        Engine::BoardPlacement::Owner(card)==EffectInt(context.effect,"PlayerId");
+    if(!allowed){static std::atomic<unsigned> samples{0};if(samples.fetch_add(1)<48)
+        LOG_WARN("CustomComponents/Level/GUARD_REJECT: card=%d entry=%d selected=%d valid=%d quote=%d affordable=%d verified=%d hand=%d owner=%d model=%p",
+            EffectInt(context.effect,"TargetId"),choice.entry,SelectedEntry(card),int(choice.valid),int(quote.valid),int(quote.affordable),
+            int(choice.quoted),int(Engine::EntityAccess::Component(card,"HandElement")!=nullptr),Engine::BoardPlacement::Owner(card),model);}
+    return allowed;
 }
 inline void Before(const Engine::EffectGuards::Context&) {++effectDepth;costStack.push_back({costComponent,overrideCost});}
 inline bool Prepare(const Engine::EffectGuards::Context& context) {
     if(!IsPlay(context.effect))return true;
     auto choice=Plays::effects.Get(context.effect);if(!choice.present || choice.entry<0 || !choice.valid)return true;
-    Obj* model=ModelFor(context.router);Obj* card=Engine::EntityAccess::Find(model,EffectInt(context.effect,"TargetId"));auto quote=QuoteFor(model,card,choice.entry);
+    Obj* model=ModelFor(context.router);Obj* card=Engine::EntityAccess::Find(model,EffectInt(context.effect,"TargetId"));auto quote=ExecutionQuote(model,card,choice);
     if(!quote.valid || !quote.affordable || !Stats::Apply(card,quote,choice.entry)){auto cancel=BNM::Class("PvZCards.Engine","Effect").GetMethod("Cancel",0).cast<void>();cancel[context.effect]();return false;}
     if(auto* state=reinterpret_cast<Application*>(Engine::EntityAccess::Component(card,"LevelApplication"))){state->InHandSelection=false;state->WasFree=false;state->WasOnBoard=Engine::CardTypes::Fighter(card) || Engine::EntityAccess::Component(card,"Environment");}
     costComponent=Engine::EntityAccess::Component(card,"SunCost");overrideCost=quote.total;
     // Stock consumes IsFree instead of consulting the cost calculator. A Level
     // choice with extra payment consumes that marker and pays its quoted cost.
-    if(quote.extra>0 && Engine::EntityAccess::Component(card,"IsFree")){auto remove=BNM::Class("PvZCards.Engine","Entity").GetMethod("RemoveComponent",1).cast<Obj*>();remove[card](BNM::Class("PvZCards.Engine.Components","IsFree").GetMonoType());}
+    if(quote.extra>0 && Engine::EntityAccess::Component(card,"FreeSunCost")){auto remove=BNM::Class("PvZCards.Engine","Entity").GetMethod("RemoveComponent",1).cast<Obj*>();remove[card](BNM::Class("PvZCards.Engine.Components","FreeSunCost").GetMonoType());}
     static std::atomic<unsigned> samples{0};if(samples.fetch_add(1)<64)LOG_INFO("CustomComponents/Level/COMMIT: card=%d entry=%d cost=%d extra=%d attack=%d health=%d",EffectInt(context.effect,"TargetId"),choice.entry,quote.total,quote.extra,quote.attack,quote.health);
     return true;
 }
@@ -119,7 +175,7 @@ inline bool SetHandMode(Obj* model,Obj* card,int entry){
     if(ResetDynamic(definition->entries[entry],base,available)){Stats::Clear(card);return true;}
     auto quote=QuoteFor(model,card,entry);if(!quote.valid || !Stats::Apply(card,quote,entry))return false;
     auto* state=reinterpret_cast<Application*>(Engine::EntityAccess::Component(card,"LevelApplication"));state->InHandSelection=true;
-    if(state->WasFree && quote.extra>0){auto remove=BNM::Class("PvZCards.Engine","Entity").GetMethod("RemoveComponent",1).cast<Obj*>();remove[card](BNM::Class("PvZCards.Engine.Components","IsFree").GetMonoType());}
+    if(state->WasFree && quote.extra>0){auto remove=BNM::Class("PvZCards.Engine","Entity").GetMethod("RemoveComponent",1).cast<Obj*>();remove[card](BNM::Class("PvZCards.Engine.Components","FreeSunCost").GetMonoType());}
     ObserveHand(card);return true;
 }
 inline bool HandCommand(Obj* service,Obj* play){
@@ -133,7 +189,8 @@ inline bool HandCommand(Obj* service,Obj* play){
     Obj* instances=BNM::Class("PvZCards.Core.Services","LocalPlayCardService").GetField("<Instances>k__BackingField").cast<Obj*>()[service].Get();
     Obj* model=Engine::Match::Provide(instances,BNM::Class("PvZCards.Engine","EntityModel").GetMonoType());
     Obj* card=Engine::EntityAccess::Find(model,PlayInt(play,"CardId"));
-    if(!card || Engine::BoardPlacement::Owner(card)!=PlayInt(play,"PlayerId") || !SetHandMode(model,card,*entry)){fail[service](25);return true;}
+    if(!card || Engine::BoardPlacement::Owner(card)!=PlayInt(play,"PlayerId") ||
+       !ActivePlayerTurn(model,card) || !SetHandMode(model,card,*entry)){fail[service](25);return true;}
     static std::atomic<unsigned> samples{0};if(samples.fetch_add(1)<64)LOG_INFO("CustomComponents/Level/HAND_MODE: card=%d requested=%d selected=%d",PlayInt(play,"CardId"),*entry,SelectedEntry(card));
     success[service]();return true;
 }
@@ -176,7 +233,16 @@ inline void After(const Engine::EffectGuards::Context& context) {
     auto pending=std::move(departures);departures.clear();
     for(auto item:pending){Obj* model=Core::ModelRegistry::Get(item.model);Obj* card=Engine::EntityAccess::Find(model,item.card);auto* state=reinterpret_cast<Application*>(Engine::EntityAccess::Component(card,"LevelApplication"));if(state && state->WasOnBoard && !Engine::EntityAccess::Component(card,"LaneElement"))Stats::Clear(card);}
 }
-inline void LeaveHand(Obj* model,int id){Obj* card=Engine::EntityAccess::Find(model,id);auto* state=reinterpret_cast<Application*>(Engine::EntityAccess::Component(card,"LevelApplication"));if(state && state->InHandSelection)Stats::Clear(card);}
+inline void LeaveHand(Obj* model,int id){
+    Obj* card=Engine::EntityAccess::Find(model,id);
+    auto* state=reinterpret_cast<Application*>(Engine::EntityAccess::Component(card,"LevelApplication"));
+    if(!state || !state->InHandSelection)return;
+    // Moving out of hand for an accepted PlayCardEffect is NOT a cancellation.
+    // Removing Leveled here disables on-play and move-dependent upgraded traits.
+    Obj* active=Engine::EffectGuards::current.effect;
+    if(IsPlay(active) && EffectInt(active,"TargetId")==id)return;
+    Stats::Clear(card);
+}
 inline void ReenterHand(Obj* model,int id){Obj* card=Engine::EntityAccess::Find(model,id);if(Engine::EntityAccess::Component(card,"LevelApplication") && !Engine::EntityAccess::Component(card,"LaneElement"))Stats::Clear(card);}
 inline bool InitializeRuntime() {
     QueryState::previewValue=PreviewValue;Engine::PlayServices::control=HandCommand;

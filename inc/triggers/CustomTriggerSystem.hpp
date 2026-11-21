@@ -1,6 +1,10 @@
 #include "core/HookRegistry.hpp"
 #include "engine/EffectExecution.hpp"
 #pragma once
+#include "integration/ReplayEventBridge.hpp"
+#include "core/SceneViewContext.hpp"
+#include <cstdio>
+#include "engine/TriggerDispatch.hpp"
 #include "diagnostics/DiagnosticLogging.hpp"
 
 #include <array>
@@ -19,6 +23,7 @@
 #include "triggers/PickFromThreeTrigger.hpp"
 #include "triggers/ReturnToLaneMoveFilter.hpp"
 #include "core/ManagedRuntime.hpp"
+#include "core/WeakObjectSettings.hpp"
 #include "engine/TriggerQueue.hpp"
 #include "pick3/SelectionExecutionScope.hpp"
 #include "zones/DiscardProvenanceSystem.hpp"
@@ -33,6 +38,7 @@
 #include "log.h"
 #include "pick3/SelectionTransactionRuntime.hpp"
 #include "pick3/SelectionAcceptance.hpp"
+#include "variables/QueuedTriggerValues.hpp"
 
 namespace CustomComponents::Systems::CustomTriggerSystem {
 
@@ -70,6 +76,7 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
 
     inline std::mutex producerLock;
     inline std::vector<std::shared_ptr<Core::ManagedRuntime::Root>> producerReferences;
+    inline Core::WeakObjectSettings<std::shared_ptr<Core::ManagedRuntime::Root>> queueOwners;
 
     inline constexpr std::size_t kMaxCarrierMetadata = 64;
 
@@ -126,24 +133,13 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
         return false;
     }
 
-    // Shared TriggerSystem<object> native layout in this build:
-    //   +0x10 InstanceManager
-    //   +0x18 TriggeredEffectCollection
-    //   +0x20 EffectEntityFinder
-    //
-    // GenericEffectEntityFinder<T>:
-    //   +0x20 EntityModel
-    inline constexpr std::uintptr_t kTriggerSystemInstancesOffset = 0x10;
-    inline constexpr std::uintptr_t kTriggerSystemTriggeredEffectsOffset = 0x18;
-    inline constexpr std::uintptr_t kTriggerSystemFinderOffset = 0x20;
-
     inline BNM::Field<MonoList<Obj*>*> modelEntities;
     inline BNM::Field<MonoList<Obj*>*> entityComponents;
     inline BNM::Field<int> entityId;
 
     inline BNM::Field<BNM::Structures::Mono::String*> customTriggerName;
 
-    inline BNM::Field<int> effectEffectEntityId;
+    inline BNM::Field<int> effectEffectEntityId,effectSpringboardId,effectGroupId;
     inline BNM::Field<BNM::Structures::Mono::String*> fireTriggerName;
     inline BNM::Field<bool> fireTriggerIgnoreTriggerConditions;
     inline BNM::Field<BNM::Structures::Mono::String*> fireCustomTriggerName;
@@ -170,6 +166,13 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
     inline BNM::Method<bool> gateHasTriggers;
     inline BNM::Method<bool> gateHasNext;
     inline BNM::Method<bool> gateShiftWillChangeGroup;
+    inline BNM::Field<Obj*> queueEffectsField,queueTriggeredEffectsField,queueInstancesField,queueModelField;
+    inline BNM::Field<Obj*> producerInstancesField, producerTriggeredEffectsField, producerFinderField;
+    inline BNM::Field<Obj*> finderModelField, finderValidatorField;
+    inline BNM::Field<Obj*> stateCheckAdderField, stateCheckAdderInstancesField;
+    inline void LogPick3ServiceProcess(const char* phase, Obj* service) {
+        CC_SELECTION_DIAG("CustomComponents/Pick3/SERVICE_PROCESS: phase=%s service=%p", phase, service);
+    }
     using RegisterHandlersFn = void (*)(void*, Obj*, const void*);
     using ProcessEffectFn = void (*)(void*, Obj*, const void*);
     inline RegisterHandlersFn originalQueueRegisterHandlers = nullptr;
@@ -179,10 +182,6 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
     inline Obj* gateObservedTriggers = nullptr;
     inline int gateObservedRemaining = 0;
 
-    inline Obj* GateField(Obj* obj, std::uintptr_t offset) {
-        return obj ? *reinterpret_cast<Obj**>(
-            reinterpret_cast<std::uint8_t*>(obj) + offset) : nullptr;
-    }
     // Passive selection-resume trace. Armed before dispatch, matched by the
     // exact service-owned EffectCollection; never drives processing.
     using ProcessEffectsFn = void (*)(void*, Obj*, const void*);
@@ -195,12 +194,6 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
         resumeObservationBudget = effects ? 24 : 0;
         CC_SELECTION_DIAG("CustomComponents/Pick3/PICK3_RESUME: phase=ARM effect=%d group=%d effects=%p",
                  effectId, groupId, (void*)effects);
-    }
-    inline void LogPick3ServiceProcess(const char* phase, Obj* service) {
-        Obj* effects = GateField(service, 0x30);
-        if (effects && effects == resumeObservedEffects && resumeObservationBudget > 0)
-            CC_SELECTION_DIAG("CustomComponents/Pick3/PICK3_RESUME: phase=%s service=%p effects=%p depth=%d",
-                     phase, (void*)service, (void*)effects, resumeProcessorDepth);
     }
     static void EffectCollectionProcessEffectsTrace(void* self, Obj* effects, const void* method) {
         const bool observed = effects && effects == resumeObservedEffects && resumeObservationBudget > 0;
@@ -224,10 +217,11 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
         Obj* effects = nullptr;
         for (std::size_t i = 0; i < gateQueueSystemCount; ++i) {
             Obj* candidate = gateQueueSystems[i];
-            if (GateField(candidate, 0x18) != expectedTriggers) continue;
+            Obj* triggered=queueTriggeredEffectsField.IsValid()?Core::Metadata::Bind(queueTriggeredEffectsField,candidate).Get():nullptr;
+            if (triggered != expectedTriggers) continue;
             // Queue system and producer share the exact injected collection.
             matchedSystem = candidate;
-            effects = GateField(candidate, 0x10);
+            effects = queueEffectsField.IsValid()?Core::Metadata::Bind(queueEffectsField,candidate).Get():nullptr;
             break;
         }
         if (!matchedSystem || !effects) {
@@ -235,9 +229,9 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
                      phase, (void*)expectedTriggers, gateQueueSystemCount);
             return;
         }
-        const bool pending = gateHasTriggers[expectedTriggers]();
-        const bool hasNext = gateHasNext[effects]();
-        const bool groupReady = gateShiftWillChangeGroup[effects]();
+        const bool pending = Core::Metadata::Bind(gateHasTriggers,expectedTriggers)();
+        const bool hasNext = Core::Metadata::Bind(gateHasNext,effects)();
+        const bool groupReady = Core::Metadata::Bind(gateShiftWillChangeGroup,effects)();
         CC_SELECTION_DIAG("CustomComponents/Pick3/PICK3_QUEUE_GATE: phase=%s matched=1 system=%p triggered=%p effects=%p hasTriggers=%d hasNext=%d shiftWillChangeGroup=%d",
                  phase, (void*)matchedSystem, (void*)expectedTriggers, (void*)effects,
                  int(pending), int(hasNext), int(groupReady));
@@ -262,8 +256,19 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
                 gateQueueSystems.back() = system;
             }
         }
-        CustomComponents::Pick3::TransactionRuntime::RegisterRouter(
-            router,CustomComponents::Pick3::TransactionRuntime::ObjectAt(system,0x30));
+        // This stock system is injected with the authoritative EntityModel.
+        // Register every router before any ordinary effect processing, rather
+        // than only when a Withering discard eventually occurs.
+        Obj* model=system&&queueModelField.IsValid()?Core::Metadata::Bind(queueModelField,system).Get():nullptr;
+        Obj* collection=system&&queueTriggeredEffectsField.IsValid()
+            ?Core::Metadata::Bind(queueTriggeredEffectsField,system).Get():nullptr;
+        if(collection)queueOwners.Set(collection,std::make_shared<Core::ManagedRuntime::Root>(system,true));
+        CustomComponents::Pick3::TransactionRuntime::RegisterRouter(router,model);
+        if (router && model) {
+            CustomComponents::Engine::RouterContext::RegisterRouter(router,model);
+            static std::atomic<unsigned> samples{0};
+            if (samples.fetch_add(1)<24) LOG_INFO("CustomComponents/RouterModel/BOUND: router=%p model=%p",router,model);
+        }
         originalQueueRegisterHandlers(self, router, method);
     }
     // The existing queue-system hook can admit one verified live selection
@@ -302,7 +307,21 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
         return true;
     }
     static void QueueProcessEffectGateHook(void* self, Obj* effect, const void* method) {
-        Obj* triggers = GateField(static_cast<Obj*>(self), 0x18);
+        // Fallback for builds where RegisterEffectHandlers runs before all
+        // injected fields become available. Bind from this exact stock queue
+        // system's injected model + instance manager; no cross-match guessing.
+        Obj* queueSystem=static_cast<Obj*>(self);
+        Obj* model=queueSystem&&queueModelField.IsValid()?Core::Metadata::Bind(queueModelField,queueSystem).Get():nullptr;
+        Obj* manager=queueSystem&&queueInstancesField.IsValid()?Core::Metadata::Bind(queueInstancesField,queueSystem).Get():nullptr;
+        if(model && manager){
+            Obj* router=Engine::Match::Provide(manager,BNM::Class("PvZCards.Engine","EffectRouter").GetMonoType());
+            if(router && !Engine::RouterContext::RouterModel(router)){
+                Engine::RouterContext::RegisterRouter(router,model);
+                static std::atomic<unsigned> samples{0};if(samples.fetch_add(1)<16)
+                    LOG_INFO("CustomComponents/RouterModel/LATE_BOUND: router=%p model=%p queue=%p",router,model,self);
+            }
+        }
+        Obj* triggers=queueSystem&&queueTriggeredEffectsField.IsValid()?Core::Metadata::Bind(queueTriggeredEffectsField,queueSystem).Get():nullptr;
         if (triggers && triggers == liveSelectionQueueScope &&
             liveSelectionQueueCallback && !liveSelectionQueueBusy) {
             liveSelectionQueueBusy = true;
@@ -317,12 +336,11 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
             // fields already used by the trigger dispatcher, with no managed
             // calls, allocation, or dispatch. A queue window is diagnostic,
             // not evidence of authoritative server acceptance.
-            const auto* effectBytes = reinterpret_cast<const std::uint8_t*>(effect);
-            const int sourceId = *reinterpret_cast<const int*>(effectBytes + 0x24);
-            const int targetId = *reinterpret_cast<const int*>(effectBytes + 0x28);
-            const int springboardId = *reinterpret_cast<const int*>(effectBytes + 0x2C);
-            const int effectId = *reinterpret_cast<const int*>(effectBytes + 0x30);
-            const int groupId = *reinterpret_cast<const int*>(effectBytes + 0x3C);
+            const int sourceId=effectSourceId.IsValid()?Core::Metadata::Bind(effectSourceId,effect).Get():-1;
+            const int targetId=effectTargetId.IsValid()?Core::Metadata::Bind(effectTargetId,effect).Get():-1;
+            const int springboardId=effectSpringboardId.IsValid()?Core::Metadata::Bind(effectSpringboardId,effect).Get():-1;
+            const int effectId=effectEffectEntityId.IsValid()?Core::Metadata::Bind(effectEffectEntityId,effect).Get():-1;
+            const int groupId=effectGroupId.IsValid()?Core::Metadata::Bind(effectGroupId,effect).Get():-1;
             const int wantedEffect = pick3QueueExpectedEffect.load(std::memory_order_acquire);
             const int wantedGroup = pick3QueueExpectedGroup.load(std::memory_order_acquire);
             const bool matches = wantedEffect >= 0 && wantedGroup >= 0 &&
@@ -344,21 +362,16 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
         // queue hook. No new detour, managed getter, or effect dispatch.
         if (observed) {
             CC_SELECTION_DIAG("CustomComponents/Pick3/PICK3_TRIGGER_TIMELINE: phase=QUEUE_EFFECT_ENTER queue=%p effects=%p effect=%p triggers=%p remaining=%d",
-                     self, GateField(static_cast<Obj*>(self), 0x10), effect, triggers, gateObservedRemaining);
+                     self, queueEffectsField.IsValid()?Core::Metadata::Bind(queueEffectsField,queueSystem).Get():nullptr, effect, triggers, gateObservedRemaining);
             LogPick3QueueGate("STOCK_PROCESS_ENTER", triggers);
         }
         // Patch 2.2: use the already-installed stock execution detour.
         // The scoped observer only compares immutable effect/group IDs with
         // snapshot history; it never changes return values or queue state.
-        const auto* executionBytes = reinterpret_cast<const std::uint8_t*>(effect);
-        const int executionEffect = executionBytes
-            ? *reinterpret_cast<const int*>(executionBytes + 0x30) : -1;
-        const int executionGroup = executionBytes
-            ? *reinterpret_cast<const int*>(executionBytes + 0x3C) : -1;
-        const int executionSource = executionBytes
-            ? *reinterpret_cast<const int*>(executionBytes + 0x24) : -1;
-        const int executionTarget = executionBytes
-            ? *reinterpret_cast<const int*>(executionBytes + 0x28) : -1;
+        const int executionEffect=effect&&effectEffectEntityId.IsValid()?Core::Metadata::Bind(effectEffectEntityId,effect).Get():-1;
+        const int executionGroup=effect&&effectGroupId.IsValid()?Core::Metadata::Bind(effectGroupId,effect).Get():-1;
+        const int executionSource=effect&&effectSourceId.IsValid()?Core::Metadata::Bind(effectSourceId,effect).Get():-1;
+        const int executionTarget=effect&&effectTargetId.IsValid()?Core::Metadata::Bind(effectTargetId,effect).Get():-1;
         {
             CustomComponents::Pick3::Provenance::ScopedQueueExecution executionScope(
                 executionEffect, executionGroup, executionSource, executionTarget);
@@ -376,7 +389,7 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
                      self, effect, triggers, gateObservedRemaining);
             LogPick3QueueGate("STOCK_PROCESS_EXIT", triggers);
             --gateObservedRemaining;
-            if (gateObservedRemaining == 0 || !gateHasTriggers[triggers]()) {
+            if (gateObservedRemaining == 0 || !Core::Metadata::Bind(gateHasTriggers,triggers)()) {
                 gateObservedTriggers = nullptr;
                 gateObservedRemaining = 0;
             }
@@ -389,17 +402,6 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
     inline ProcessEffectFn originalStateCheckProcessEffect = nullptr;
     inline DescriptorToEffectFn originalStockTriggerCarrierToEffect = nullptr;
 
-    inline constexpr std::uintptr_t kQueueRegisterHandlersRva = 0x220611C;
-    inline constexpr std::uintptr_t kTriggerSystemRegisterHandlersRva = 0x2C4DBF8;
-    inline constexpr std::uintptr_t kGenericFinderModelOffset = 0x20;
-    inline constexpr std::uintptr_t kGenericFinderValidatorOffset = 0x28;
-
-    // Verified from dump.cs + ARM64:
-    // StateCheckSystem::EffectAdder          = this + 0x10
-    // StateCheckEffectAdder::Instances       = adder + 0x10
-    inline constexpr std::uintptr_t kStateCheckEffectAdderOffset = 0x10;
-    inline constexpr std::uintptr_t kStateCheckAdderInstancesOffset = 0x10;
-
     // The StateCheckSystem currently processing an effect is our strongest
     // live-simulation scope anchor. Keep it per-thread because prediction work
     // also runs StateCheck processing on worker threads.
@@ -408,6 +410,16 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
     #include "triggers/detail/TriggerProducerContext.inl"
     #include "triggers/detail/CustomTriggerDispatch.inl"
     #include "triggers/detail/CustomTriggerCarrier.inl"
+    inline Obj* ModelForTriggeredCollection(Obj* collection) {
+        if(!collection)return nullptr;
+        if(auto owner=queueOwners.Get(collection)){
+            Obj* system=owner->Get();
+            if(system && queueModelField.IsValid())return Core::Metadata::Bind(queueModelField,system).Get();
+        }
+        for(auto& producer:SnapshotStockTriggerContexts())
+            if(producer.triggeredEffects==collection)return producer.model;
+        return nullptr;
+    }
     inline bool RegisterTypes() {
         struct Registration {
             const char* name;
@@ -526,6 +538,9 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
         auto effectEntity = BNM::Class("PvZCards.Engine.Components", "EffectEntity");
         auto triggeredCollection = BNM::Class("PvZCards.Engine", "TriggeredEffectCollection");
         auto instanceManager = BNM::Class("PvZCards.Engine", "InstanceManager");
+        auto producerSystem = BNM::Class("PvZCards.Core.Systems", "TriggerSystem`1");
+        auto genericFinder = BNM::Class("PvZCards.Core.Systems.Utilities", "GenericEffectEntityFinder`1");
+        auto stateCheckAdder = BNM::Class("PvZCards.Core.Utilities", "StateCheckEffectAdder");
 
         if (!queueSystem.IsValid() || !stateCheckSystem.IsValid() ||
             !stockTriggerCarrierDescriptor.IsValid() ||
@@ -536,7 +551,8 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
             !effectData.IsValid() || !entityQueryContext.IsValid() ||
             !triggerValidator.IsValid() ||
             !effectEntity.IsValid() || !triggeredCollection.IsValid() ||
-            !instanceManager.IsValid()) {
+            !instanceManager.IsValid() || !producerSystem.IsValid() ||
+            !genericFinder.IsValid() || !stateCheckAdder.IsValid()) {
             LOG_ERR("CustomComponents/CustomTrigger: metadata class lookup failed");
             return false;
         }
@@ -549,6 +565,8 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
         effectSourceId = effect.GetField("SourceId");
         effectTargetId = effect.GetField("TargetId");
         effectEffectEntityId = effect.GetField("EffectEntityId");
+        effectSpringboardId=effect.GetField("SpringboardId").cast<int>();
+        effectGroupId=effect.GetField("EffectGroupId").cast<int>();
 
         fireTriggerName = fireTriggerDescriptor.GetField("TriggerName");
         fireTriggerIgnoreTriggerConditions =
@@ -568,10 +586,11 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
             triggerValidator.GetMethod("ShouldTriggerEffect", 2).cast<bool>();
         entityQueryContextType =
             reinterpret_cast<Obj*>(entityQueryContext.GetMonoType());
-        effectContextCopyFromQuery = effectContext.GetMethod(
-            "CopyFrom",
-            {BNM::Class("PvZCards.Engine", "EntityQueryContext").GetCompileTimeClass()}
-        ).cast<void>();
+        for(auto candidate:effectContext.GetMethods())
+            if(auto* info=candidate.GetInfo();info&&std::string_view(info->name)=="CopyFrom"&&info->parameters_count==1&&BNM::Class(info->parameters[0]).GetClass()==entityQueryContext.GetClass()){
+                effectContextCopyFromQuery=candidate.cast<void>();
+                break;
+            }
         effectEntityGetSource = effectEntity.GetMethod("GetSource", 1).cast<int>();
         triggeredEffectsAdd = triggeredCollection.GetMethod("Add", 1).cast<void>();
         gateHasTriggers = triggeredCollection.GetMethod("HasTriggers", 0).cast<bool>();
@@ -583,26 +602,48 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
 
 
         auto queueRegisterHandlers = queueSystem.GetMethod("RegisterEffectHandlers", 1);
+        queueEffectsField=queueSystem.GetField("<Effects>k__BackingField").cast<Obj*>();
+        queueTriggeredEffectsField=queueSystem.GetField("<TriggeredEffects>k__BackingField").cast<Obj*>();
+        queueInstancesField=queueSystem.GetField("<InstanceManager>k__BackingField").cast<Obj*>();
+        queueModelField=queueSystem.GetField("<Model>k__BackingField").cast<Obj*>();
+        producerInstancesField=producerSystem.GetField("<Instances>k__BackingField").cast<Obj*>();
+        producerTriggeredEffectsField=producerSystem.GetField("<TriggeredEffects>k__BackingField").cast<Obj*>();
+        producerFinderField=producerSystem.GetField("<Finder>k__BackingField").cast<Obj*>();
+        finderModelField=genericFinder.GetField("<Model>k__BackingField").cast<Obj*>();
+        finderValidatorField=genericFinder.GetField("<Validator>k__BackingField").cast<Obj*>();
+        auto objectType=BNM::Class("System","Object").GetCompileTimeClass();
+        auto producerObject=producerSystem.GetGeneric({objectType});
+        auto finderObject=genericFinder.GetGeneric({objectType});
+        // Open generic fields have no concrete instance layout. Resolve the
+        // shared reference-type layout before reading any injected service.
+        producerInstancesField=producerObject.GetField("<Instances>k__BackingField").cast<Obj*>();
+        producerTriggeredEffectsField=producerObject.GetField("<TriggeredEffects>k__BackingField").cast<Obj*>();
+        producerFinderField=producerObject.GetField("<Finder>k__BackingField").cast<Obj*>();
+        finderModelField=finderObject.GetField("<Model>k__BackingField").cast<Obj*>();
+        finderValidatorField=finderObject.GetField("<Validator>k__BackingField").cast<Obj*>();
+        if(!producerInstancesField.IsValid() || !producerTriggeredEffectsField.IsValid() ||
+           !producerFinderField.IsValid() || !finderModelField.IsValid() || !finderValidatorField.IsValid() ||
+           producerInstancesField.GetOffset()<sizeof(Obj) || finderValidatorField.GetOffset()<sizeof(Obj)){
+            LOG_ERR("CustomComponents/CustomTrigger: concrete generic layout unavailable");return false;
+        }
+        LOG_INFO("CustomComponents/CustomTrigger: concrete layout instances=%zu collection=%zu finder=%zu model=%zu validator=%zu",
+            size_t(producerInstancesField.GetOffset()),size_t(producerTriggeredEffectsField.GetOffset()),
+            size_t(producerFinderField.GetOffset()),size_t(finderModelField.GetOffset()),size_t(finderValidatorField.GetOffset()));
+        stateCheckAdderField=stateCheckSystem.GetField("<EffectAdder>k__BackingField").cast<Obj*>();
+        stateCheckAdderInstancesField=stateCheckAdder.GetField("<Instances>k__BackingField").cast<Obj*>();
         auto stateCheckProcessEffect =
             stateCheckSystem.GetMethod("ProcessEffect", 1);
         auto stockTriggerCarrierToEffect =
             stockTriggerCarrierDescriptor.GetMethod("ToEffect", 2);
 
-        // Recover libil2cpp's ASLR base from the concrete queue method, then
-        // hook the shared TriggerSystem<T>.RegisterEffectHandlers body only to
-        // remember TriggerSystem objects. Injected fields are resolved lazily
-        // later; do not hook the tiny GC-write-barrier DI setter thunks.
-        const std::uintptr_t queueRegisterAddress =
-            static_cast<std::uintptr_t>(queueRegisterHandlers.GetOffset());
-        const std::uintptr_t il2cppBase =
-            queueRegisterAddress >= kQueueRegisterHandlersRva
-                ? queueRegisterAddress - kQueueRegisterHandlersRva
-                : 0;
-        void* triggerSystemRegisterHandlersAddress = il2cppBase
-            ? reinterpret_cast<void*>(
-                il2cppBase + kTriggerSystemRegisterHandlersRva
-              )
-            : nullptr;
+        // Resolve the shared reference-type generic implementation by metadata.
+        // This replaces the old build-specific RVA arithmetic, which silently
+        // became stale when Sprig/game versions changed.
+        auto triggerSystemObject = producerSystem.GetGeneric({
+            BNM::Class("System", "Object").GetCompileTimeClass()
+        });
+        auto triggerSystemRegisterHandlers =
+            triggerSystemObject.GetMethod("RegisterEffectHandlers", 1);
 
         const bool valid =
             modelEntities.IsValid() &&
@@ -612,6 +653,7 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
             effectSourceId.IsValid() &&
             effectTargetId.IsValid() &&
             effectEffectEntityId.IsValid() &&
+            effectSpringboardId.IsValid() && effectGroupId.IsValid() &&
             fireTriggerName.IsValid() &&
             fireTriggerIgnoreTriggerConditions.IsValid() &&
             fireCustomTriggerName.IsValid() &&
@@ -630,26 +672,31 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
             gateHasTriggers.IsValid() && gateHasNext.IsValid() &&
             gateShiftWillChangeGroup.IsValid() &&
             queueRegisterHandlers.IsValid() &&
+            queueEffectsField.IsValid()&&queueTriggeredEffectsField.IsValid()&&queueInstancesField.IsValid()&&queueModelField.IsValid()&&
+            producerInstancesField.IsValid() && producerTriggeredEffectsField.IsValid() &&
+            producerFinderField.IsValid() && finderModelField.IsValid() &&
+
+
+            finderValidatorField.IsValid() && stateCheckAdderField.IsValid() &&
+            stateCheckAdderInstancesField.IsValid() &&
             stateCheckProcessEffect.IsValid() &&
             stockTriggerCarrierToEffect.IsValid() &&
-            triggerSystemRegisterHandlersAddress != nullptr;
+            triggerSystemObject.IsValid() &&
+            triggerSystemRegisterHandlers.IsValid();
 
         if (!valid) {
             LOG_ERR("CustomComponents/CustomTrigger: metadata method/field lookup failed");
             return false;
         }
 
-        const int triggerSystemHookResult = CustomComponents::Core::Hooks::InstallNative(
-            triggerSystemRegisterHandlersAddress,
-            reinterpret_cast<void*>(TriggerSystemRegisterEffectHandlersHook),
-            reinterpret_cast<void**>(&originalTriggerSystemRegisterHandlers)
+        const bool triggerSystemHookInstalled = CustomComponents::Core::Hooks::Install(
+            triggerSystemRegisterHandlers,
+            TriggerSystemRegisterEffectHandlersHook,
+            originalTriggerSystemRegisterHandlers
         );
-        if (triggerSystemHookResult != 0 || !originalTriggerSystemRegisterHandlers) {
+        if (!triggerSystemHookInstalled || !originalTriggerSystemRegisterHandlers) {
             LOG_ERR(
-                "CustomComponents/CustomTrigger: TriggerSystem<T>.RegisterEffectHandlers hook installation failed result=%d address=%p base=%p",
-                triggerSystemHookResult,
-                triggerSystemRegisterHandlersAddress,
-                reinterpret_cast<void*>(il2cppBase)
+                "CustomComponents/CustomTrigger: TriggerSystem<object>.RegisterEffectHandlers hook installation failed"
             );
             return false;
         }
@@ -680,9 +727,7 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
 
 
         CC_DIAG(
-            "CustomComponents/CustomTrigger: hooked TriggerSystem<T>.RegisterEffectHandlers address=%p base=%p (lazy producer refresh)",
-            triggerSystemRegisterHandlersAddress,
-            reinterpret_cast<void*>(il2cppBase)
+            "CustomComponents/CustomTrigger: hooked TriggerSystem<object>.RegisterEffectHandlers (lazy producer refresh)"
         );
 
         // FireTriggerEffectDescriptor / FireCustomTriggerEffectDescriptor derive
@@ -727,50 +772,63 @@ namespace CustomComponents::Systems::CustomTriggerSystem {
 
     inline bool Initialize() {
         if(!Core::ManagedRuntime::Initialize()) return false;
+        Variables::QueuedTriggerValues::queueModelLookup=ModelForTriggeredCollection;
         const bool installed=RegisterTypes() && InstallHooks();
         if(installed) {
             Engine::TriggerQueue::AddFilter(+[](const Engine::TriggerQueue::Context& queued) {
-                for(auto& producer:SnapshotStockTriggerContexts()) {
-                    if(producer.triggeredEffects!=queued.collection) continue;
-                    Obj* context=triggerDataContext[queued.data].Get();
-                    const auto event=CustomComponents::Pick3::TransactionRuntime::ReadContext(context);
-                    return ReturnToLaneMoveFilter::ShouldSuppress(producer.model,
-                        triggerDataEffectEntityId[queued.data].Get(),event.effect,FindEntityById,HasNamedComponent);
-                }
-                return false;
+                Obj* model=ModelForTriggeredCollection(queued.collection);
+                Obj* context=Core::Metadata::Bind(triggerDataContext,queued.data).Get();
+                const auto event=CustomComponents::Pick3::TransactionRuntime::ReadContext(context);
+                return ReturnToLaneMoveFilter::ShouldSuppress(model,
+                    Core::Metadata::Bind(triggerDataEffectEntityId,queued.data).Get(),event.effect,FindEntityById,HasNamedComponent);
             });
             Engine::TriggerQueue::recycle=+[](const Engine::TriggerQueue::Context& queued) {
+                if(auto owner=queueOwners.Get(queued.collection)){
+                    Obj* system=owner->Get();
+                    Obj* instances=system && queueInstancesField.IsValid()?Core::Metadata::Bind(queueInstancesField,system).Get():nullptr;
+                    if(instances){Core::Metadata::Bind(returnToPool,instances)(queued.data);return true;}
+                }
                 for(auto& producer:SnapshotStockTriggerContexts()) if(producer.triggeredEffects==queued.collection) {
-                    returnToPool[producer.instances](queued.data);return true;
+                    Core::Metadata::Bind(returnToPool,producer.instances)(queued.data);return true;
                 }
                 return false;
             };
-            const bool transactionReady=CustomComponents::Pick3::TransactionRuntime::Initialize();
-#if CUSTOMCOMPONENTS_PF3_TRANSACTION_PIPELINE
-            CustomComponents::Pick3::TransactionRuntime::pipelineReady=transactionReady && CustomComponents::Pick3::Acceptance::Initialize();
-#else
-            CustomComponents::Pick3::TransactionRuntime::pipelineReady=false;
-#endif
-            if(!transactionReady) LOG_ERR("CustomComponents/Pick3/PF3_TX: phase=INIT_FAILED baselinePreserved=1");
-            if(CustomComponents::Pick3::TransactionRuntime::pipelineReady) CustomComponents::Pick3::TransactionRuntime::onStockAccepted =
-                +[](Obj* model,Obj* effect,CustomComponents::Pick3::Transaction::Ref value,
-                    CustomComponents::Pick3::Transaction::Context context,int group) {
-                    if(!value || value->cards.size()!=1) return;
-                    const auto& card=value->cards.front();
-                    const int target=CustomComponents::Pick3::Transaction::LiveTarget(value,0);
-                    if(target<=0) {
-                        CustomComponents::Pick3::TransactionRuntime::AwaitCreation(value,context,group);
-                        CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=EVENT_AWAIT_CREATED_ENTITY effect=%d group=%d seq=%llu",value->effect,group,(unsigned long long)value->sequence);
-                        return;
-                    }
-                    Pick3EffectIdentitySnapshot identity;
-                    identity.sourceId=context.source;identity.targetId=target;
-                    identity.springboardId=context.springboard;identity.effectEntityId=value->effect;
-                    identity.effectGroupId=group;identity.valid=true;identity.selectionSequence=value->sequence;
-                    FireInModel("PickFromThreeTrigger",effect,model,&identity);
-                };
+
         }
         return installed;
+    }
+
+    inline bool InitializePick3AfterVariables(){
+        const bool transactionReady=CustomComponents::Pick3::TransactionRuntime::Initialize();
+#if CUSTOMCOMPONENTS_PF3_TRANSACTION_PIPELINE
+        CustomComponents::Pick3::TransactionRuntime::pipelineReady=transactionReady && CustomComponents::Pick3::Acceptance::Initialize();
+#else
+        CustomComponents::Pick3::TransactionRuntime::pipelineReady=false;
+#endif
+        if(!transactionReady)LOG_ERR("CustomComponents/Pick3/PF3_TX: phase=INIT_FAILED_AFTER_VARIABLES baselinePreserved=1");
+        if(CustomComponents::Pick3::TransactionRuntime::pipelineReady) CustomComponents::Pick3::TransactionRuntime::onStockAccepted =
+            +[](Obj* model,Obj* effect,CustomComponents::Pick3::Transaction::Ref value,
+                CustomComponents::Pick3::Transaction::Context context,int group) {
+                if(!value || value->cards.empty())return;
+                if(!CustomComponents::Pick3::TransactionRuntime::AllTargetsBound(value)) {
+                    CustomComponents::Pick3::TransactionRuntime::AwaitCreation(value,context,group);
+                    CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=EVENT_AWAIT_CREATED_ENTITY effect=%d group=%d seq=%llu",value->effect,group,(unsigned long long)value->sequence);
+                    return;
+                }
+                Pick3EffectIdentitySnapshot identity;
+                // A multi-pick keeps the stock event target. Its full selected set is in the transaction.
+                identity.sourceId=context.source;
+                identity.targetId=value->cards.size()==1
+                    ? CustomComponents::Pick3::Transaction::LiveTarget(value,0) : context.target;
+                identity.springboardId=context.springboard;identity.effectEntityId=value->effect;
+                identity.effectGroupId=group;identity.valid=true;identity.selectionSequence=value->sequence;
+                const bool fired=FireInModel("PickFromThreeTrigger",effect,model,&identity);
+                LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=TRIGGER_FIRE effect=%d group=%d sequence=%llu selected=%zu target=%d result=%d",
+                    value->effect,group,(unsigned long long)value->sequence,value->cards.size(),identity.targetId,int(fired));
+            };
+        LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=POST_VARIABLE_INIT ready=%d createHook=%d",
+            int(CustomComponents::Pick3::TransactionRuntime::pipelineReady),int(CustomComponents::Variables::QueuedTriggerValues::originalCreateEffect!=nullptr));
+        return CustomComponents::Pick3::TransactionRuntime::pipelineReady;
     }
 
 } // namespace CustomComponents::Systems::CustomTriggerSystem

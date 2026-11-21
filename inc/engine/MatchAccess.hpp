@@ -75,7 +75,7 @@ inline bool SetTag(Obj* entity,const std::string& prefix,const std::string& valu
 inline int Roll(Obj* entity,int count) {
     if(count<=0) return -1;if(count==1)return 0;
     auto type=BNM::Class("PvZCards.Core.Utilities","MtRandom");Obj* rng=Provide(Instances(entity),type.GetMonoType());
-    auto next=type.GetMethod("Next",{BNM::Class("System","Int32").GetCompileTimeClass()}).cast<int>();
+    auto next=type.GetMethod("Next",1).cast<int>();
     if(!rng || !next.IsValid()) return -1;int value=next[rng](count);return value>=0 && value<count?value:-1;
 }
 }

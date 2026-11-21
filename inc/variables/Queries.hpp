@@ -1,15 +1,25 @@
 #pragma once
+#include "core/SceneViewContext.hpp"
+#include "diagnostics/HistoryTrace.hpp"
 #include "variables/Resolver.hpp"
+#include "variables/QueuedTriggerValues.hpp"
 #include "queries/InDeckQuery.hpp"
 #include "queries/CardStatQueries.hpp"
 namespace CustomComponents::Variables {
 inline std::vector<Obj*> Owners(Obj* candidate,Obj* context,Obj* query){
     Obj* model=ContextModel(context);const bool bridged=model!=NativeContextModel(context);Obj* effect=Engine::PlacementQueryContext::active.effect;
     int source=bridged?Source(effect):Field(context,"SelfId");if(source<0 && !bridged)source=ContextId(context,"get_SourceId");if(bridged && source<0)return {};
+    if(query && query->klass && query->klass->name && std::string_view(query->klass->name)=="SelfQuery"){
+        Obj* owner=Find(model,source);
+        return owner?std::vector<Obj*>{owner}:std::vector<Obj*>{};
+    }
     if(query){QueryScope scope({model,source,bridged?-1:ContextId(context,"get_TargetId"),bridged?Engine::Match::Id(effect):ContextId(context,"get_EffectEntityId"),nullptr,bridged?nullptr:context});return scope.Find(query);}
     Obj* owner=Find(model,source);return owner?std::vector<Obj*>{owner}:candidate?std::vector<Obj*>{candidate}:std::vector<Obj*>{};
 }
 inline std::optional<Value> StatOrVariable(Obj* model,Obj* owner,std::string_view name){
+    // All trigger markers read their own event-time variable snapshot.
+    // Outside TriggeredEffectResolver, the live model remains authoritative.
+    if(auto frozen=QueuedTriggerValues::Frozen(model,owner,name))return *frozen;
     // Keep existing variable names authoritative; stat identifiers are fallback
     // for names not present in the card's variable table.
     if(auto value=Read(model,owner,name))return value;
@@ -17,13 +27,28 @@ inline std::optional<Value> StatOrVariable(Obj* model,Obj* owner,std::string_vie
     return stat?std::optional<Value>(Value{Kind::Int,{*stat}}):std::nullopt;
 }
 template<class Q> inline bool QueryMatch(Q* q,Obj* candidate,Obj* context,int mode){
-    Obj* model=ContextModel(context);if(!model || !candidate)return false;auto owners=Owners(candidate,context,q->EntityQuery);if(owners.empty())return false;bool all=Text(q->MatchMode,"Any")=="All";
-    for(Obj* owner:owners){bool result=false;
-        if(mode==1)result=Read(model,owner,Text(q->Variable)).has_value();
-        else if(mode==2){auto v=Read(model,owner,Text(q->Variable));if(v){int n=-1;if(v->kind==Kind::Guid || v->kind==Kind::Guids)n=Engine::BoardPlacement::Guid(candidate);else if(v->kind==Kind::Entity || v->kind==Kind::Entities){int id=Engine::Match::Id(candidate);if(Find(model,id)==candidate)n=id;}result=n>=0 && std::find(v->items.begin(),v->items.end(),n)!=v->items.end();}}
+    Core::Performance::Scope queryCost(Core::Performance::Area::VariableQuery,
+        q && q->klass?q->klass->name:"variable-query");
+    Obj* model=ContextModel(context);if(!model || !candidate)return false;auto owners=Owners(candidate,context,q->EntityQuery);
+    if(mode==0 && reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity()){
+        static std::atomic<unsigned> samples{0};
+        if(samples.fetch_add(1)<80)LOG_INFO("CustomComponents/Variables/QUERY_ENTER: candidate=%d self=%d owners=%zu variable=%s expression=%s value=%d",
+            Engine::Match::Id(candidate),Field(context,"SelfId"),owners.size(),Text(q->Variable).c_str(),Text(q->Expression).c_str(),q->Value);
+    }
+    if(owners.empty())return false;bool all=Text(q->MatchMode,"Any")=="All";
+    for(Obj* owner:owners){bool result=false;std::optional<int> left,right;
+        auto read=[&](auto name)->std::optional<Value>{if(auto frozen=QueuedTriggerValues::Frozen(model,owner,name))return *frozen;return StatOrVariable(model,owner,name);};
+        if(mode==1)result=read(Text(q->Variable)).has_value();
+        else if(mode==2){auto v=read(Text(q->Variable));if(v){int n=-1;if(v->kind==Kind::Guid || v->kind==Kind::Guids)n=Engine::BoardPlacement::Guid(candidate);else if(v->kind==Kind::Entity || v->kind==Kind::Entities){int id=Engine::Match::Id(candidate);if(Find(model,id)==candidate)n=id;}result=n>=0 && std::find(v->items.begin(),v->items.end(),n)!=v->items.end();}}
         else {
-            auto lookup=[&](auto name){return StatOrVariable(model,owner,name);};
-            auto value=StatOrVariable(model,owner,Text(q->Variable));
+            // A triggered reward must read the value from *its own* play,
+            // even if a later queued PlayCardEffect already advanced the live
+            // timed counter. Stock may validate the same trigger more than once.
+            auto lookup=[&](auto name)->std::optional<Value>{
+                if(auto frozen=QueuedTriggerValues::Frozen(model,owner,name))return *frozen;
+                return StatOrVariable(model,owner,name);
+            };
+            auto value=lookup(Text(q->Variable));
             auto op=Text(q->ComparisonOperator,"Equal");
             Obj* compareOwner=owner;
             if constexpr(requires(Q* query){query->CompareEntityQuery;}) {
@@ -39,10 +64,19 @@ template<class Q> inline bool QueryMatch(Q* q,Obj* candidate,Obj* context,int mo
                     compareOwner=matches.front();
                 }
             }
-            auto rhsLookup=[&](auto name){return StatOrVariable(model,compareOwner,name);};
-            auto right=Text(q->ValueExpression).empty()?std::optional<int>(q->Value):Expressions::Evaluate(Text(q->ValueExpression),rhsLookup);
+            auto rhsLookup=[&](auto name)->std::optional<Value>{if(auto frozen=QueuedTriggerValues::Frozen(model,compareOwner,name))return *frozen;return StatOrVariable(model,compareOwner,name);};
+            right=Text(q->ValueExpression).empty()?std::optional<int>(q->Value):Expressions::Evaluate(Text(q->ValueExpression),rhsLookup);
             if(Text(q->Expression).empty() && value && value->kind!=Kind::Int){if(right){if(value->Array() && (op=="Contains" || op=="NotContains")){bool contains=std::find(value->items.begin(),value->items.end(),*right)!=value->items.end();result=op=="Contains"?contains:!contains;}else if(!value->Array() && (op=="Equal" || op=="NotEqual"))result=Compare(value->items[0],*right,op);}}
-            else {auto left=Text(q->Expression).empty()?(value?value->Integer():std::nullopt):Expressions::Evaluate(Text(q->Expression),lookup);result=left && right && Compare(*left,*right,op);}}
+            else {left=Text(q->Expression).empty()?(value?value->Integer():std::nullopt):Expressions::Evaluate(Text(q->Expression),lookup);result=left && right && Compare(*left,*right,op);}}
+        if(mode==0 && reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity()){
+            static std::atomic<unsigned> samples{0};
+            if(Diagnostics::HistoryTrace::enabled?Diagnostics::HistoryTrace::Allow():samples.fetch_add(1)<60){
+                const int source=ContextId(context,"get_SourceId"),target=ContextId(context,"get_TargetId");
+                LOG_INFO("CustomComponents/Variables/COMPARISON_TRACE: owner=%d source=%d target=%d variable=%s expression=%s snapshot=%llu condition=%d result=%d leftDefined=%d left=%d rightDefined=%d right=%d",
+                    Engine::Match::Id(owner),source,target,Text(q->Variable).c_str(),Text(q->Expression).c_str(),
+                    QueuedTriggerValues::active?QueuedTriggerValues::active->sequence:0,q->Value,int(result),int(left.has_value()),left.value_or(0),int(right.has_value()),right.value_or(0));
+            }
+        }
         if(result && !all)return true;if(!result && all)return false;
     }return all;
 }

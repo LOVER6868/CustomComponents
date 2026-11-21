@@ -1,6 +1,6 @@
 # Source layout and native hooks
 
-`main.cpp` starts the module and registers its features. Most gameplay code is header-based under `inc/`; the main folders are:
+`main.cpp` contains the Bloom entry point and exported adapters. `inc/startup/Module.hpp` composes initialization through `CustomComponents.hpp`; gameplay stays in its owning domain. Most code is header-based under `inc/`; the main folders are:
 
 | Folder | Responsibility |
 | --- | --- |
@@ -34,6 +34,9 @@ These are the existing owners or extension routes. If a feature needs one of the
 | Play commands and transport | `PlayServices`, `PlayTransport` |
 | Trick eligibility and requirements | `PlayValidation.rules`, `PlayValidation.abilityRules` |
 | Trigger conditions | `TriggerEligibility.rules` |
+| Native/custom trigger dispatch boundaries | `Engine::TriggerDispatch` |
+| Pre-validation variable effects | `Variables::TriggerTiming` using stock validation and effect creation |
+| Board discard view lifetime | `Presentation::DiscardLifecycle` |
 | Pre-payment effect preparation | `EffectGuards` |
 | Effect and trigger insertion | `Engine::EffectQueue`, `Engine::TriggerQueue` |
 | Serialized custom fields and model copies | `CustomFieldBridgeSystem` |

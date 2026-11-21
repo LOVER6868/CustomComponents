@@ -395,8 +395,7 @@ inline void StockHighlightUpdateObserved(Obj* self, Obj* allCards, const void* m
     if (stockHighlightObservations < 300)
         CC_SELECTION_DIAG("CustomComponents/Pick3/HAND_HIGHLIGHTS: phase=STOCK_UPDATE_EXIT command=%p", self);
 }
-inline Execute originalStockHighlightExecute = nullptr;
-inline void StockHighlightExecuteObserved(Obj* self, const void* method) {
+inline void StockHighlightExecuteBefore(Obj* self) {
     if (stockHighlightObservations < 240) {
         ++stockHighlightObservations;
         if (lastRefreshEffect >= 0 && stockHighlightSinceRefresh < 3) {
@@ -406,7 +405,8 @@ inline void StockHighlightExecuteObserved(Obj* self, const void* method) {
         CC_SELECTION_DIAG("CustomComponents/Pick3/HAND_HIGHLIGHTS: phase=STOCK_EXECUTE_ENTER command=%p sample=%u",
                  self, stockHighlightObservations);
     }
-    if (originalStockHighlightExecute) originalStockHighlightExecute(self, method);
+}
+inline void StockHighlightExecuteAfter(Obj* self) {
     if (stockHighlightObservations <= 240)
         CC_SELECTION_DIAG("CustomComponents/Pick3/HAND_HIGHLIGHTS: phase=STOCK_EXECUTE_EXIT command=%p sample=%u",
                  self, stockHighlightObservations);
@@ -472,7 +472,7 @@ inline void PumpHandHighlights(Obj* holder) {
     pendingHandHighlights=false;
     const auto ex=BNM::TryInvoke([&] {executeHighlightPlayableCards[command]();});
     if (ex.IsValid()) {
-        LOG_ERR("CustomComponents/Pick3/HAND_HIGHLIGHTS: stock Execute exception: %s", ex.Message().c_str());
+        LOG_ERR("CustomComponents/Pick3/HAND_HIGHLIGHTS: stock Execute exception: %s", ex.GetException()?"managed exception":"unknown");
     } else {
         ++handHighlightRefreshCount;
         if (NetworkTrace::Mode())

@@ -234,7 +234,9 @@
             auto selection=RT::TakeTriggerData(modelToken,data,effectEntity,sourceId,RT::ReadContext(context));
             TX::Scoped selectionScope(selection,effectEntity,RT::IntAt(context,0x18));
             if(selection) LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=LISTENER_EXECUTION_BOUND listener=%d seq=%llu",effectEntity,(unsigned long long)selection->sequence);
-            originalResolver(self, effect, method);
+            CustomComponents::Variables::QueuedTriggerValues::DuringResolve(effect,[&]{
+                originalResolver(self,effect,method);
+            });
         }
 
         if (!model || !queue || cardId < 0) return;
@@ -264,7 +266,8 @@
     // TriggeredAbilityEnd handlers. The game dump identifies the methods as
     // Core.Systems.{TriggeredAbilityStart,Buff,TriggeredAbilityEnd}System.
     // Their processing is distinct from the collection's CompleteEffect and
-    // from frontend animation completion. All probes are read-only.
+    // from frontend animation completion. Probes are read-only; pre-buff
+    // observers are the separate gameplay mutation phase before stock.
     using StockHandlerFn = void (*)(void*, Obj*, const void*);
     inline StockHandlerFn originalStartHandler = nullptr;
     inline StockHandlerFn originalBuffHandler = nullptr;
@@ -400,6 +403,9 @@
         Obj* model = self && buffSystemModel.IsValid()
             ? buffSystemModel[static_cast<Obj*>(self)].Get() : nullptr;
         const int count = BeginHandlerProbes("BUFF", model, effect, probes);
+        // The single BuffSystem detour owns both pre-stock mutations and
+        // post-stock observation. Never install another BuffSystem hook.
+        Engine::Events::beforeBuff.Notify({static_cast<Obj*>(self),model,effect});
         ZoneTriggeredAbilityPresentationSystem::AuditOwnedEffect(0, self, effect, [&] {
             originalBuffHandler(self, effect, method);
         });

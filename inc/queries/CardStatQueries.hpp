@@ -21,12 +21,13 @@ inline bool Compare(int left,int right,Str* op){return Variables::Compare(left,r
 // Example: Stat="BaseAttack", OtherStat="BaseHealth", OtherQuery=SelfQuery.
 // If OtherStat is omitted, compare against Value (a literal integer).
 struct StatComparisonQuery:Obj{
-    Str* Stat=nullptr;Str* OtherStat=nullptr;Str* ComparisonOperator=nullptr;
+    Str* Stat=nullptr;Str* OtherStat=nullptr;Str* ComparisonOperator=nullptr;Str* OtherEntity=nullptr;
     int Value=0;Obj* OtherQuery=nullptr;
     BNM_CustomClass(StatComparisonQuery,BNM::CompileTimeClassBuilder("PvZCards.Engine.Queries","StatComparisonQuery","EngineLib.dll").Build(),BNM::CompileTimeClassBuilder("PvZCards.Engine.Queries","InHandQuery","EngineLib.dll").Build(),{});
     BNM_CustomField(Stat,BNM::Defaults::Get<Str*>(),"Stat");
     BNM_CustomField(OtherStat,BNM::Defaults::Get<Str*>(),"OtherStat");
     BNM_CustomField(ComparisonOperator,BNM::Defaults::Get<Str*>(),"ComparisonOperator");
+    BNM_CustomField(OtherEntity,BNM::Defaults::Get<Str*>(),"OtherEntity");
     BNM_CustomField(Value,BNM::Defaults::Get<int>(),"Value");
     BNM_CustomField(OtherQuery,QueryType(),"OtherQuery");
     void Constructor(){auto ctor=BNM::Class("PvZCards.Engine.Queries","InHandQuery").GetMethod(".ctor",0).cast<void>();if(ctor.IsValid())ctor[this]();}
@@ -36,8 +37,27 @@ struct StatComparisonQuery:Obj{
         std::optional<int> right=Value;
         if(OtherStat && !OtherStat->str().empty()){
             Obj* other=candidate;
-            if(OtherQuery){
-                Variables::QueryScope scope({Variables::ContextModel(context),-1,-1,-1,nullptr,context});
+            const std::string binding=Text(OtherEntity);
+            if(binding=="TriggerTarget" ||
+               (OtherQuery && OtherQuery->klass && OtherQuery->klass->name &&
+                std::string_view(OtherQuery->klass->name)=="TargetQuery")) {
+                // A deck-candidate query runs with a live trigger target (the
+                // Plant Shell moved), not a TargetQuery selection result.
+                // This explicit serialized binding does not depend on the
+                // CustomFieldBridge's scalar-only nested-query support.
+                Obj* model=Variables::ContextModel(context);
+                const int target=Variables::ContextId(context,"get_TargetId");
+                other=model && target>=0?Engine::EntityAccess::Find(model,target):nullptr;
+                if(!other){
+                    static std::atomic<unsigned> errors{0};
+                    if(errors.fetch_add(1)<32)LOG_INFO("CustomComponents/StatComparison/NO_TRIGGER_TARGET: candidate=%d target=%d",Engine::Match::Id(candidate),target);
+                    return false;
+                }
+            } else if(OtherQuery){
+                Variables::QueryScope scope({Variables::ContextModel(context),
+                    Variables::ContextId(context,"get_SourceId"),
+                    Variables::ContextId(context,"get_TargetId"),
+                    Variables::ContextId(context,"get_EffectEntityId"),nullptr,context});
                 auto owners=scope.Find(OtherQuery);
                 if(owners.size()!=1)return false;
                 other=owners.front();
@@ -49,11 +69,11 @@ struct StatComparisonQuery:Obj{
     void DeepCopyFrom(Obj* source,Obj* instances){
         auto* s=reinterpret_cast<StatComparisonQuery*>(source);
         Reference(this,&Stat,s?s->Stat:nullptr);Reference(this,&OtherStat,s?s->OtherStat:nullptr);
-        Reference(this,&ComparisonOperator,s?s->ComparisonOperator:nullptr);Value=s?s->Value:0;
+        Reference(this,&ComparisonOperator,s?s->ComparisonOperator:nullptr);Reference(this,&OtherEntity,s?s->OtherEntity:nullptr);Value=s?s->Value:0;
         Core::ManagedQuery::CopyOwnedField(this,BNM::Class(this).GetField("OtherQuery").cast<Obj*>(),s?s->OtherQuery:nullptr,instances);
     }
     void HandleReturnToPool(Obj* instances){
-        Reference(this,&Stat,nullptr);Reference(this,&OtherStat,nullptr);Reference(this,&ComparisonOperator,nullptr);Value=0;
+        Reference(this,&Stat,nullptr);Reference(this,&OtherStat,nullptr);Reference(this,&ComparisonOperator,nullptr);Reference(this,&OtherEntity,nullptr);Value=0;
         Core::ManagedQuery::ClearOwnedField(this,BNM::Class(this).GetField("OtherQuery").cast<Obj*>(),instances);
     }
     BNM_CustomMethod(Constructor,false,BNM::Defaults::Get<void>(),".ctor");
@@ -90,7 +110,7 @@ inline bool Initialize(){
     auto modified=BNM::Class("PvZCards.Engine.Queries","StatModifierQuery");
     return PatchInDeckQueryDispatch(comparison,base,"StatComparisonQuery") && Core::ComponentLifecycle::Patch(comparison,base) &&
         RegisterQuery({"StatComparisonQuery","PvZCards.Engine.Queries.StatComparisonQuery","PvZCards.Engine.Queries","StatComparisonQuery","PvZCards.Engine.Queries","InHandQuery"}) &&
-        Systems::CustomFieldBridgeSystem::Register("PvZCards.Engine.Queries","StatComparisonQuery","PvZCards.Engine.Queries","InHandQuery",{{"Stat",K::String},{"OtherStat",K::String},{"ComparisonOperator",K::String},{"Value",K::Int32}},false) &&
+        Systems::CustomFieldBridgeSystem::Register("PvZCards.Engine.Queries","StatComparisonQuery","PvZCards.Engine.Queries","InHandQuery",{{"Stat",K::String},{"OtherStat",K::String},{"ComparisonOperator",K::String},{"OtherEntity",K::String},{"Value",K::Int32}},false) &&
         PatchInDeckQueryDispatch(modified,base,"StatModifierQuery") && Core::ComponentLifecycle::Patch(modified,base) &&
         RegisterQuery({"StatModifierQuery","PvZCards.Engine.Queries.StatModifierQuery","PvZCards.Engine.Queries","StatModifierQuery","PvZCards.Engine.Queries","InHandQuery"}) &&
         Systems::CustomFieldBridgeSystem::Register("PvZCards.Engine.Queries","StatModifierQuery","PvZCards.Engine.Queries","InHandQuery",{{"Stat",K::String},{"Mode",K::String}},false);

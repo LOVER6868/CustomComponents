@@ -1,6 +1,6 @@
 #pragma once
 namespace CustomComponents::Systems::ReturnToLaneTargeting {
-struct Context {void* finder=nullptr;void* model=nullptr;int player=-1;};
+struct Context {void* finder=nullptr;void* model=nullptr;int player=-1;void* effect=nullptr;};
 inline thread_local Context active;
 class Scope {
     Context previous=active;

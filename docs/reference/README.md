@@ -9,6 +9,7 @@ The short guides in `docs/` explain how to use the module. These pages are for t
 | Variable storage, expression and continuous-rule limits | [Variable details](variable-details.md) |
 | Base/current stats and tags/subtypes | [Card stats and metadata](card-stats.md) |
 | Healing by damage taken, overhealing and swapping | [Healing and swapping](healing-and-swap.md) |
+| Lane targeting, damage abilities and cost durations | [Lane and damage](lane-and-damage.md) |
 | Deck, discard, creation and return effects | [Zone effects](zone-effects.md) |
 | Trick play restrictions | [Play requirements](play-requirements.md) |
 | UI, heralds and card frames | [Presentation](presentation.md) |
@@ -20,3 +21,5 @@ The short guides in `docs/` explain how to use the module. These pages are for t
 The [new-component checklist](new-component-checklist.md) covers the source-side steps for adding a feature.
 
 Actual, complete insertion shapes live under [examples](../../examples/README.md).
+
+For stock redirectors used by custom cards and environments, see [Damage redirection](damage-redirection.md).

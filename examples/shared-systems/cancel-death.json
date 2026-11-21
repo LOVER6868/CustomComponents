@@ -1,0 +1,6 @@
+{
+  "$type": "PvZCards.Engine.Components.CancelDeathEffectDescriptor, EngineLib",
+  "$data": {
+    "Health": 1
+  }
+}

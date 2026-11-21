@@ -7,3 +7,5 @@ The main sections cover module enablement (`General`), PickFromThree selection a
 Custom frame/stat icons are configured separately in `[StatIcons]` and require PNG files at the paths you choose. See [presentation](presentation.md) and [the INI example](../../examples/configuration/stat-icons.ini).
 
 For a new diagnostic option, prefer the shared settings service rather than another independent read of `config.ini`.
+
+`[CombatPresentation] RotateFighters=true` controls selected-pair facing only. Combat remains enabled; same-lane and Only/all lane attacks do not rotate.

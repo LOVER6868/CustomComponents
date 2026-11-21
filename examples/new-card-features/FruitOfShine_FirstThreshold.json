@@ -1,0 +1,486 @@
+{
+  "entity": {
+    "components": [
+      {
+        "$type": "PvZCards.Engine.Components.Card, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "Guid": 739
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Components.Attack, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "AttackValue": {
+            "BaseValue": 2
+          }
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Components.Health, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "MaxHealth": {
+            "BaseValue": 3
+          },
+          "CurrentDamage": 0
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Components.SunCost, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "SunCostValue": {
+            "BaseValue": 2
+          }
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Components.Plants, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {}
+      },
+      {
+        "$type": "PvZCards.Engine.Components.Rarity, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "Value": "R1"
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Components.Subtypes, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "subtypes": [
+            27
+          ]
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Components.Tags, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "tags": [
+            "anyplantfighter",
+            "notpineclone",
+            "randomplantcard",
+            "cost6orless"
+          ]
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Components.Charge, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "Counters": {
+            "IsPersistent": true,
+            "Counters": [
+              {
+                "SourceId": -1,
+                "Duration": 0,
+                "Value": 20
+              }
+            ]
+          }
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Components.Variables, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "Values": [
+            {
+              "Name": "FruitOfShineExtraAttackUsed",
+              "Type": "Int",
+              "Value": 0
+            }
+          ]
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Components.EffectEntitiesDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "entities": [
+            {
+              "components": [
+                {
+                  "$type": "PvZCards.Engine.Components.EffectEntityGrouping, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "AbilityGroupId": 1
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.BuffTrigger, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {}
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.TriggerTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {
+                        "queries": [
+                          {
+                            "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          },
+                          {
+                            "$type": "PvZCards.Engine.Queries.AttackComparisonQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {
+                              "ComparisonOperator": "GreaterOrEqual",
+                              "AttackValue": 4
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.SelfEntityFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {
+                        "queries": [
+                          {
+                            "$type": "PvZCards.Engine.Queries.WillTriggerEffectsQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          },
+                          {
+                            "$type": "PvZCards.Engine.Queries.IsAliveQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.PrimaryTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "SelectionType": "All",
+                    "NumTargets": 0,
+                    "TargetScopeType": "All",
+                    "TargetScopeSortValue": "None",
+                    "TargetScopeSortMethod": "None",
+                    "AdditionalTargetType": "None",
+                    "AdditionalTargetQuery": null,
+                    "OnlyApplyEffectsOnAdditionalTargets": false,
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {}
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.SetVariableEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "Owner": "Self",
+                    "Variable": "FruitOfShineExtraAttackUsed",
+                    "Operation": "Add",
+                    "Value": 1,
+                    "Duration": "Permanent",
+                    "ExecutionTiming": "BeforeTriggers"
+                  }
+                }
+              ]
+            },
+            {
+              "components": [
+                {
+                  "$type": "PvZCards.Engine.Components.EffectEntityGrouping, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "AbilityGroupId": 0
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.BuffTrigger, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {}
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.TriggerTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {
+                        "queries": [
+                          {
+                            "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          },
+                          {
+                            "$type": "PvZCards.Engine.Queries.AttackComparisonQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {
+                              "ComparisonOperator": "GreaterOrEqual",
+                              "AttackValue": 4
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.SelfEntityFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {
+                        "queries": [
+                          {
+                            "$type": "PvZCards.Engine.Queries.WillTriggerEffectsQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          },
+                          {
+                            "$type": "PvZCards.Engine.Queries.IsAliveQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          },
+                          {
+                            "$type": "PvZCards.Engine.Queries.VariableComparisonQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {
+                              "EntityQuery": {
+                                "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                                "$data": {}
+                              },
+                              "Variable": "FruitOfShineExtraAttackUsed",
+                              "ComparisonOperator": "Equal",
+                              "Value": 1
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.PrimaryTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "SelectionType": "All",
+                    "NumTargets": 0,
+                    "TargetScopeType": "All",
+                    "TargetScopeSortValue": "None",
+                    "TargetScopeSortMethod": "None",
+                    "AdditionalTargetType": "None",
+                    "AdditionalTargetQuery": null,
+                    "OnlyApplyEffectsOnAdditionalTargets": false,
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {}
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.ExtraAttackEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {}
+                }
+              ]
+            },
+            {
+              "components": [
+                {
+                  "$type": "PvZCards.Engine.Components.EffectEntityGrouping, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "AbilityGroupId": 2
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.PlayTrigger, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {}
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.TriggerTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {
+                        "queries": [
+                          {
+                            "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          },
+                          {
+                            "$type": "PvZCards.Engine.Queries.AttackComparisonQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {
+                              "ComparisonOperator": "GreaterOrEqual",
+                              "AttackValue": 4
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.SelfEntityFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {
+                        "queries": [
+                          {
+                            "$type": "PvZCards.Engine.Queries.WillTriggerEffectsQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          },
+                          {
+                            "$type": "PvZCards.Engine.Queries.IsAliveQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.PrimaryTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "SelectionType": "All",
+                    "NumTargets": 0,
+                    "TargetScopeType": "All",
+                    "TargetScopeSortValue": "None",
+                    "TargetScopeSortMethod": "None",
+                    "AdditionalTargetType": "None",
+                    "AdditionalTargetQuery": null,
+                    "OnlyApplyEffectsOnAdditionalTargets": false,
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {}
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.SetVariableEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "Owner": "Self",
+                    "Variable": "FruitOfShineExtraAttackUsed",
+                    "Operation": "Add",
+                    "Value": 1,
+                    "Duration": "Permanent",
+                    "ExecutionTiming": "BeforeTriggers"
+                  }
+                }
+              ]
+            },
+            {
+              "components": [
+                {
+                  "$type": "PvZCards.Engine.Components.EffectEntityGrouping, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "AbilityGroupId": 0
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.PlayTrigger, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {}
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.TriggerTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {
+                        "queries": [
+                          {
+                            "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          },
+                          {
+                            "$type": "PvZCards.Engine.Queries.AttackComparisonQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {
+                              "ComparisonOperator": "GreaterOrEqual",
+                              "AttackValue": 4
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.SelfEntityFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {
+                        "queries": [
+                          {
+                            "$type": "PvZCards.Engine.Queries.WillTriggerEffectsQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          },
+                          {
+                            "$type": "PvZCards.Engine.Queries.IsAliveQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          },
+                          {
+                            "$type": "PvZCards.Engine.Queries.VariableComparisonQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {
+                              "EntityQuery": {
+                                "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                                "$data": {}
+                              },
+                              "Variable": "FruitOfShineExtraAttackUsed",
+                              "ComparisonOperator": "Equal",
+                              "Value": 1
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.PrimaryTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "SelectionType": "All",
+                    "NumTargets": 0,
+                    "TargetScopeType": "All",
+                    "TargetScopeSortValue": "None",
+                    "TargetScopeSortMethod": "None",
+                    "AdditionalTargetType": "None",
+                    "AdditionalTargetQuery": null,
+                    "OnlyApplyEffectsOnAdditionalTargets": false,
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {}
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.ExtraAttackEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {}
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "prefabName": "Fruit of Shine",
+  "baseId": "Base",
+  "color": "MegaGro",
+  "set": "Set5",
+  "rarity": 0,
+  "setAndRarityKey": "Familiar_Uncommon",
+  "craftingBuy": 50,
+  "craftingSell": 15,
+  "displayHealth": 3,
+  "displayAttack": 2,
+  "displaySunCost": 2,
+  "faction": "Plants",
+  "ignoreDeckLimit": false,
+  "isPower": false,
+  "isPrimaryPower": false,
+  "isFighter": true,
+  "isEnv": false,
+  "isAquatic": false,
+  "isTeamup": false,
+  "subtypes": [
+    "Fruit"
+  ],
+  "tags": [
+    "anyplantfighter",
+    "notpineclone",
+    "randomplantcard",
+    "cost6orless"
+  ],
+  "subtype_affinities": [],
+  "subtype_affinity_weights": [],
+  "tag_affinities": [],
+  "tag_affinity_weights": [],
+  "card_affinities": [],
+  "card_affinity_weights": [],
+  "usable": true,
+  "special_abilities": []
+}

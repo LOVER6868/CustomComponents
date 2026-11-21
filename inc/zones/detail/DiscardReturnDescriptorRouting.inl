@@ -8,6 +8,7 @@
     ) {
         auto* descriptor = static_cast<Obj*>(self);
         Obj* converted=nullptr;if(Engine::DeckCreation::Convert(descriptor,instances,effectEntity,converted))return converted;
+        if(Effects::SwapPosition::Convert(descriptor,instances,effectEntity,converted))return converted;
         if (TypeName(descriptor) != "ReturnFromDiscardPileToDeckEffectDescriptor") {
             return originalCreateDeckDescriptorToEffect(self, instances, effectEntity, method);
         }
@@ -34,6 +35,7 @@
         if constexpr (false) CC_DIAG("CustomComponents/LANE-DIAG: DTE ENTER self=%p instances=%p effectEntity=%p method=%p", self, instances, effectEntity, method);
         auto* descriptor = static_cast<Obj*>(self);
         Obj* converted=nullptr;if(Engine::DeckCreation::Convert(descriptor,instances,effectEntity,converted))return converted;
+        if(Effects::SwapPosition::Convert(descriptor,instances,effectEntity,converted))return converted;
         if constexpr (false) CC_DIAG("CustomComponents/LANE-DIAG: DTE before TypeName descriptor=%p", descriptor);
         const std::string descriptorType = TypeName(descriptor);
         if constexpr (false) CC_DIAG("CustomComponents/LANE-DIAG: DTE type=%s", descriptorType.c_str());
@@ -48,6 +50,14 @@
         LOG_INFO("CustomComponents/Pick3/PICK_FROM_THREE_EFFECT_HANDOFF: phase=DESCRIPTOR_TO_EFFECT descriptor=%p effectEntity=%p instances=%p",
                  (void*)descriptor, (void*)effectEntity, (void*)instances);
         Obj* runtime = Components::ReturnFromDiscardPileToLaneEffectDescriptor::CreateRuntime(instances);
+        if(descriptorType=="PlayFromDeckToLaneEffectDescriptor" && runtime){
+            // This system validates physical membership or fallback creation
+            // at execution. A routing placeholder intentionally cannot satisfy
+            // the stock InDeckQuery a second time.
+            auto required=BNM::Class("PvZCards.Engine","Effect").GetField("RequiresTargetValidation").cast<bool>();
+            if(required.IsValid())required[runtime].Set(false);
+            LOG_INFO("CustomComponents/PlayFromDeckToLane: runtime=%p validation=custom-execution",runtime);
+        }
         // Show whether the effect was instantiated with a real discarded-card
         // target or still carries the temporary trick-play lane. This is
         // intentionally observational; the actual engine owns both fields.

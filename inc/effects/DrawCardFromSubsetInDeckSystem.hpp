@@ -1,6 +1,7 @@
 #include "engine/EffectRegistration.hpp"
 #include "engine/SubsetSelection.hpp"
 #include "core/HookRegistry.hpp"
+#include "integration/ReplayDrawObserver.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 
@@ -353,21 +354,18 @@ namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem {
         // one argument. Selecting only by parameter count can hook
         // ProcessEffect(DrawCardAbilityEffect), which never sees our custom
         // DrawCardFromSubsetInDeckEffect. Select the subset overload explicitly.
-        auto processAbility = drawAbilitySystem.GetMethod(
-            "ProcessEffect",
-            {
-                BNM::CompileTimeClassBuilder(
-                    "PvZCards.Engine.Effects",
-                    "DrawCardFromSubsetAbilityEffect",
-                    "EngineLib.dll"
-                ).Build()
+        BNM::Method<void> processAbility;
+        auto abilityEffectType=BNM::Class("PvZCards.Engine.Effects","DrawCardFromSubsetAbilityEffect");
+        for(auto candidate:drawAbilitySystem.GetMethods())
+            if(auto* info=candidate.GetInfo();info&&std::string_view(info->name)=="ProcessEffect"&&info->parameters_count==1&&BNM::Class(info->parameters[0]).GetClass()==abilityEffectType.GetClass()){
+                processAbility=candidate.cast<void>();
+                break;
             }
-        );
         auto processSubset = subsetSystem.GetMethod("ProcessEffect", 1);
         auto processDraw = drawSystem.GetMethod("ProcessEffect", 1);
         auto pickRandomGuid = finder.GetMethod("PickRandomGuid", 1);
         auto registerHandlers = drawAbilitySystem.GetMethod("RegisterEffectHandlers", 1);
-        finderFindCard = finder.GetMethod("FindCard", 2);
+        finderFindCard = finder.GetMethod("FindCard", {std::string_view("subsetQuery"),std::string_view("effect")});
         drawCardsFromDeck = drawAbilitySystem.GetMethod("DrawCardsFromDeck", 3);
         effectCancel = effect.GetMethod("Cancel", 0);
 

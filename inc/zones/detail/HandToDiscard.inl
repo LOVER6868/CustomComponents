@@ -76,8 +76,9 @@
                 : -1;
 
         // Custom descriptors only; preserve stock effect routing.
-        const bool customHandRoute = effect && moveToDiscardEffectPileId.IsValid() &&
-            moveToDiscardEffectPileId[effect].Get() == -1;
+        // Stock destination resolution runs before this handler and replaces
+        // the descriptor's -1 sentinel. Route by actual physical membership.
+        const bool customHandRoute = effect && model && CardIsInAnyHand(model,cardId);
 
         if (customHandRoute) {
             const auto before = SnapshotHandDiscard(model, cardId);
@@ -150,6 +151,14 @@
                 LOG_ERR("CustomComponents/DiscardFromHand: non-atomic state; no speculative rollback attempted");
                 return;
             }
+            if(reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity())
+                LOG_INFO("CustomComponents/DiscardFromHand/TRANSFER: card=%d hand=%d pile=%d handCount=%d pileCount=%d success=1",cardId,before.handId,before.pileId,after.handCount,after.pileCount);
+            if (reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity())
+                Integration::ReplayEventBridge::Publish("discard_hand_to_pile", {
+                    {"entityId",cardId},{"ownerId",before.ownerId},
+                    {"handId",before.handId},{"pileId",before.pileId},
+                    {"stockRoute",0},{"verifiedTransfer",1}});
+            Zones::MarkedForDiscard::Mark(FindEntity(model,cardId));
 
             // Set origin on the SAME live entity while it is verifiably in pile.
             // This must happen before the custom discard trigger is fired.
@@ -161,16 +170,47 @@
             if (!markedHand || actualSource != static_cast<int>(DiscardedSystem::Source::Hand)) {
                 LOG_ERR("CustomComponents/DiscardFromHand/DISCARDED: HAND SOURCE MARK FAILED card=%d; suppress trigger", cardId);
                 // Zone transfer already succeeded. Do not attempt to reverse it.
-                DiscardFromHandPresentationSystem::Queue(before.handId, cardId, reinterpret_cast<std::uintptr_t>(model));
+                DiscardFromHandPresentationSystem::Queue(before.handId,cardId,reinterpret_cast<std::uintptr_t>(model));
                 return;
             }
 
-            // Presentation is deliberately NOT synthesized: no generic stock
-            // Hand->Discard record was verified in dump.cs. The frontend can
-            // remain visually stale until a dedicated record/animation exists.
-            CC_DIAG("CustomComponents/DiscardFromHand: MODEL SUCCESS card=%d owner=%d hand=%d pile=%d; FRONTEND RECORD NOT YET IMPLEMENTED",
+            // The custom record below owns presentation of this committed transfer.
+            CC_DIAG("CustomComponents/DiscardFromHand: MODEL SUCCESS card=%d owner=%d hand=%d pile=%d; recording frontend transfer",
                 cardId, before.ownerId, before.handId, before.pileId);
-            DiscardFromHandPresentationSystem::Queue(before.handId, cardId, reinterpret_cast<std::uintptr_t>(model));
+            // A hand discard is part of turn-end effect processing. Do
+            // not remove its hand view until the presentation queue is idle.
+            // The frontend also releases ordinary discard tickets after stock presentation.
+            // Native custom record is the authoritative hand->pile mutation
+            // evidence. Its frontend processor, not the simulation hook, queues
+            // the card-bound discard animation once stock history reaches it.
+            if(reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity()) {
+                Engine::CustomRecords::Record r{};
+                r.model=reinterpret_cast<std::uintptr_t>(model);
+                r.kind=Engine::CustomRecords::Kind::DiscardOutsidePlay;
+                r.stage=Engine::CustomRecords::Stage::Committed;
+                r.from=Engine::CustomRecords::Origin::Hand;
+                r.to=Engine::CustomRecords::Origin::DiscardPile;
+                r.entityId=cardId;r.ownerId=before.ownerId;
+                r.fromZoneId=before.handId;r.toZoneId=before.pileId;
+                r.effectId=effect && effectEffectEntityId.IsValid()?effectEffectEntityId[effect].Get():-1;
+                // Match::Provide can fail in some simulation injection scopes;
+                // -1 is a fail-safe stock-history-caught-up presentation anchor.
+                Obj* card=FindEntity(model,cardId);
+                Obj* instances=card?Engine::Match::Instances(card):nullptr;
+                Obj* history=instances?Engine::Match::Provide(instances,
+                    BNM::Class("PvZCards.Engine","History").GetMonoType()):nullptr;
+                static auto recs=BNM::Class("PvZCards.Engine","History").GetField("Records")
+                    .cast<BNM::Structures::Mono::List<Obj*>*>();
+                auto* list=history && recs.IsValid()?recs[history].Get():nullptr;
+                if(list && list->size>=0)r.stockHistoryAnchor=list->size;
+                r.history=reinterpret_cast<std::uintptr_t>(history);
+                r.modelToken=Core::ModelRegistry::Identify(model,true);
+                const auto serial=Engine::CustomRecords::Commit(r);
+                if(!serial) {
+                    LOG_ERR("CustomComponents/Records/HAND_DISCARD: required history commit failed card=%d",cardId);
+                } else LOG_INFO("CustomComponents/Records/HAND_DISCARD: committed serial=%llu card=%d historyAnchor=%d",(unsigned long long)serial,cardId,r.stockHistoryAnchor);
+            }
+
             CustomTriggerSystem::FireDiscardOutsidePlay(effect);
             return;
         }
@@ -195,6 +235,10 @@
         }
         CC_DIAG("CustomComponents/DiscardOutsidePlayTrigger: HAND EntityId=%d PlayerId=%d DiscardPileId=%d",
             cardId, ctx.playerId, ctx.discardPileId);
+        if (reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity())
+            Integration::ReplayEventBridge::Publish("discard_hand_to_pile", {
+                {"entityId",cardId},{"ownerId",ctx.playerId},
+                {"pileId",ctx.discardPileId},{"stockRoute",1},{"verifiedTransfer",1}});
         CustomTriggerSystem::FireDiscardOutsidePlay(effect);
     }
 

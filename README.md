@@ -17,3 +17,5 @@ Stock component order still matters. A typical effect entity contains its groupi
 Keep PvP clients on the same native module and card data. See [compatibility notes](docs/reference/compatibility.md) before testing online.
 
 [Changelog](CHANGELOG.md) · [Build settings](docs/reference/configuration.md) · [Source layout](docs/reference/architecture.md)
+
+- [PrimaryTargetsQuery (saved primary selections)](docs/PRIMARY_TARGETS_QUERY.md)

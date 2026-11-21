@@ -1,5 +1,6 @@
 #include "diagnostics/DiagnosticLogging.hpp"
 #pragma once
+#include "integration/ReplayEventBridge.hpp"
 // Private implementation module. Include PickFromThreeSubmission.hpp, not this file.
 namespace CustomComponents::Pick3::Submission {
 inline void PumpDependencies() {
@@ -12,8 +13,8 @@ inline void PumpDependencies() {
     auto binderEx = BNM::TryInvoke([&]{ injection = getInjectionBinder[binder](); });
     if (binderEx.IsValid()) {
         if (dependencyPollFrame <= 300)
-            LOG_ERR("CustomComponents/Pick3/SUBMIT: DI_BINDER_EXCEPTION class=%s message=%s",
-                binderEx.ClassName().c_str(), binderEx.Message().c_str());
+            LOG_ERR("CustomComponents/Pick3/SUBMIT: DI_BINDER_EXCEPTION ptr=%p",
+                static_cast<void*>(binderEx.GetException()));
         return;
     }
     if (!injection) return;
@@ -23,8 +24,8 @@ inline void PumpDependencies() {
     });
     if (serviceEx.IsValid()) {
         if (dependencyPollFrame <= 300)
-            LOG_ERR("CustomComponents/Pick3/SUBMIT: DI_LOOKUP_EXCEPTION class=%s message=%s",
-                serviceEx.ClassName().c_str(), serviceEx.Message().c_str());
+            LOG_ERR("CustomComponents/Pick3/SUBMIT: DI_LOOKUP_EXCEPTION ptr=%p",
+                static_cast<void*>(serviceEx.GetException()));
         return;
     }
     if (service) CaptureService(service, "GameInputStateHolder.CommandBinder.DI");
@@ -88,6 +89,21 @@ inline void LogStockCommandLifecycle(const char* step, Obj* self) {
 }
 static void StockTargetSuccess(Obj* self, const void* method) {
     ++stockTargetSuccesses;
+    // Observe accepted frontend choices on the existing hook. Automatic
+    // fighter selection does not enter this command, and PF3 has its own
+    // selection records for synthesized stock handoffs.
+    if(self&&!overlayCapturesInput&&!TargetBridge::HasQueuedChoice()){
+        auto gesture=commandClass.GetField("<EntityGestureData>k__BackingField").cast<Obj*>();
+        auto* data=gesture.IsValid()?gesture[self].Get():nullptr;
+        if(data){
+            auto target=BNM::Class(data->klass).GetField("TargetEntity").cast<int>();
+            auto order=BNM::Class(data->klass).GetField("OrderInTargetLocation").cast<int>();
+            if(target.IsValid()&&target[data].Get()>=0)
+                CustomComponents::Integration::ReplayEventBridge::Publish("manual_target_accepted",{
+                    {"targetId",target[data].Get()},{"orderInLane",order.IsValid()?order[data].Get():-1}
+                });
+        }
+    }
     LogStockCommandLifecycle("SUCCESS_ENTER", self);
     if (originalStockTargetSuccess) originalStockTargetSuccess(self, method);
     LogStockCommandLifecycle("SUCCESS_RETURN", self);
@@ -154,14 +170,11 @@ static void PlayCardExecute(Obj* self, const void* method) {
     }
     TracePostSubmitInput("PlayCardCommand.Execute", false);
     Obj* gesture = self && trickGestureField.IsValid() ? trickGestureField[self].Get() : nullptr;
-    int src = -1, target = -1, order = -1, handled = -1;
-    if (gesture) {
-        const auto* bytes = reinterpret_cast<const std::uint8_t*>(gesture);
-        src = *reinterpret_cast<const int*>(bytes + 0x10);
-        target = *reinterpret_cast<const int*>(bytes + 0x14);
-        handled = int(*(bytes + 0x18) != 0);
-        order = *reinterpret_cast<const int*>(bytes + 0x1C);
-    }
+    auto sourceField=trickGestureSource,targetField=trickGestureTarget,orderField=trickGestureOrder;auto handledField=trickGestureHandled;
+    int src=gesture&&sourceField.IsValid()?sourceField[gesture].Get():-1;
+    int target=gesture&&targetField.IsValid()?targetField[gesture].Get():-1;
+    int order=gesture&&orderField.IsValid()?orderField[gesture].Get():-1;
+    int handled=gesture&&handledField.IsValid()?int(handledField[gesture].Get()):-1;
     // Narrow correction of the initial drop gesture, before stock Execute builds
     // its Play. No SelectTargetCommand, no picker/lane selection, no broad bypass.
     if (kDeferredPick3TrialEnabled && src>=0 &&
@@ -219,7 +232,7 @@ static void PlayCardExecute(Obj* self, const void* method) {
                 src,TrickGenerationGuid(src),provenSole,deferredDropZone,trickActiveDragSeq);
         if(target!=outboundTarget) {
             const int oldTarget=target;
-            *reinterpret_cast<int*>(reinterpret_cast<std::uint8_t*>(gesture)+0x14)=outboundTarget;
+            if(targetField.IsValid())targetField[gesture].Set(outboundTarget);
             target=outboundTarget;
             CC_SELECTION_DIAG("CustomComponents/Pick3/DEFERRED_DROP: phase=CORRECT card=%d guid=%d drag=%u old=%d target=%d zone=%d stockSole=%d",src,TrickGenerationGuid(src),trickActiveDragSeq,oldTarget,target,deferredDropZone,provenSole);
             PF3_REPAIR_TRACE("CustomComponents/Pick3/REPAIR1712: CAST_REWRITE source=%d oldTarget=%d initialTarget=%d effect=%d stockCommand=1",src,oldTarget,target,deferredValidatedPlay.effect);
@@ -539,3 +552,4 @@ static void TimerPush(Obj* self, Obj* timer, const void* method) {
     if (enabled && self && timer) CaptureRoot(stackRoot, self);
 }
 }
+

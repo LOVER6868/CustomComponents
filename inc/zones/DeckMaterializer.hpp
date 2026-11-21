@@ -690,7 +690,7 @@ inline bool Initialize() {
 
     modelGetEntityById = model.GetMethod("GetEntityById", 1).cast<Obj*>();
     createCardWithDefaultOwner =
-        cardFactory.GetMethod("CreateCardEntityWithDefaultOwner", 1).cast<Obj*>();
+        cardFactory.GetMethod("CreateCardEntityWithDefaultOwner", {std::string_view("cardGuid")}).cast<Obj*>();
 
     auto initializeDeck = deckInitializer.GetMethod("InitializeDeck", 2);
     auto removeExtraCardsProcess = removeExtraCardsSystem.GetMethod("ProcessEffect", 1);

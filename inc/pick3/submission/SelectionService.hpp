@@ -194,7 +194,10 @@ static void LocalSelectProcess(Obj* self,Obj* play,const void* method) {
                         ++CustomComponents::Systems::CustomTriggerSystem::pickFromThreeServiceDepth;
                         TransactionRuntime::ScopedSubmission selectedSubmission({effect,group,receiverSequence,{recipient},{{kNoEntity,chosenGuid,-1}}});
                         if(!TransactionRuntime::StageSubmission(TransactionRuntime::ModelOf(model,true),TransactionRuntime::submitted))
-                            LOG_ERR("CustomComponents/PickFromThree: selection intent rejected; stock processing continues without guessed provenance");
+                            LOG_ERR("CustomComponents/PickFromThree: selection intent rejected effect=%d group=%d sequence=%llu targets=%zu cards=%zu (stock processing continues)",
+                                TransactionRuntime::submitted.effect,TransactionRuntime::submitted.group,
+                                (unsigned long long)TransactionRuntime::submitted.sequence,
+                                TransactionRuntime::submitted.targets.size(),TransactionRuntime::submitted.cards.size());
                         originalLocalSelectProcess(self,play,method);
                         --CustomComponents::Systems::CustomTriggerSystem::pickFromThreeServiceDepth;
                         CustomComponents::Systems::CustomTriggerSystem::LogPick3ServiceProcess("SERVICE_PROCESS_EXIT", self);
@@ -383,8 +386,12 @@ static void LocalSelectProcess(Obj* self,Obj* play,const void* method) {
             } rxRestore{validatedLiveFilter,validatedLiveMode,normalizeRx};
             TransactionRuntime::ScopedSubmission selectedSubmission(
                 receiverSubmission.sequence?receiverSubmission:TransactionRuntime::submitted);
-            if(!TransactionRuntime::StageSubmission(TransactionRuntime::ModelOf(submissionModel,true),TransactionRuntime::submitted))
-                            LOG_ERR("CustomComponents/PickFromThree: selection intent rejected; stock processing continues without guessed provenance");
+            if(TransactionRuntime::submitted.sequence &&
+               !TransactionRuntime::StageSubmission(TransactionRuntime::ModelOf(submissionModel,true),TransactionRuntime::submitted))
+                            LOG_ERR("CustomComponents/PickFromThree: selection intent rejected effect=%d group=%d sequence=%llu targets=%zu cards=%zu (stock processing continues)",
+                                TransactionRuntime::submitted.effect,TransactionRuntime::submitted.group,
+                                (unsigned long long)TransactionRuntime::submitted.sequence,
+                                TransactionRuntime::submitted.targets.size(),TransactionRuntime::submitted.cards.size());
             originalLocalSelectProcess(self,play,method);
 #if CUSTOMCOMPONENTS_PF3_REPAIR_TRACE
             // Read the *live* queue after stock Process returns, before its

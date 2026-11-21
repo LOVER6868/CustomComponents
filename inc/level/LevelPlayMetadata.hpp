@@ -21,7 +21,14 @@ static void Copy(Obj* self,Obj* source,Obj* instances,const void* method){auto c
 static void Pool(Obj* self,Obj* instances,const void* method){choices.Set(self,{},false);frontendChoices.Set(self,false,false);originalPool(self,instances,method);}
 static Obj* Clone(Obj* self,const void* method){auto choice=choices.Get(self);auto local=frontendChoices.Get(self);Obj* result=originalClone(self,method);choices.Set(result,choice,choice.present);frontendChoices.Set(result,local,local);return result;}
 static Obj* CloneWithInstances(Obj* self,Obj* instances,const void* method){auto choice=choices.Get(self);auto local=frontendChoices.Get(self);Obj* result=originalCloneWithInstances(self,instances,method);choices.Set(result,choice,choice.present);frontendChoices.Set(result,local,local);return result;}
-static bool Compare(Obj* self,Obj* other,const void* method){auto a=choices.Get(self),b=choices.Get(other);return (!a.present || !b.present || (a.valid==b.valid && a.entry==b.entry)) && originalCompare(self,other,method);}
+static bool Compare(Obj* self,Obj* other,const void* method){
+    auto a=choices.Get(self),b=choices.Get(other);
+    // An explicit Level option must remain distinct from the ordinary play.
+    // Otherwise the stock AI can deduplicate the option before scoring it.
+    const bool sameChoice=a.present==b.present &&
+        (!a.present || (a.valid==b.valid && a.entry==b.entry));
+    return sameChoice && originalCompare(self,other,method);
+}
 static void EffectCopy(Obj* self,Obj* source,Obj* instances,const void* method){auto choice=effects.Get(source);originalEffectCopy(self,source,instances,method);effects.Set(self,choice,choice.present);}
 static void EffectPool(Obj* self,Obj* instances,const void* method){effects.Set(self,{},false);originalEffectPool(self,instances,method);}
 inline void Receive(Obj* bytes,Obj* result) {

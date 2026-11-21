@@ -11,10 +11,13 @@ inline Context Resolve(Obj* object,bool panel) {
     if(!snapshot)return {};
     Obj* model=Core::ModelRegistry::Get(snapshot->model);Obj* entity=Engine::EntityAccess::Find(model,snapshot->entity);
     bool exact=entity && InspectionStats::Guid(entity)==snapshot->guid;
-    return {exact?model:nullptr,exact?snapshot->entity:-1,snapshot->discarded};
+    return {exact?model:nullptr,exact?snapshot->entity:-1,
+        snapshot->model==0?snapshot->discarded:exact&&InspectionStats::Discarded(entity)};
 }
-inline String* Format(Context context,String* current,Obj* factory=nullptr) {
-    String* base=context.discarded?BNM::CreateMonoString(HeraldPolicy::Origin(true,"")):current;
+inline String* Format(Context context,String* current,Obj* factory=nullptr) { // sprig-lint: allow managed-global factory is a borrowed game reference used synchronously by the decorator
+    const std::string previous=current?current->str():std::string{};
+    const std::string origin=HeraldPolicy::Origin(context.discarded,previous);
+    String* base=origin==previous?current:BNM::CreateMonoString(origin);
     if(decorator && context.model && context.entity>=0)
         if(auto* value=static_cast<String*>(decorator(context.model,context.entity,base,factory)))return value;
     return base;
@@ -29,13 +32,17 @@ static void Text(void* self,PanelText text,const void* method) {
     originalText(self,text,method);
 }
 static void Overlay(void* self,Obj* item,const void* method) {
-    originalOverlay(self,item,method);auto context=Resolve(item,false);if(!context.discarded && !decorator)return;
+    originalOverlay(self,item,method);auto context=Resolve(item,false);
     auto field=BNM::Class("PvZCards.CardInspection","CardInspectionOverlayViewMediator").GetField("<View>k__BackingField").cast<Obj*>();
     Obj* view=self && field.IsValid()?field[self].Get():nullptr;
     auto labelField=BNM::Class("PvZCards.CardInspection","CardInspectionOverlayView").GetField("CreationSourceLabel").cast<Obj*>();
     Obj* label=view && labelField.IsValid()?labelField[view].Get():nullptr;if(!label)return;
     auto get=BNM::Class("TMPro","TextMeshProUGUI").GetMethod("get_text",0).cast<String*>();auto set=BNM::Class("TMPro","TextMeshProUGUI").GetMethod("set_text",1).cast<void>();
-    if(get.IsValid() && set.IsValid())set[label](Format(context,get[label]()));
+    if(get.IsValid() && set.IsValid()){
+        auto* previous=get[label]();
+        auto* formatted=Format(context,previous);
+        if(formatted!=previous)set[label](formatted);
+    }
 }
 static String* Casual(void* self,int id,const void* method) {
     String* original=originalCasual(self,id,method);

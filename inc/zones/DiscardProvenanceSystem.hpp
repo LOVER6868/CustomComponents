@@ -15,6 +15,7 @@
 #include <BNM/Method.hpp>
 
 #include "zones/Discarded.hpp"
+#include "zones/MarkedForDiscard.hpp"
 #include "core/CustomComponentRegistry.hpp"
 #include "core/CustomFieldBridgeSystem.hpp"
 #include "presentation/ZoneTriggeredAbilityPresentationSystem.hpp"
@@ -75,6 +76,7 @@ namespace CustomComponents::Systems::DiscardedSystem {
     #include "zones/detail/ReturnEffectQueueCompletion.inl"
     inline bool Initialize() {
         if (ready) return true;
+        if(!Zones::MarkedForDiscard::Initialize())return false;
         if (!CustomComponentRegistry::FindByName("PvZCards.Engine.Components", "Discarded")) {
             if (!CustomComponentRegistry::Register({
                     "Discarded", "PvZCards.Engine.Components", "EngineLib.dll",
@@ -196,11 +198,15 @@ namespace CustomComponents::Systems::DiscardedSystem {
         Engine::Events::effectCompletionReady=originalCompleteEffect!=nullptr;
         if (groupMetadataReady && startSystemModel.IsValid() && startMethod.IsValid())
             CustomComponents::Core::Hooks::Install(startMethod, StartHandlerHook, originalStartHandler);
-        if (groupMetadataReady && buffSystemModel.IsValid() && buffMethod.IsValid())
+        // Buff is also the common pre-stock modifier dispatch point. Unlike
+        // optional return-chain probes, it must not depend on group metadata.
+        // BeginHandlerProbes already skips observation when metadata is absent.
+        if (buffSystemModel.IsValid() && buffMethod.IsValid())
             CustomComponents::Core::Hooks::Install(buffMethod, BuffHandlerHook, originalBuffHandler);
+        Engine::Events::buffHookReady = originalBuffHandler != nullptr;
         if (groupMetadataReady && endSystemModel.IsValid() && endMethod.IsValid())
             CustomComponents::Core::Hooks::Install(endMethod, EndHandlerHook, originalEndHandler);
-        CC_DIAG("CustomComponents/Discarded/CHAIN: stock handlers START=%d BUFF=%d END=%d (read-only; RVAs 0x21FC764 / 0x21FD444 / 0x21F2034)",
+        CC_DIAG("CustomComponents/Discarded/CHAIN: stock handlers START=%d BUFF=%d END=%d (shared BUFF pre/post dispatch; RVAs 0x21FC764 / 0x21FD444 / 0x21F2034)",
             originalStartHandler ? 1 : 0,
             originalBuffHandler ? 1 : 0,
             originalEndHandler ? 1 : 0);
@@ -212,6 +218,7 @@ namespace CustomComponents::Systems::DiscardedSystem {
             LOG_ERR("CustomComponents/Discarded: stock hook installation failed");
             return false;
         }
+        CustomComponents::Variables::QueuedTriggerValues::resolverOwnerConnected=true;
         ready = true;
         if constexpr (false) CC_DIAG("CustomComponents/Discarded/GROUP: metadata=%d Shift hooked=%d (RVA 0x227FBDC; read-only group lineage diagnostics)",
             groupMetadataReady ? 1 : 0, originalQueueShift ? 1 : 0);

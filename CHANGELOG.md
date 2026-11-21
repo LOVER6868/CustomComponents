@@ -37,3 +37,10 @@ This branch builds on [upstream `e6b7823`](https://github.com/LOVER6868/CustomCo
 - Removed only verified duplicate examples; the other recipes remain available.
 
 Host compilation and source tests are not the same as testing on Android. The [compatibility page](docs/reference/compatibility.md) keeps track of what still needs game testing.
+
+### Shared lane/death/superpower pass
+
+- Added Also/Only lane grants, lane-ordered multiple combat targets, pending-death interception and cancellation, superpower pool creation/count/membership/initial-pool queries, PrimaryTargetsGuidQuery and explicit cheats-tag opt-in for subsets.
+- Extended native triggered grants with duration and Set/Add options; re-entry reuses live ability entities rather than cloning them again.
+- Centralized post-router continuations, frozen stacked-listener snapshots, continuous multiplier refresh, retiring-view recreation waits and persistent discard dimming. Unchanged ability sprites no longer rebuild on every stat refresh.
+- Added bounded outcome traces, authoring examples and a combined device-validation list. Native/source checks do not establish phone stability or animation correctness.

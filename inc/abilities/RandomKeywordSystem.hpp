@@ -1,5 +1,6 @@
 #include "abilities/RandomKeywordPolicy.hpp"
 #pragma once
+#include "history/DomainRecords.hpp"
 #include <cstdio>
 #include "core/Performance.hpp"
 #include "core/AbilityRegistry.hpp"
@@ -9,8 +10,32 @@ using Obj=Engine::Match::Obj;
 inline constexpr int Id=22;
 inline constexpr const char* ledger="sprig:rk=";
 using KeywordPolicy::Option;using KeywordPolicy::Given;using KeywordPolicy::options;
+inline BNM::Field<int> grantType,grantDuration,removeType,removeDuration,effectTarget,effectSource;
+inline BNM::Field<Obj*> grantModel,removeModel;
+inline BNM::Method<int> grantValueGet;
+inline BNM::Method<void> grantValueSet;
+inline bool Initialize(){
+    auto grant=BNM::Class("PvZCards.Engine.Effects","GrantAbilityEffect");
+    auto remove=BNM::Class("PvZCards.Engine.Effects","RemoveGrantAbilityEffect");
+    auto effect=BNM::Class("PvZCards.Engine","Effect");
+    grantType=grant.GetField("GrantableAbilityType").cast<int>();
+    grantDuration=grant.GetField("Duration").cast<int>();
+    grantValueGet=grant.GetMethod("get_AbilityValue",0).cast<int>();
+    grantValueSet=grant.GetMethod("set_AbilityValue",1).cast<void>();
+    removeType=remove.GetField("GrantableAbilityType").cast<int>();
+    removeDuration=remove.GetField("Duration").cast<int>();
+    grantModel=BNM::Class("PvZCards.Core.Systems","GrantAbilitySystem").GetField("<Entities>k__BackingField").cast<Obj*>();
+    removeModel=BNM::Class("PvZCards.Core.Systems","RemoveGrantAbilitySystem").GetField("<Model>k__BackingField").cast<Obj*>();
+    effectTarget=effect.GetField("TargetId").cast<int>();effectSource=effect.GetField("SourceId").cast<int>();
+    return grantType.IsValid()&&grantDuration.IsValid()&&grantValueGet.IsValid()&&grantValueSet.IsValid()&&removeType.IsValid()&&removeDuration.IsValid()&&grantModel.IsValid()&&removeModel.IsValid()&&effectTarget.IsValid()&&effectSource.IsValid();
+}
 inline std::vector<Given> GivenTo(Obj* target) {std::string value;return Engine::Match::Tag(target,ledger,value)?KeywordPolicy::Decode(value):std::vector<Given>{};}
-inline bool Save(Obj* target,const std::vector<Given>& entries) {return Engine::Match::SetTag(target,ledger,KeywordPolicy::Encode(entries));}
+inline bool Save(Obj* target,const std::vector<Given>& entries) {
+    const auto before=KeywordPolicy::Encode(GivenTo(target));const auto after=KeywordPolicy::Encode(entries);
+    if(!Engine::Match::SetTag(target,ledger,after))return false;
+    History::AbilityPayload payload;payload.ability=Id;payload.encoding="random-keyword-policy-v1";payload.before=before;payload.after=after;
+    History::Domain::Ability(target,std::move(payload));return true;
+}
 inline bool Has(Obj* target,const Option& option) {
     Obj* component=Engine::EntityAccess::Component(target,option.component);if(!component) return false;
     auto method=BNM::Class("PvZCards.Engine.Components",option.type==19?"Armor":"GrantableAbility").GetMethod(option.type==19?"CalculateArmor":"IsActive",0);
@@ -25,15 +50,10 @@ inline bool Register() {
 // RandomKeyword effect for later executions and deep copies.
 template<class Run> void Grant(void* system,void* effectPointer,Run run) {
     Obj* effect=static_cast<Obj*>(effectPointer);
-    static auto typeMetadata=BNM::Class("PvZCards.Engine.Effects","GrantAbilityEffect");static auto grantMetadata=typeMetadata.GetField("GrantableAbilityType").cast<int>();
-    auto type=typeMetadata;auto grantType=grantMetadata;
     if(!effect || !grantType.IsValid() || grantType[effect].Get()!=Id) {run();return;}
-    auto modelField=BNM::Class("PvZCards.Core.Systems","GrantAbilitySystem").GetField("<Entities>k__BackingField").cast<Obj*>();
-    auto targetField=BNM::Class("PvZCards.Engine","Effect").GetField("TargetId").cast<int>();auto sourceField=BNM::Class("PvZCards.Engine","Effect").GetField("SourceId").cast<int>();
-    auto durationField=type.GetField("Duration").cast<int>();auto get=type.GetMethod("get_AbilityValue",0).cast<int>();auto set=type.GetMethod("set_AbilityValue",1).cast<void>();
-    if(!system || !modelField.IsValid() || !targetField.IsValid() || !sourceField.IsValid() || !durationField.IsValid() || !get.IsValid() || !set.IsValid()) return;
-    Obj* target=Engine::EntityAccess::Find(modelField[system].Get(),targetField[effect].Get());if(!target)return;
-    int value=get[effect](),pool=value,source=sourceField[effect].Get(),duration=durationField[effect].Get();
+    if(!system || !grantModel.IsValid() || !effectTarget.IsValid() || !effectSource.IsValid() || !grantDuration.IsValid() || !grantValueGet.IsValid() || !grantValueSet.IsValid())return;
+    Obj* target=Engine::EntityAccess::Find(grantModel[system].Get(),effectTarget[effect].Get());if(!target)return;
+    int value=grantValueGet[effect](),pool=value,source=effectSource[effect].Get(),duration=grantDuration[effect].Get();
     if(source<0 || duration<0 || duration>2)return;
     if(pool==0) pool=Engine::EntityAccess::Component(target,"Zombies")?63:15;
     if(pool<0)return;
@@ -44,20 +64,17 @@ template<class Run> void Grant(void* system,void* effectPointer,Run run) {
     prior.erase(std::remove_if(prior.begin(),prior.end(),[&](auto entry){for(const auto& option:options)if(option.type==entry.type)return !Has(target,option);return true;}),prior.end());
     auto given=prior;given.push_back({source,chosen.type,duration});
     if(!Save(target,given))return;
-    grantType[effect].Set(chosen.type);set[effect](chosen.value);
-    struct Restore {Obj* effect;BNM::Field<int> type;BNM::Method<void> set;int value;~Restore(){type[effect].Set(Id);set[effect](value);}} restore{effect,grantType,set,value};
+    grantType[effect].Set(chosen.type);grantValueSet[effect](chosen.value);
+    struct Restore {Obj* effect;BNM::Field<int> type;BNM::Method<void> set;int value;~Restore(){type[effect].Set(Id);set[effect](value);}} restore{effect,grantType,grantValueSet,value};
     run();
     if(!Has(target,chosen)) Save(target,prior);
 }
 template<class Run> void Remove(void* system,void* effectPointer,Run run) {
-    Obj* effect=static_cast<Obj*>(effectPointer);static auto typeMetadata=BNM::Class("PvZCards.Engine.Effects","RemoveGrantAbilityEffect");static auto abilityMetadata=typeMetadata.GetField("GrantableAbilityType").cast<int>();
-    auto type=typeMetadata;auto ability=abilityMetadata;
+    Obj* effect=static_cast<Obj*>(effectPointer);auto ability=removeType;
     if(!effect || !ability.IsValid() || ability[effect].Get()!=Id){run();return;}
-    auto modelField=BNM::Class("PvZCards.Core.Systems","RemoveGrantAbilitySystem").GetField("<Model>k__BackingField").cast<Obj*>();
-    auto targetField=BNM::Class("PvZCards.Engine","Effect").GetField("TargetId").cast<int>();auto sourceField=BNM::Class("PvZCards.Engine","Effect").GetField("SourceId").cast<int>();
-    if(!system || !modelField.IsValid() || !targetField.IsValid() || !sourceField.IsValid())return;
-    Obj* target=Engine::EntityAccess::Find(modelField[system].Get(),targetField[effect].Get());auto given=GivenTo(target);int source=sourceField[effect].Get();
-    auto durationField=type.GetField("Duration").cast<int>();int duration=durationField.IsValid()?durationField[effect].Get():0;
+    if(!system || !removeModel.IsValid() || !effectTarget.IsValid() || !effectSource.IsValid())return;
+    Obj* target=Engine::EntityAccess::Find(removeModel[system].Get(),effectTarget[effect].Get());auto given=GivenTo(target);int source=effectSource[effect].Get();
+    int duration=removeDuration.IsValid()?removeDuration[effect].Get():0;
     if(auto selected=KeywordPolicy::Take(given,source,duration)) {
         int chosen=*selected;if(!Save(target,given))return;
         ability[effect].Set(chosen);struct Restore{Obj* effect;BNM::Field<int> field;~Restore(){field[effect].Set(Id);}} restore{effect,ability};run();return;

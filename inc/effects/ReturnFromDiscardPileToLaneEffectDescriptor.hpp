@@ -1,16 +1,19 @@
 #pragma once
 
+#include <BNM/BasicMonoStructures.hpp>
 #include <BNM/Class.hpp>
 #include <BNM/ClassesManagement.hpp>
 #include <BNM/Defaults.hpp>
 #include <BNM/Field.hpp>
 #include <BNM/Il2CppHeaders.hpp>
 #include <BNM/Method.hpp>
+#include "core/ManagedRuntime.hpp"
 
 namespace CustomComponents::Components {
 
     struct ReturnFromDiscardPileToLaneEffectDescriptor : BNM::IL2CPP::Il2CppObject {
         bool ForceFaceDown{};
+        BNM::Structures::Mono::String* CreationPosition{};
         BNM_CustomClass(
             ReturnFromDiscardPileToLaneEffectDescriptor,
             BNM::CompileTimeClassBuilder(
@@ -31,8 +34,35 @@ namespace CustomComponents::Components {
             BNM::Defaults::Get<bool>(),
             "ForceFaceDown"
         );
+        BNM_CustomField(CreationPosition,
+            BNM::Defaults::Get<BNM::Structures::Mono::String*>(),
+            "CreationPosition");
 
         using Obj = BNM::IL2CPP::Il2CppObject;
+
+        void DeepCopyFrom(Obj* source, Obj* instances) {
+            BNM_CallCustomMethodOrigin(DeepCopyFrom, this, source, instances);
+            auto* other = static_cast<ReturnFromDiscardPileToLaneEffectDescriptor*>(source);
+            ForceFaceDown = other && other->ForceFaceDown;
+            Obj* position = other ? reinterpret_cast<Obj*>(other->CreationPosition) : nullptr;
+            if (Core::ManagedRuntime::writeBarrier)
+                Core::ManagedRuntime::writeBarrier(this, reinterpret_cast<void**>(&CreationPosition), position);
+            else
+                CreationPosition = reinterpret_cast<BNM::Structures::Mono::String*>(position);
+        }
+        BNM_CustomMethod(DeepCopyFrom, false, BNM::Defaults::Get<void>(), "DeepCopyFrom",
+            BNM::Defaults::Get<Obj*>(),
+            BNM::CompileTimeClassBuilder("PvZCards.Engine", "InstanceManager", "EngineLib.dll").Build());
+
+        void HandleReturnToPool(Obj* instances) {
+            ForceFaceDown = false;
+            if (Core::ManagedRuntime::writeBarrier)
+                Core::ManagedRuntime::writeBarrier(this, reinterpret_cast<void**>(&CreationPosition), nullptr);
+            else CreationPosition = nullptr;
+            BNM_CallCustomMethodOrigin(HandleReturnToPool, this, instances);
+        }
+        BNM_CustomMethod(HandleReturnToPool, false, BNM::Defaults::Get<void>(), "HandleReturnToPool",
+            BNM::CompileTimeClassBuilder("PvZCards.Engine", "InstanceManager", "EngineLib.dll").Build());
 
         // MoveCardToLanesEffect normally stores a small lane-order value here.
         // We use an impossible/high value only as a routing tag. The actual lane is

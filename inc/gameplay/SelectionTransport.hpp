@@ -16,6 +16,17 @@ namespace CustomComponents::SelectionTransport {
 using Obj = BNM::IL2CPP::Il2CppObject;
 using IntList = BNM::Structures::Mono::List<int>;
 inline constexpr int kSelectTargetPlayType = 6;
+// BNM::Exception::ClassName()/Message() dereference nullable managed strings;
+// on this game's PFF3 failure className was null and the logger itself SIGSEGV'd.
+inline void LogManagedException(const char* stage,const BNM::Exception& error){
+    auto* raw=error.GetException();
+    const std::string cls=raw && raw->className?
+        reinterpret_cast<BNM::Structures::Mono::String*>(raw->className)->str():"<null>";
+    const std::string msg=raw && raw->message?
+        reinterpret_cast<BNM::Structures::Mono::String*>(raw->message)->str():"<null>";
+    LOG_ERR("CustomComponents/SelectionTransport: %s exception=%p class=%s message=%s",
+        stage,static_cast<void*>(raw),cls.c_str(),msg.c_str());
+}
 
 struct TargetSelection {
     int playerId = -1;
@@ -64,8 +75,7 @@ inline bool Prepare(const PlayFields& api, const TargetSelection& action, Prepar
     if (!ctor.IsValid()) return fail();
     const auto ctorEx = BNM::TryInvoke([&] { ctor[play](); });
     if (ctorEx.IsValid()) {
-        LOG_ERR("CustomComponents/SelectionTransport: CTOR_EXCEPTION class=%s message=%s",
-                ctorEx.ClassName().c_str(), ctorEx.Message().c_str());
+        LogManagedException("CTOR_EXCEPTION",ctorEx);
         return fail();
     }
     IntList* ids = (*api.targets)[play].Get();
@@ -75,8 +85,7 @@ inline bool Prepare(const PlayFields& api, const TargetSelection& action, Prepar
     for (int id : action.entityIds) {
         auto err = BNM::TryInvoke([&] { add[ids](id); });
         if (err.IsValid()) {
-            LOG_ERR("CustomComponents/SelectionTransport: TARGET_ADD_EXCEPTION class=%s message=%s",
-                    err.ClassName().c_str(), err.Message().c_str());
+            LogManagedException("TARGET_ADD_EXCEPTION",err);
             return fail();
         }
     }
@@ -99,8 +108,7 @@ inline DispatchResult Dispatch(Obj* service, Obj* play) {
     if (!process.IsValid()) return DispatchResult::MissingMethod;
     const auto ex = BNM::TryInvoke([&] { process[service](play); });
     if (ex.IsValid()) {
-        LOG_ERR("CustomComponents/SelectionTransport: PROCESS_EXCEPTION class=%s message=%s",
-                ex.ClassName().c_str(), ex.Message().c_str());
+        LogManagedException("PROCESS_EXCEPTION",ex);
         return DispatchResult::ManagedException;
     }
     return DispatchResult::Returned;

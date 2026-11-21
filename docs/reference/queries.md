@@ -28,3 +28,12 @@ A card being in discard doesn't prove it was destroyed on the board. Combine mem
 `VariableComparisonQuery` reads stored values or derived expressions, including built-in card stats, with a selectable `EntityQuery` owner and `Any`/`All` matching. `HasVariableQuery` tests whether a variable exists. See [variables](../VARIABLES.md) and [card stats](card-stats.md).
 
 [Query examples](../../examples/queries/README.md) · [PF3 guide](../PICKFROMTHREE.md)
+
+## Card set and rarity
+
+- `HasSetQuery`: `{ "Set": "Set3" }` — matches the top-level **CardData.Set** metadata for the candidate's `Card.Guid`. Exact, case-sensitive match. This is **not** a component or tag. The shared `CardDataMapper.SetCardData` observer caches a native string for each loaded GUID, including when Pick3 UI is disabled; unknown/unloaded GUIDs fail closed.
+- `HasRarityQuery`: `{ "Rarity": "R3" }` — reads the card's live **Rarity.Value** component enum, not the metadata `rarity` number. Valid values: `R1`, `R2`, `R3`, `R4`, `R0`, `Event`. A card with no Rarity component fails closed.
+
+Full snippets: [Set](../../examples/queries/has-set.json), [Rarity](../../examples/queries/has-rarity.json).
+
+- `ClassQuery`: `{ "Class": "Kabloom" }` — matches CardData.Color (CardColor flags), including database candidates in PickFromThree. Accepts Kabloom, MegaGro, Guardian, Smarty, Solar, Brainy, Hearty, Sneaky, Hungry, and Madcap. Unknown classes fail closed. Multi-color definitions match each included class bit.

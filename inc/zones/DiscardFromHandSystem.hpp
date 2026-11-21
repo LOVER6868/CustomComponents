@@ -1,7 +1,7 @@
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 // Descriptor registration only. Stock gameplay remains owned by
-// MoveToDiscardPileSystem and the existing DiscardPileZoneEffectsSystem hook.
+// MoveToDiscardPileSystem and the existing ZoneTransferSystem hook.
 #include <BNM/Class.hpp>
 #include "effects/DiscardFromHandEffectDescriptor.hpp"
 #include "core/CustomComponentRegistry.hpp"

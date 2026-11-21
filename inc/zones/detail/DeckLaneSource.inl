@@ -1,7 +1,10 @@
 // Source-zone adapter for physical deck deployment. No mutation during queries.
 struct DeckLaneContext {Obj* card=nullptr;Obj* pool=nullptr;int cardId=-1,playerId=-1,deckId=-1,index=-1;};
 inline bool ResolveDeckLaneContext(Obj* model,int cardId,DeckLaneContext& out) {
-    out={};Obj* card=FindEntity(model,cardId);if(!card || !FindComponent(card,"DeckElement") || FindComponent(card,"LaneElement") || FindComponent(card,"HandElement") || FindComponent(card,"DiscardPileElement"))return false;
+    out={};Obj* card=FindEntity(model,cardId);if(!card || !FindComponent(card,"Card") || FindComponent(card,"LaneElement") || FindComponent(card,"HandElement") || FindComponent(card,"DiscardPileElement"))return false;
+    // DeckElement is not authoritative: materialized cards can be represented
+    // solely by CardPoolEntry.EntityId in the owning OrderedCardPool. The
+    // entry check below is authoritative and excludes other decks. 
     const int player=getPlayerIdFromCard[static_cast<Obj*>(nullptr)](card);Obj* owner=FindEntity(model,player);Obj* association=FindComponent(owner,"DeckAssociation");if(!association)return false;
     const int deck=deckAssociationId[association].Get();Obj* pool=FindComponent(FindEntity(model,deck),"OrderedCardPool");if(!pool)return false;
     static auto entriesMetadata=BNM::Class("PvZCards.Engine.Components","OrderedCardPool").GetField("Entries").cast<MonoList<Obj*>*>();
@@ -10,11 +13,68 @@ inline bool ResolveDeckLaneContext(Obj* model,int cardId,DeckLaneContext& out) {
     for(int i=0;i<entries->size;++i)if(entries->items->m_Items[i] && id[entries->items->m_Items[i]].Get()==cardId){if(found>=0)return false;found=i;}
     if(found<0)return false;out={card,pool,cardId,player,deck,found};return true;
 }
-inline bool CheckDeckLanePair(Obj* model,int card,int lane,int player) {
-    DeckLaneContext source;if(!ResolveDeckLaneContext(model,card,source) || source.playerId!=player)return false;
+inline bool CheckDeckLanePair(Obj* model,int card,int lane,int player,Obj* effectEntity=nullptr) {
+    DeckLaneContext source;
+    if(!ResolveDeckLaneContext(model,card,source)){
+        Obj* candidate=FindEntity(model,card);
+        if(!candidate || !FindComponent(candidate,"Card"))return false;
+        Obj* owner=FindComponent(effectEntity,"EffectEntity");
+        auto sourceId=BNM::Class("PvZCards.Engine.Components","EffectEntity").GetField("SourceId").cast<int>();
+        Obj* caster=owner && sourceId.IsValid()?FindEntity(model,sourceId[owner].Get()):nullptr;
+        return caster && getPlayerIdFromCard[static_cast<Obj*>(nullptr)](caster)==player &&
+            Zones::DeckLaneCreation::HasLegalFallback(model,effectEntity,lane);
+    }
+    if(source.playerId!=player)return false;
     // No creation-grant scope: the physical card must already own its traits.
-    Engine::PlacementQueryContext::Scope scope({model,nullptr});
+    Engine::PlacementQueryContext::Scope scope({model,effectEntity});
     return Engine::BoardPlacement::Fits(model,source.card,FindEntity(model,lane),nullptr);
+}
+// A stock random primary selection can pick a real deck card that cannot fit
+// the requested lane. Before falling back to creating a NEW card, exhaust the
+// physical deck's query-matching and legally placeable cards. Pure preflight:
+// no deck mutation, no generated cards, no selection of out-of-query cards.
+inline int FindPlaceableDeckSource(Obj* model,Obj* effectEntity,Obj* runtime,int laneId,int originalId){
+    if(!model || !effectEntity || !runtime || laneId<0)return -1;
+    auto playerField=BNM::Class("PvZCards.Engine","Effect").GetField("PlayerId").cast<int>();
+    auto sourceField=BNM::Class("PvZCards.Engine","Effect").GetField("SourceId").cast<int>();
+    const int sourceId=sourceField.IsValid()?sourceField[runtime].Get():-1;
+    Obj* source=FindEntity(model,sourceId);
+    int player=playerField.IsValid()?playerField[runtime].Get():-1;
+    if(!FindComponent(FindEntity(model,player),"Player"))
+        player=source?getPlayerIdFromCard[static_cast<Obj*>(nullptr)](source):-1;
+    if(player<0 || !FindComponent(FindEntity(model,player),"Player"))return -1;
+    Obj* primary=FindComponent(effectEntity,"PrimaryTargetFilter");
+    static auto queryField=BNM::Class("PvZCards.Engine.Components","EntityFilter").GetField("Query").cast<Obj*>();
+    Obj* query=primary && queryField.IsValid()?queryField[primary].Get():nullptr;
+    if(!query)return -1; // No provable authored filter: don't broaden the draw.
+    auto context=Engine::BoardPlacement::Context(model,effectEntity,originalId);
+    if(!context || !context->Get())return -1;
+    auto api=Engine::EntityAccess::Api();auto* entities=api.entities[model].Get();
+    if(!Engine::EntityAccess::Valid(entities) || entities->size>10000)return -1;
+    std::vector<int> candidates;
+    for(int i=0;i<entities->size;++i){
+        Obj* card=entities->items->m_Items[i];
+        if(!card || !FindComponent(card,"Card") || FindComponent(card,"LaneElement") ||
+           FindComponent(card,"HandElement") || FindComponent(card,"DiscardPileElement"))continue;
+        const int id=Engine::Match::Id(card);
+        if(!CheckDeckLanePair(model,id,laneId,player,effectEntity))continue;
+        bool matches=false;
+        const auto error=BNM::TryInvoke([&]{matches=Engine::BoardPlacement::Matches(query,card,context->Get());});
+        if(!error.IsValid() && matches)candidates.push_back(id);
+    }
+    if(candidates.empty()){
+        static std::atomic<unsigned> misses{0};
+        if(misses.fetch_add(1)<48)
+            LOG_INFO("CustomComponents/PlayFromDeckToLane/POOL_SOURCE_EMPTY: lane=%d player=%d original=%d cardEntities=%d",laneId,player,originalId,entities->size);
+        return -1;
+    }
+    // Use match RNG where available to preserve random-deck semantics.
+    int choice=source?Engine::Match::Roll(source,int(candidates.size())):-1;
+    if(choice<0 || choice>=int(candidates.size()))choice=0;
+    static std::atomic<unsigned> samples{0};if(samples.fetch_add(1)<32)
+        LOG_INFO("CustomComponents/PlayFromDeckToLane/VIABLE_DECK: original=%d chosen=%d count=%zu lane=%d",
+            originalId,candidates[choice],candidates.size(),laneId);
+    return candidates[choice];
 }
 struct LaneTransferSource {Obj* card=nullptr;Obj* pool=nullptr;int playerId=-1,poolId=-1,index=-1;bool deck=false;};
 inline bool ResolveLaneSource(Obj* model,int card,bool deck,LaneTransferSource& out) {

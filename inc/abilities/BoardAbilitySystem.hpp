@@ -21,12 +21,13 @@ static void Destroy(Obj* self,Obj* effect,const void* method) {
 }
 static bool Validate(Obj* self,Obj* effectEntity,Obj* context,const void* method) {
     if(!originalValidate(self,effectEntity,context,method)) return false;
-    auto modelField=BNM::Class("PvZCards.Engine","EntityQueryContext").GetField("<Model>k__BackingField").cast<Obj*>();
-    auto source=BNM::Class("PvZCards.Engine.Components","EffectEntity").GetField("SourceId").cast<int>();
+    static auto modelMetadata=BNM::Class("PvZCards.Engine","EntityQueryContext").GetField("<Model>k__BackingField").cast<Obj*>();auto modelField=modelMetadata;
+    static auto sourceMetadata=BNM::Class("PvZCards.Engine.Components","EffectEntity").GetField("SourceId").cast<int>();auto source=sourceMetadata;
     Obj* link=Engine::EntityAccess::Component(effectEntity,"EffectEntity");
     Obj* model=context && modelField.IsValid()?modelField[context].Get():nullptr;
     Obj* card=link && source.IsValid()?Engine::EntityAccess::Find(model,source[link].Get()):nullptr;
-    return BoardPolicy::MayTrigger(true,Engine::EntityAccess::Component(card,"BoardAbility")!=nullptr,IsSpent(card)) && Engine::TriggerEligibility::Allows(effectEntity,context);
+    const bool board=Engine::EntityAccess::Component(card,"BoardAbility")!=nullptr;
+    return BoardPolicy::MayTrigger(true,board,board && IsSpent(card)) && Engine::TriggerEligibility::Allows(effectEntity,context);
 }
 inline bool Initialize() {
     auto validate=BNM::Class("PvZCards.Core.Systems.Utilities","TriggerValidator").GetMethod("ShouldTriggerEffect",2);

@@ -1,7 +1,9 @@
+#include "engine/AbilityDurationEvents.hpp"
 #include "effects/RemoveGrantAbilityEffectDescriptor.hpp"
 #include "abilities/WitheringSystem.hpp"
 #include "core/HookRegistry.hpp"
 #pragma once
+#include "abilities/GrantHistory.hpp"
 #include "diagnostics/DiagnosticLogging.hpp"
 #include "core/Performance.hpp"
 #include "core/AbilityRegistry.hpp"
@@ -40,6 +42,7 @@ namespace CustomComponents::GrantAbility {
         if (duration < 0 || duration > 2) {
             LOG_ERR("CustomComponents/GrantAbility: unsupported duration %d", duration); return;
         }
+        const auto historyBefore=Abilities::GrantHistory::Capture(static_cast<BNM::IL2CPP::Il2CppObject*>(target),*adapter);
         bool applied = false;
         const int source = sourceId[effect].Get();
         const int value = abilityValue[effect]();
@@ -55,16 +58,20 @@ namespace CustomComponents::GrantAbility {
                 if(component){auto remove=GrantableAbilityRuntime::removeCounter;auto add=GrantableAbilityRuntime::addCounter;remove[component](duration,source);add[component](duration,source,0);applied=true;}
             } else if(adapter->id==Abilities::Withering::Id) {
                 applied=Abilities::Withering::Apply(static_cast<BNM::IL2CPP::Il2CppObject*>(adapter->component(target,true)),duration,source,value);
+            } else if(adapter->id==Abilities::LaneAttacks::AlsoId || adapter->id==Abilities::LaneAttacks::OnlyId) {
+                applied=Abilities::LaneAttacks::Grant(static_cast<BNM::IL2CPP::Il2CppObject*>(adapter->component(target,true)),duration,source,value,operation==NumericAbility::Operation::Set);
             } else {
                 applied = GrantableAbilityRuntime::Apply(
                     adapter->component(target, true), duration, source, value, operation);
             }
         }
+        if(applied && !Core::Performance::aiDepth)Systems::ZoneTriggeredAbilityPresentationSystem::frameStatsDirty=true;
         if(applied && adapter->storage==AbilityStorage::Marker)
             Abilities::MarkerGrants::Sync(static_cast<BNM::IL2CPP::Il2CppObject*>(target),static_cast<BNM::IL2CPP::Il2CppObject*>(adapter->component(target,false)),adapter->name);
         if (!applied) {
             LOG_ERR("CustomComponents/GrantAbility: failed to apply %s", adapter->name); return;
         }
+        Abilities::GrantHistory::Changed(static_cast<BNM::IL2CPP::Il2CppObject*>(target),*adapter,historyBefore,source,duration,int(operation));
         // Stock GrantAbilitySystem also publishes an AbilityGrantedRecord into History.
         // Our custom path bypasses stock ProcessEffect, so recreate that record here.  The
         // Game-side AbilityGrantedRecordProcessor is what normally drives grant visuals.
@@ -119,7 +126,12 @@ namespace CustomComponents::GrantAbility {
     inline bool RemoveCustomAbility(void* remover, void* entity, const AbilityAdapter& adapter,
         int duration, int source, bool expiry = false) {
         if (!entity) return false;
+        const auto historyBefore=Abilities::GrantHistory::Capture(static_cast<BNM::IL2CPP::Il2CppObject*>(entity),adapter);
 
+        // Snapshot Withering before expiration mutates its counters. Checking
+        // Mode() only afterward misses removal of Withering itself.
+        const bool witheringWasActive=Abilities::Withering::Mode(
+            static_cast<BNM::IL2CPP::Il2CppObject*>(Abilities::Withering::Get(entity,false)))>0;
         bool before = false;
         bool after = false;
         if (adapter.storage == AbilityStorage::Numeric) {
@@ -136,8 +148,23 @@ namespace CustomComponents::GrantAbility {
             after = adapter.storage==AbilityStorage::Marker ? Abilities::MarkerGrants::Active(static_cast<BNM::IL2CPP::Il2CppObject*>(component)) : GrantableAbilityRuntime::Active(component);
         }
 
+        Abilities::GrantHistory::Changed(static_cast<BNM::IL2CPP::Il2CppObject*>(entity),adapter,historyBefore,source,duration,-1,expiry);
+        if(before!=after && !Core::Performance::aiDepth)Systems::ZoneTriggeredAbilityPresentationSystem::frameStatsDirty=true;
         if (before && !after) {
-            PublishAbilityRemoved(remover, entity, adapter.id);
+            auto* card=static_cast<BNM::IL2CPP::Il2CppObject*>(entity);
+            const bool removedFromView=Engine::EntityAccess::Component(card,"DiscardPileElement") ||
+                Engine::EntityAccess::Component(card,"DeckElement") ||
+                (expiry && witheringWasActive);
+            // A turn-end discard may be queued before this expiry record is
+            // rendered. Its view will disappear first; never enqueue a stale
+            // ability-removal presentation for that Withering card.
+            // AbilityRemovedRecordProcessor requires AbilityGrantableTarget.
+            // After Withering moved a card out of its hand/board the frontend
+            // can no longer map it. The state removal is valid; its obsolete
+            // presentation record is not. Do not suppress on-board records.
+            if(!removedFromView)PublishAbilityRemoved(remover, entity, adapter.id);
+            else {static std::atomic<unsigned> skipped{0};if(skipped.fetch_add(1)<20)
+                LOG_INFO("CustomComponents/Withering/AVOID_ORPHANED_ABILITY_RECORD: card=%d ability=%d",Engine::Match::Id(card),adapter.id);}
             return true;
         }
         return false;
@@ -181,7 +208,10 @@ namespace CustomComponents::GrantAbility {
             auto* marker=BNM::Class("PvZCards.Engine.Components",adapter->name).GetMonoType();
             if(marker && has[target](marker)){remove[target](marker);removed=true;}
         }
-        if(removed)PublishAbilityRemoved(removeRemover[self].Get(),target,type);
+        if(removed){
+            if(!Core::Performance::aiDepth)Systems::ZoneTriggeredAbilityPresentationSystem::frameStatsDirty=true;
+            PublishAbilityRemoved(removeRemover[self].Get(),target,type);
+        }
     }
 
     static void RemoveHook(void* self, void* effect, const void* method) {
@@ -213,13 +243,31 @@ namespace CustomComponents::GrantAbility {
     }
 
     static void TurnEndHook(void* self, void* effect, const void* method) {
-        Abilities::Withering::Schedule(static_cast<BNM::IL2CPP::Il2CppObject*>(self),static_cast<BNM::IL2CPP::Il2CppObject*>(effect));
-        originalTurnEnd(self, effect, method); Expire(turnFinder[self].Get(), turnRemover[self].Get(), 1);
-        auto* finder=turnFinder[self].Get();Abilities::RandomKeyword::Expire(static_cast<Abilities::RandomKeyword::Obj*>(finder?finderModel[finder].Get():nullptr),1);
+        Core::Performance::Scope timing(Core::Performance::Area::Maintenance,"turn-ability-expiry");
+        // The stock TurnEndEffect (not a per-lane combat-end effect) is the
+        // authoritative boundary. Enqueue only AFTER stock end-turn effects,
+        // preserving native presentation ordering. Withering::Schedule also
+        // prevents duplicate queue entries if a turn end is retried.
+        auto* finder=turnFinder[self].Get();
+        auto* model=static_cast<BNM::IL2CPP::Il2CppObject*>(finder?finderModel[finder].Get():nullptr);
+        auto* instances=static_cast<BNM::IL2CPP::Il2CppObject*>(self);
+        static auto instancesField=BNM::Class("PvZCards.Core.Systems","EndOfTurnAbilityRemovalSystem").GetField("<Instances>k__BackingField").cast<BNM::IL2CPP::Il2CppObject*>();
+        auto* manager=instances && instancesField.IsValid()?instancesField[instances].Get():nullptr;
+        if(model && manager)Abilities::Withering::Schedule(manager,model);
+        // Capture the action while its duration counter still exists. Stock
+        // expiration can remove a one-turn Withering grant in this call.
+        originalTurnEnd(self, effect, method);
+        if(!Core::Performance::aiDepth)Systems::ZoneTriggeredAbilityPresentationSystem::frameStatsDirty=true;
+        Expire(turnFinder[self].Get(), turnRemover[self].Get(), 1);
+        Abilities::RandomKeyword::Expire(static_cast<Abilities::RandomKeyword::Obj*>(model),1);
+        Engine::AbilityDurationEvents::expire.Notify(model,1);
     }
     static void NextFighterHook(void* self, const void* method) {
-        originalNextFighter(self, method); Expire(nextFinder[self].Get(), nextRemover[self].Get(), 2);
-        auto* finder=nextFinder[self].Get();Abilities::RandomKeyword::Expire(static_cast<Abilities::RandomKeyword::Obj*>(finder?finderModel[finder].Get():nullptr),2);
+        originalNextFighter(self, method); Systems::ZoneTriggeredAbilityPresentationSystem::frameStatsDirty=true; Expire(nextFinder[self].Get(), nextRemover[self].Get(), 2);
+        auto* finder=nextFinder[self].Get();
+        auto* model=static_cast<BNM::IL2CPP::Il2CppObject*>(finder?finderModel[finder].Get():nullptr);
+        Abilities::RandomKeyword::Expire(model,2);
+        Engine::AbilityDurationEvents::expire.Notify(model,2);
     }
 
     inline bool Initialize() {
@@ -265,14 +313,13 @@ namespace CustomComponents::GrantAbility {
         removeModel = rs.GetField("<Model>k__BackingField");
         removeRemover = rs.GetField("<GrantableAbilityRemover>k__BackingField");
         removerHistory = grantableAbilityRemover.GetField("<History>k__BackingField");
-        historyAddRecord = history.GetMethod("AddRecord", 1);
+        historyAddRecord = history.GetMethod("AddRecord", {std::string_view("recordType")});
         recordSetDefaults = effectRecord.GetMethod("SetDefaultIdsFromEffect", 1);
         recordSetAbilityType = abilityGrantedRecord.GetMethod("set_AbilityType", 1);
         recordSetAbilityValue = abilityGrantedRecord.GetMethod("set_AbilityValue", 1);
         abilityGrantedRecordType = abilityGrantedRecord.GetMonoType();
         abilityRemovedRecordType = abilityRemovedRecord.GetMonoType();
         auto recordSetValue = record.GetMethod("SetValue", 2);
-        if (!recordSetValue.IsValid()) recordSetValue = record.GetMethod("SetValue", 1);
         if (recordSetValue.IsValid()) {
             removedRecordSetTargetId = recordSetValue.GetGeneric({systemInt32.GetCompileTimeClass()}).cast<void>();
             removedRecordSetAbilityType = recordSetValue.GetGeneric({grantableAbilityType.GetCompileTimeClass()}).cast<void>();

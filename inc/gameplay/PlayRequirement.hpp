@@ -13,6 +13,7 @@ namespace CustomComponents::PlayRequirements {
 using Obj=Engine::Match::Obj;
 using IntList=BNM::Structures::Mono::List<int>;
 struct Component:Obj {
+    std::uint8_t inherited[8]{};
     BNM_CustomClass(Component,BNM::CompileTimeClassBuilder("PvZCards.Engine.Components","PlayRequirement","EngineLib.dll").Build(),BNM::CompileTimeClassBuilder("PvZCards.Engine.Components","EntityFilter","EngineLib.dll").Build(),{});
 };
 // Committed eligibility survives native model copies and is not recomputed

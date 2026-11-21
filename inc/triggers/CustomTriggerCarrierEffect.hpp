@@ -18,6 +18,7 @@ namespace CustomComponents::Effects {
     // EffectRouter.ProcessEffect is hooked by CustomTriggerSystem and consumes
     // this exact runtime type before stock exact-Type routing.
     struct CustomTriggerCarrierEffect : BNM::IL2CPP::Il2CppObject {
+        std::uint8_t inherited[0x38]{};
         BNM::Structures::Mono::String* TriggerName{};
         bool IgnoreTriggerConditions{};
         bool IsTargeted{};

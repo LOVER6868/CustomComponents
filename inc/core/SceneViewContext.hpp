@@ -7,6 +7,7 @@
 // This module owns no native hooks and never creates, removes, or changes views.
 
 #include <BNM/Class.hpp>
+#include <atomic>
 #include <cstdint>
 #include "core/ManagedRuntime.hpp"
 
@@ -25,7 +26,7 @@ namespace CustomComponents::Core::SceneViewContext {
     using ManagedRuntime::getGCHandle;
     using ManagedRuntime::freeGCHandle;
     inline uint32_t mapperHandle = 0;
-    inline std::uintptr_t modelIdentity = 0;
+    inline std::atomic<std::uintptr_t> modelIdentity{0};
 
     inline void ConfigureGC(NewGCHandleFn create, GetGCHandleFn get,
                             FreeGCHandleFn release) {
@@ -38,7 +39,7 @@ namespace CustomComponents::Core::SceneViewContext {
         return mapperHandle && getGCHandle ? getGCHandle(mapperHandle) : nullptr;
     }
 
-    inline std::uintptr_t ModelIdentity() { return modelIdentity; }
+    inline std::uintptr_t ModelIdentity() { return modelIdentity.load(); }
 
     inline Obj* MapperForModel(std::uintptr_t identity) {
         Obj* mapper = RootedMapper();

@@ -349,13 +349,16 @@ inline unsigned trickTargetObservations = 0;
 inline unsigned trickActiveDragSeq = 0;
 inline BNM::Field<Obj*> trickGestureField;
 inline BNM::Field<Obj*> trickDragModelField;
+inline BNM::Field<Obj*> trickUpdateDragModelField;
+inline BNM::Field<int> trickStartCardIdField,trickGestureSource,trickGestureTarget,trickGestureOrder;
+inline BNM::Field<bool> trickGestureHandled;
+inline BNM::Field<int> trickEntityId;
 inline BNM::Field<int> trickDraggedCardField;
 inline BNM::Field<bool> trickInHandField;
 inline BNM::Field<IntList*> trickTargetIdsField;
 inline BNM::Field<Obj*> trickOverlapFinderField;
 
 
-inline Execute originalTrickStartDrag = nullptr;
 inline Execute originalTrickUpdateDrag = nullptr;
 using TrickTopDraggedFn = int(*)(Obj*, Obj*, int, const void*);
 inline TrickTopDraggedFn originalTrickTopDragged = nullptr;
@@ -527,7 +530,7 @@ inline Obj* TrickEffectValidTargets(Obj* self, int effectId, const void* method)
 inline int TrickGenerationGuid(int id);
 inline bool IsGenericPick3ReviveBurst(int cardId);
 inline void TrickBurstTargetsTrace(Obj* self, Obj* card, Obj* targetIds, const void* method) {
-    const int id = card ? *reinterpret_cast<const int*>(reinterpret_cast<const std::uint8_t*>(card)+0x18) : -1;
+    const int id = card ? Engine::Match::Id(card) : -1;
     const int guid = id >= 0 ? TrickGenerationGuid(id) : -1;
     const bool genericScope=IsGenericPick3ReviveBurst(id);
     // Gameplay scope must never depend on the diagnostic sample budget.

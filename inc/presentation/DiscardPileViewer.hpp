@@ -675,7 +675,7 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
 
         inspectionItemCtor =
             inspectionItemClass
-            .GetMethod(".ctor", 1)
+            .GetMethod(".ctor", {std::string_view("cardId")})
             .cast<void>();
 
         inspectionItemSetEntityId =

@@ -2,7 +2,7 @@
 #include "diagnostics/DiagnosticLogging.hpp"
 #include "core/HookRegistry.hpp"
 #pragma once
-// Read-only, ADB-switchable Pick3/PvP pipeline diagnostics.
+// Read-only Pick3/PvP pipeline diagnostics controlled at build time.
 // Intentionally never constructs, mutates, resends or completes a Play.
 #include <atomic>
 #include <array>
@@ -23,10 +23,7 @@
 namespace CustomComponents::Pick3::NetworkTrace {
 using Obj = BNM::IL2CPP::Il2CppObject;
 using IntList = BNM::Structures::Mono::List<int>;
-// Keep consistent with existing ADB diagnostic file convention.
-inline constexpr const char* kSwitch = "/sdcard/Android/data/com.ea.gp.pvzheroes/files/pick3_net_trace.txt";
-inline std::atomic<int> mode{0};
-inline std::atomic<std::time_t> lastSwitchRead{0};
+// No device file overrides.
 inline std::atomic<unsigned long long> nextId{1};
 inline bool installed = false;
 inline BNM::Field<int> typeField, playerField, cardField, orderField;
@@ -84,22 +81,7 @@ inline int currentEffect = -1, currentGroup = -1;
 inline thread_local Flight callbackFlight{};
 
 
-inline int Mode() {
-    if constexpr(!Diagnostics::kSelectionTrace) return 0;
-    const auto now = std::time(nullptr);
-    auto seen = lastSwitchRead.load(std::memory_order_relaxed);
-    if (now != seen && lastSwitchRead.compare_exchange_strong(seen, now)) {
-        int next = 0;
-        if (FILE* file = std::fopen(kSwitch, "rb")) {
-            int parsed = 0;
-            if (std::fscanf(file, "%d", &parsed) == 1 && parsed >= 0 && parsed <= 3) next = parsed;
-            std::fclose(file);
-        }
-        const int old = mode.exchange(next);
-        if (next != old) CC_SELECTION_DIAG("CustomComponents/Pick3/NETTRACE: SWITCH mode=%d previous=%d", next, old);
-    }
-    return mode.load(std::memory_order_relaxed);
-}
+inline int Mode() { return Diagnostics::kSelectionTrace ? 1 : 0; }
 inline bool MetaReady() {
     return typeField.IsValid() && playerField.IsValid() && cardField.IsValid() &&
         orderField.IsValid() && targetsField.IsValid();
@@ -611,7 +593,7 @@ inline void Initialize() {
     queueResponses=queueClass.GetField("ResponseEffects").cast<BNM::Structures::Mono::List<Obj*>*>();
     queueGroupResponses=queueClass.GetField("GroupResponseEffects").cast<BNM::Structures::Mono::List<Obj*>*>();
     queueCurrentGroup=queueClass.GetField("CurrentGroupId").cast<int>();
-    queueChooseClass=BNM::Class("PvZCards.Engine", "ChooseTargetBlockingEffect");
+    queueChooseClass=BNM::Class("PvZCards.Engine.Effects", "ChooseTargetBlockingEffect");
     queueChoosePhase=queueChooseClass.GetField("Phase").cast<int>();
     queueTargetId=effect.GetField("TargetId").cast<int>();
     queueSecondaryId=effect.GetField("SecondaryTargetId").cast<int>();
@@ -678,6 +660,6 @@ inline void Initialize() {
         originalLocalSuccess!=nullptr,originalLocalFailure!=nullptr,originalQueueShift!=nullptr,
         originalQueueDoShift!=nullptr,originalCompleteEffect!=nullptr,originalProcessEffects!=nullptr,
         originalConnectorSend!=nullptr,originalConnectorSendHandlers!=nullptr,
-        originalPostSuccess!=nullptr,MetaReady()?1:0,kSwitch);
+        originalPostSuccess!=nullptr,MetaReady()?1:0,"compile-time");
 }
 } // namespace CustomComponents::Pick3::NetworkTrace

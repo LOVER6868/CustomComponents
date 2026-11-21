@@ -3,6 +3,8 @@
 #include "diagnostics/DiagnosticLogging.hpp"
 #include "core/HookRegistry.hpp"
 #include "core/Performance.hpp"
+#include "diagnostics/HistoryTrace.hpp"
+#include "history/RecordWriter.hpp"
 #pragma once
 #include <BNM/Class.hpp>
 #include <BNM/Field.hpp>
@@ -12,6 +14,7 @@
 #include "pick3/SelectionSubmissionLedger.hpp"
 #include "core/ModelRegistry.hpp"
 #include "engine/TriggerQueue.hpp"
+#include "variables/QueuedTriggerValues.hpp"
 #include "engine/EffectQueue.hpp"
 namespace CustomComponents::Pick3::TransactionRuntime {
 using Obj=BNM::IL2CPP::Il2CppObject;
@@ -252,6 +255,12 @@ inline Transaction::Ref FindAwaitingCreation(Obj* model,int effect,int group,std
     }
     return found;
 }
+inline bool AllTargetsBound(const Transaction::Ref& value) {
+    if(!Transaction::Current(value) || value->cards.empty())return false;
+    for(std::size_t i=0;i<value->cards.size();++i)
+        if(Transaction::LiveTarget(value,i)<=0)return false;
+    return true;
+}
 inline void Produced(Obj* model,Obj* producingEffect,int effect,int group,std::uint64_t sequence) {
     const auto token=ModelOf(model);
     if(!token || !onStockAccepted) return;
@@ -262,8 +271,7 @@ inline void Produced(Obj* model,Obj* producingEffect,int effect,int group,std::u
             return item.value->model==token && item.value->sequence==sequence &&
                 item.value->effect==effect && item.group==group;
         });
-        if(it==awaitingCreation.end() || !Transaction::Current(it->value) ||
-           Transaction::LiveTarget(it->value,0)<=0) return;
+        if(it==awaitingCreation.end() || !AllTargetsBound(it->value)) return;
         found=*it;awaitingCreation.erase(it);
     }
     auto value=Capture(model,effect,group,found.value->source,sequence);
@@ -325,20 +333,25 @@ inline Transaction::Ref TakeTriggerData(Transaction::Model model,Obj* data,
     }
     return count==1?result:Transaction::Ref{};
 }
-inline Obj* (*originalCreateTriggered)(Obj*,Obj*,const void*)=nullptr;
 inline void AttachQueuedTrigger(Obj*,Obj* data) { AttachTriggerData(data,Transaction::active.value); }
-static Obj* CreateTriggeredHook(Obj* self,Obj* data,const void* method) {
-    Obj* effect=originalCreateTriggered(self,data,method);
-    // Stock copies TriggerData into the runtime TriggeredEffect. Transfer the
-    // ticket before the input may be returned to the pool. Rooted identities,
-    // not matching context values, distinguish identical concurrent listeners.
+static void CreatedTriggered(Obj* self,Obj* data,Obj* effect) {
+    // The snapshot adapter owns CreateTriggeredEffectFrom. Observe its result
+    // here, preserving Pick3 tickets without a second native replacement.
     RebindTriggerData(ModelOf(ObjectAt(self,0x30)),data,ObjectAt(effect,0x48));
-    return effect;
 }
 inline Obj* (*originalFindTargets)(Obj*,Obj*,Obj*,const void*)=nullptr;
 static Obj* FindTargetsHook(Obj* self,Obj* entity,Obj* context,const void* method) {
-    Core::Performance::Scope timing(Core::Performance::Area::TargetFinder);
+    Core::Performance::Scope timing(Core::Performance::Area::TargetFinder,"native-target-query",Engine::Match::Id(entity));
     Obj* result=originalFindTargets(self,entity,context,method);
+    if(Diagnostics::HistoryTrace::enabled && Diagnostics::HistoryTrace::Allow(true)){
+        Obj* filter=Engine::EntityAccess::Component(entity,"PrimaryTargetFilter");
+        static auto query=BNM::Class("PvZCards.Engine.Components","EntityFilter").GetField("Query").cast<Obj*>();
+        Obj* expression=filter && query.IsValid()?Core::Metadata::Bind(query,filter).Get():nullptr;
+        auto* found=reinterpret_cast<BNM::Structures::Mono::List<int>*>(result);
+        LOG_INFO("CustomHistory/TARGET_QUERY: us=%lld effect=%d query=%s count=%d ai=%u",
+            Diagnostics::HistoryTrace::Micros(),Engine::Match::Id(entity),expression && expression->klass?expression->klass->name:"none",
+            found?found->size:-1,Core::Performance::aiDepth);
+    }
     const auto value=Transaction::active.value;
     if(!Transaction::Current(value)) return result;
     auto* list=reinterpret_cast<BNM::Structures::Mono::List<int>*>(result);
@@ -405,6 +418,14 @@ static void RouterHook(void* self,void* effect,const void* method) {
     CompleteAutomaticSelection(scope.link,runtimeEffect);
 }
 inline bool Initialize() {
+    Transaction::onState=[](const Transaction::Ref& value,int phase){
+        Obj* model=Core::ModelRegistry::Get(value->model);if(!model)return;
+        History::Record r;r.kind=phase==0?History::Kind::SelectionRequest:History::Kind::SelectionResolved;r.visual=History::VisualPolicy::NoVisual;
+        r.entityId=r.sourceId=value->source;r.effectId=value->effect;r.correlationId=value->sequence;
+        History::SelectionPayload p;p.effect=value->effect;p.group=value->group;p.phase=static_cast<History::SelectionPhase>(phase);
+        for(auto c:value->cards){p.entities.push_back(c.entityId);p.guids.push_back(c.cardGuid);}
+        r.payload=std::move(p);History::Writer::Commit(std::move(r),model);
+    };
     Core::ModelRegistry::retired.Add(RetireModel);
     const bool triggerQueueReady=Engine::TriggerQueue::Initialize();
     const bool effectQueueReady=Engine::EffectQueue::Initialize();
@@ -417,19 +438,17 @@ inline bool Initialize() {
         auto method=BNM::Class("PvZCards.Engine","EffectRouter").GetMethod("ProcessEffect",1);
         if(method.IsValid()) CustomComponents::Core::Hooks::Install(method,RouterHook,originalRouter);
     }
-    auto create=BNM::Class("PvZCards.Core.Systems","TriggeredEffectQueuingSystem").GetMethod("CreateTriggeredEffectFrom",1);
-    if(create.IsValid() && triggerQueueReady) {
-        if(!originalCreateTriggered) CustomComponents::Core::Hooks::Install(create,CreateTriggeredHook,originalCreateTriggered);
-    }
-    auto targets=BNM::Class("PvZCards.Core.Systems.Utilities","TargetEntityFinder").GetMethod("FindTargets",2);
+    const bool createReady=Variables::QueuedTriggerValues::originalCreateEffect &&
+        Variables::QueuedTriggerValues::afterCreate.Add(CreatedTriggered);
+    auto targets=BNM::Class("PvZCards.Core.Systems.Utilities","TargetEntityFinder").GetMethod("FindTargets",{std::string_view("effectEntity"),std::string_view("context")});
     if(targets.IsValid() && !originalFindTargets) CustomComponents::Core::Hooks::Install(targets,FindTargetsHook,originalFindTargets);
     CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=TARGET_HOOK installed=%d",int(originalFindTargets!=nullptr));
     auto creator=BNM::Class("PvZCards.Core.Systems","TriggeredEffectResolverSystem").GetMethod("CreateEffects",2);
     if(creator.IsValid() && !originalResolverCreateEffects)
         CustomComponents::Core::Hooks::Install(creator,ResolverCreateEffectsHook,originalResolverCreateEffects);
     CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=CREATION_HOOK installed=%d",int(originalResolverCreateEffects!=nullptr));
-    pipelineReady=queryModel.IsValid() && (externalRouterHook || originalRouter) && triggerQueueReady && effectQueueReady && originalCreateTriggered && originalResolverCreateEffects;
-    CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=INIT version=2.23 ready=%d router=%d queryModel=%d triggerAdd=%d triggerCopy=%d costEffectClass=%d",int(pipelineReady),int(externalRouterHook || originalRouter),int(queryModel.IsValid()),int(triggerQueueReady),int(originalCreateTriggered!=nullptr),int(modifySunCostEffectClass.IsValid()));
+    pipelineReady=queryModel.IsValid() && (externalRouterHook || originalRouter) && triggerQueueReady && effectQueueReady && createReady && originalResolverCreateEffects;
+    CC_SELECTION_DIAG("CustomComponents/Pick3/PF3_TX: phase=INIT version=2.23 ready=%d router=%d queryModel=%d triggerAdd=%d triggerCopy=%d costEffectClass=%d",int(pipelineReady),int(externalRouterHook || originalRouter),int(queryModel.IsValid()),int(triggerQueueReady),int(createReady),int(modifySunCostEffectClass.IsValid()));
     if(pipelineReady) {
         Engine::TriggerQueue::beforeEnqueue.Add(AttachQueuedTrigger);
         Engine::EffectQueue::afterPush.Add(AttachQueueEffect);
