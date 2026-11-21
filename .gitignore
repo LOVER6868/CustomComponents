@@ -12,6 +12,7 @@ __pycache__/
 docs/history
 audit
 .vs
+docs/diagnostics
 
 # Local development files stay on this computer.
 /tests/
