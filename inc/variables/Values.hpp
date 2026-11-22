@@ -7,8 +7,9 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "core/ComparisonOperators.hpp"
 namespace CustomComponents::Variables {
-enum class Kind {Int,Guid,Entity,Ints,Guids,Entities};
+enum class Kind : std::int32_t {Int=0,Guid=1,Entity=2,Ints=3,Guids=4,Entities=5};
 inline constexpr std::size_t MaxVariables=64,MaxArray=256,MaxPayload=65536;
 struct Value {
     Kind kind=Kind::Int;std::vector<int> items;
@@ -36,22 +37,45 @@ inline std::optional<Table> Decode(std::string_view text){
         if(!value.Valid() || !table.emplace(std::string(row.substr(0,first)),std::move(value)).second)return {};
     }return table;
 }
-inline bool Compare(int a,int b,std::string_view op){if(op=="Equal")return a==b;if(op=="NotEqual")return a!=b;if(op=="Greater")return a>b;if(op=="GreaterOrEqual")return a>=b;if(op=="Less")return a<b;if(op=="LessOrEqual")return a<=b;return false;}
-inline bool Assign(Table& table,std::string name,const Value& value,std::string_view operation){
-    if(!Name(name) || !value.Valid())return false;
-    if(operation=="Remove"){table.erase(name);return true;}
+// These are JSON operation names, not IL2CPP enum values.
+enum class Operation : std::int32_t {
+    Invalid=-1, Set=0, Add=1, Subtract=2, Clear=3,
+    Remove=4, RemoveAt=5, RemoveValue=6, Append=7
+};
+inline constexpr Operation ParseOperation(std::string_view text) {
+    if(text=="Set")return Operation::Set;
+    if(text=="Add")return Operation::Add;
+    if(text=="Subtract")return Operation::Subtract;
+    if(text=="Clear")return Operation::Clear;
+    if(text=="Remove")return Operation::Remove;
+    if(text=="RemoveAt")return Operation::RemoveAt;
+    if(text=="RemoveValue")return Operation::RemoveValue;
+    if(text=="Append")return Operation::Append;
+    return Operation::Invalid;
+}
+inline constexpr bool TimedOperationSupported(Operation op) {
+    return op==Operation::Set || op==Operation::Add || op==Operation::Subtract;
+}
+inline bool Compare(int a,int b,Core::Comparisons::Operator op){return Core::Comparisons::Test(a,b,op);}
+inline bool Compare(int a,int b,std::string_view op){return Compare(a,b,Core::Comparisons::Parse(op));}
+inline bool Assign(Table& table,std::string name,const Value& value,Operation operation){
+    if(!Name(name) || !value.Valid() || operation==Operation::Invalid)return false;
+    if(operation==Operation::Remove){table.erase(name);return true;}
     auto found=table.find(name);
-    if(operation=="Set"){if(found==table.end() && table.size()==MaxVariables)return false;table[std::move(name)]=value;return true;}
-    if(operation=="Add" || operation=="Subtract"){
+    if(operation==Operation::Set){if(found==table.end() && table.size()==MaxVariables)return false;table[std::move(name)]=value;return true;}
+    if(operation==Operation::Add || operation==Operation::Subtract){
         auto amount=value.Integer();if(!amount)return false;int previous=0;if(found!=table.end()){auto n=found->second.Integer();if(!n)return false;previous=*n;}else if(table.size()==MaxVariables)return false;
-        std::int64_t result=std::int64_t(previous)+(operation=="Add"?std::int64_t(*amount):-std::int64_t(*amount));if(result<INT32_MIN || result>INT32_MAX)return false;table[name]={Kind::Int,{int(result)}};return true;
+        std::int64_t result=std::int64_t(previous)+(operation==Operation::Add?std::int64_t(*amount):-std::int64_t(*amount));if(result<INT32_MIN || result>INT32_MAX)return false;table[name]={Kind::Int,{int(result)}};return true;
     }
     if(found==table.end() || !found->second.Array())return false;
     auto& target=found->second;
-    if(operation=="Clear"){target.items.clear();return true;}
-    if(operation=="RemoveAt"){auto index=value.Integer();if(!index || *index<0 || *index>=int(target.items.size()))return false;target.items.erase(target.items.begin()+*index);return true;}
-    if(operation=="RemoveValue"){if(int(value.kind)%3!=int(target.kind)%3)return false;target.items.erase(std::remove_if(target.items.begin(),target.items.end(),[&](int n){return std::find(value.items.begin(),value.items.end(),n)!=value.items.end();}),target.items.end());return true;}
-    if(operation=="Append"){if(int(value.kind)%3!=int(target.kind)%3 || target.items.size()+value.items.size()>MaxArray)return false;target.items.insert(target.items.end(),value.items.begin(),value.items.end());return true;}
+    if(operation==Operation::Clear){target.items.clear();return true;}
+    if(operation==Operation::RemoveAt){auto index=value.Integer();if(!index || *index<0 || *index>=int(target.items.size()))return false;target.items.erase(target.items.begin()+*index);return true;}
+    if(operation==Operation::RemoveValue){if(int(value.kind)%3!=int(target.kind)%3)return false;target.items.erase(std::remove_if(target.items.begin(),target.items.end(),[&](int n){return std::find(value.items.begin(),value.items.end(),n)!=value.items.end();}),target.items.end());return true;}
+    if(operation==Operation::Append){if(int(value.kind)%3!=int(target.kind)%3 || target.items.size()+value.items.size()>MaxArray)return false;target.items.insert(target.items.end(),value.items.begin(),value.items.end());return true;}
     return false;
+}
+inline bool Assign(Table& table,std::string name,const Value& value,std::string_view text){
+    return Assign(table,std::move(name),value,ParseOperation(text));
 }
 }

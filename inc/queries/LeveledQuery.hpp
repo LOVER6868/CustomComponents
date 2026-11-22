@@ -3,6 +3,7 @@
 #include "queries/InDeckQuery.hpp"
 #include "queries/ListPositionPolicy.hpp"
 #include "core/ComponentLifecycle.hpp"
+#include "core/ComparisonOperators.hpp"
 #include "engine/EntityAccess.hpp"
 #include "engine/BoardPlacement.hpp"
 #include "level/LevelQueryState.hpp"
@@ -24,11 +25,7 @@ struct LeveledQuery:Obj {
         if(preview){actual=*preview;if(actual<=0)return false;}
         else {Obj* marker=Engine::EntityAccess::Component(entity,"Leveled");if(!marker)return false;auto value=BNM::Class(marker).GetField("Value").cast<int>();if(!value.IsValid())return false;actual=value[marker].Get();}
         const auto op=ComparisonOperator?ComparisonOperator->str():"Equal";
-        bool result=false;
-        if(op=="Equal")result=actual==Value;else if(op=="NotEqual")result=actual!=Value;
-        else if(op=="Greater")result=actual>Value;else if(op=="GreaterOrEqual")result=actual>=Value;
-        else if(op=="Less")result=actual<Value;else if(op=="LessOrEqual")result=actual<=Value;
-        return result;
+        return Core::Comparisons::Test(actual,Value,op);
     }
     void DeepCopyFrom(Obj* source,Obj*){auto* s=reinterpret_cast<LeveledQuery*>(source);Value=s?s->Value:0;auto* text=s?s->ComparisonOperator:nullptr;if(Core::ManagedRuntime::writeBarrier)Core::ManagedRuntime::writeBarrier(this,reinterpret_cast<void**>(&ComparisonOperator),text);else ComparisonOperator=text;}
     void HandleReturnToPool(Obj* instances){DeepCopyFrom(nullptr,instances);}

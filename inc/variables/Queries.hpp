@@ -26,20 +26,23 @@ inline std::optional<Value> StatOrVariable(Obj* model,Obj* owner,std::string_vie
     auto stat=Engine::CardStatValues::Read(owner,name);
     return stat?std::optional<Value>(Value{Kind::Int,{*stat}}):std::nullopt;
 }
-template<class Q> inline bool QueryMatch(Q* q,Obj* candidate,Obj* context,int mode){
+enum class QueryKind : int {Comparison=0,Exists=1,ContainsCard=2};
+enum class MatchMode : int {Any=0,All=1};
+inline constexpr MatchMode ParseMatchMode(std::string_view name){return name=="All"?MatchMode::All:MatchMode::Any;}
+template<class Q> inline bool QueryMatch(Q* q,Obj* candidate,Obj* context,QueryKind mode){
     Core::Performance::Scope queryCost(Core::Performance::Area::VariableQuery,
         q && q->klass?q->klass->name:"variable-query");
     Obj* model=ContextModel(context);if(!model || !candidate)return false;auto owners=Owners(candidate,context,q->EntityQuery);
-    if(mode==0 && reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity()){
+    if(mode==QueryKind::Comparison && reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity()){
         static std::atomic<unsigned> samples{0};
         if(samples.fetch_add(1)<80)LOG_INFO("CustomComponents/Variables/QUERY_ENTER: candidate=%d self=%d owners=%zu variable=%s expression=%s value=%d",
             Engine::Match::Id(candidate),Field(context,"SelfId"),owners.size(),Text(q->Variable).c_str(),Text(q->Expression).c_str(),q->Value);
     }
-    if(owners.empty())return false;bool all=Text(q->MatchMode,"Any")=="All";
+    if(owners.empty())return false;const bool all=ParseMatchMode(Text(q->MatchMode,"Any"))==MatchMode::All;
     for(Obj* owner:owners){bool result=false;std::optional<int> left,right;
         auto read=[&](auto name)->std::optional<Value>{if(auto frozen=QueuedTriggerValues::Frozen(model,owner,name))return *frozen;return StatOrVariable(model,owner,name);};
-        if(mode==1)result=read(Text(q->Variable)).has_value();
-        else if(mode==2){auto v=read(Text(q->Variable));if(v){int n=-1;if(v->kind==Kind::Guid || v->kind==Kind::Guids)n=Engine::BoardPlacement::Guid(candidate);else if(v->kind==Kind::Entity || v->kind==Kind::Entities){int id=Engine::Match::Id(candidate);if(Find(model,id)==candidate)n=id;}result=n>=0 && std::find(v->items.begin(),v->items.end(),n)!=v->items.end();}}
+        if(mode==QueryKind::Exists)result=read(Text(q->Variable)).has_value();
+        else if(mode==QueryKind::ContainsCard){auto v=read(Text(q->Variable));if(v){int n=-1;if(v->kind==Kind::Guid || v->kind==Kind::Guids)n=Engine::BoardPlacement::Guid(candidate);else if(v->kind==Kind::Entity || v->kind==Kind::Entities){int id=Engine::Match::Id(candidate);if(Find(model,id)==candidate)n=id;}result=n>=0 && std::find(v->items.begin(),v->items.end(),n)!=v->items.end();}}
         else {
             // A triggered reward must read the value from *its own* play,
             // even if a later queued PlayCardEffect already advanced the live
@@ -49,7 +52,7 @@ template<class Q> inline bool QueryMatch(Q* q,Obj* candidate,Obj* context,int mo
                 return StatOrVariable(model,owner,name);
             };
             auto value=lookup(Text(q->Variable));
-            auto op=Text(q->ComparisonOperator,"Equal");
+            const auto op=Core::Comparisons::Parse(Text(q->ComparisonOperator,"Equal"));
             Obj* compareOwner=owner;
             if constexpr(requires(Q* query){query->CompareEntityQuery;}) {
                 if(q->CompareEntityQuery){
@@ -66,9 +69,9 @@ template<class Q> inline bool QueryMatch(Q* q,Obj* candidate,Obj* context,int mo
             }
             auto rhsLookup=[&](auto name)->std::optional<Value>{if(auto frozen=QueuedTriggerValues::Frozen(model,compareOwner,name))return *frozen;return StatOrVariable(model,compareOwner,name);};
             right=Text(q->ValueExpression).empty()?std::optional<int>(q->Value):Expressions::Evaluate(Text(q->ValueExpression),rhsLookup);
-            if(Text(q->Expression).empty() && value && value->kind!=Kind::Int){if(right){if(value->Array() && (op=="Contains" || op=="NotContains")){bool contains=std::find(value->items.begin(),value->items.end(),*right)!=value->items.end();result=op=="Contains"?contains:!contains;}else if(!value->Array() && (op=="Equal" || op=="NotEqual"))result=Compare(value->items[0],*right,op);}}
+            if(Text(q->Expression).empty() && value && value->kind!=Kind::Int){if(right){if(value->Array() && (op==Core::Comparisons::Operator::Contains || op==Core::Comparisons::Operator::NotContains)){bool contains=std::find(value->items.begin(),value->items.end(),*right)!=value->items.end();result=op==Core::Comparisons::Operator::Contains?contains:!contains;}else if(!value->Array() && (op==Core::Comparisons::Operator::Equal || op==Core::Comparisons::Operator::NotEqual))result=Compare(value->items[0],*right,op);}}
             else {left=Text(q->Expression).empty()?(value?value->Integer():std::nullopt):Expressions::Evaluate(Text(q->Expression),lookup);result=left && right && Compare(*left,*right,op);}}
-        if(mode==0 && reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity()){
+        if(mode==QueryKind::Comparison && reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity()){
             static std::atomic<unsigned> samples{0};
             if(Diagnostics::HistoryTrace::enabled?Diagnostics::HistoryTrace::Allow():samples.fetch_add(1)<60){
                 const int source=ContextId(context,"get_SourceId"),target=ContextId(context,"get_TargetId");
@@ -99,7 +102,7 @@ struct VariableComparisonQuery:Obj {
     BNM_CustomField(EntityQuery,QueryType(),"EntityQuery");
     BNM_CustomField(CompareEntityQuery,QueryType(),"CompareEntityQuery");
     void Constructor(){auto ctor=BNM::Class("PvZCards.Engine.Queries","InHandQuery").GetMethod(".ctor",0).cast<void>();ctor[this]();}
-    bool Matches(Obj* candidate,Obj* context){return QueryMatch(this,candidate,context,0);}
+    bool Matches(Obj* candidate,Obj* context){return QueryMatch(this,candidate,context,QueryKind::Comparison);}
     void DeepCopyFrom(Obj* source,Obj* instances){auto* from=reinterpret_cast<VariableComparisonQuery*>(source);
         Reference(this,&Variable,from?from->Variable:nullptr);
         Reference(this,&Expression,from?from->Expression:nullptr);
@@ -141,7 +144,7 @@ struct HasVariableQuery:Obj {
     BNM_CustomField(Value,BNM::Defaults::Get<int>(),"Value");
     BNM_CustomField(EntityQuery,QueryType(),"EntityQuery");
     void Constructor(){auto ctor=BNM::Class("PvZCards.Engine.Queries","InHandQuery").GetMethod(".ctor",0).cast<void>();ctor[this]();}
-    bool Matches(Obj* candidate,Obj* context){return QueryMatch(this,candidate,context,1);}
+    bool Matches(Obj* candidate,Obj* context){return QueryMatch(this,candidate,context,QueryKind::Exists);}
     void DeepCopyFrom(Obj* source,Obj* instances){auto* from=reinterpret_cast<HasVariableQuery*>(source);
         Reference(this,&Variable,from?from->Variable:nullptr);
         Reference(this,&Expression,from?from->Expression:nullptr);
@@ -181,7 +184,7 @@ struct VariableCardQuery:Obj {
     BNM_CustomField(Value,BNM::Defaults::Get<int>(),"Value");
     BNM_CustomField(EntityQuery,QueryType(),"EntityQuery");
     void Constructor(){auto ctor=BNM::Class("PvZCards.Engine.Queries","InHandQuery").GetMethod(".ctor",0).cast<void>();ctor[this]();}
-    bool Matches(Obj* candidate,Obj* context){return QueryMatch(this,candidate,context,2);}
+    bool Matches(Obj* candidate,Obj* context){return QueryMatch(this,candidate,context,QueryKind::ContainsCard);}
     void DeepCopyFrom(Obj* source,Obj* instances){auto* from=reinterpret_cast<VariableCardQuery*>(source);
         Reference(this,&Variable,from?from->Variable:nullptr);
         Reference(this,&Expression,from?from->Expression:nullptr);

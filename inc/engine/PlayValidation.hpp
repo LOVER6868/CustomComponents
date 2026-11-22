@@ -4,6 +4,7 @@
 #include "core/HookRegistry.hpp"
 #include "engine/EntityAccess.hpp"
 #include "engine/MatchAccess.hpp"
+#include "engine/TargetSelectionTypes.hpp"
 #include "core/ManagedPool.hpp"
 #include "core/ValidationPolicy.hpp"
 #include <BNM/Il2CppHeaders.hpp>
@@ -55,7 +56,7 @@ inline bool IsManualPlayEffect(Obj* effect){
     if(!effect || !EntityAccess::Component(effect,"PlayTrigger"))return false;
     Obj* filter=EntityAccess::Component(effect,"PrimaryTargetFilter");
     static auto selection=BNM::Class("PvZCards.Engine.Components","TargetEntityFilter").GetField("SelectionType").cast<int>();
-    return filter && selection.IsValid() && selection[filter].Get()==1;
+    return filter && selection.IsValid() && TargetSelectionTypes::Is(selection[filter].Get(),TargetSelectionTypes::Type::Manual);
 }
 // Descriptors registered by CustomComponents can be absent from the stock
 // first-on-play descriptor whitelist even while their primary Manual filter
@@ -135,7 +136,7 @@ inline Obj* Select(Obj* self,Obj* card,const void* method,bool* hadTargets=nullp
 inline bool HasPrimaryQueryMatch(Obj* model,Obj* card,Obj* effect){
     Obj* filter=EntityAccess::Component(effect,"PrimaryTargetFilter");if(!filter)return true;
     static auto selectionMetadata=BNM::Class("PvZCards.Engine.Components","TargetEntityFilter").GetField("SelectionType").cast<int>();auto selection=selectionMetadata;
-    if((selection.IsValid() && selection[filter].Get()==5) || (deferPrimaryQuery && deferPrimaryQuery(filter)))return true;
+    if((selection.IsValid() && TargetSelectionTypes::Is(selection[filter].Get(),TargetSelectionTypes::Type::CardDatabase)) || (deferPrimaryQuery && deferPrimaryQuery(filter)))return true;
     static auto queryMetadata=BNM::Class("PvZCards.Engine.Components","EntityFilter").GetField("Query").cast<Obj*>();auto queryField=queryMetadata;
     Obj* query=queryField[filter].Get();if(!query)return true;
     static auto finderType=BNM::Class("PvZCards.Engine","EntityFinder");

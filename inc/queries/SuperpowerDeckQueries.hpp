@@ -33,6 +33,7 @@ inline bool Member(Obj* candidate,Obj* context,bool byGuid) {
     }
     return false;
 }
+enum class PoolSizeComparison : int {Equal=0,LessOrEqual=1,GreaterOrEqual=2};
 inline bool SizeMatches(Obj* query,Obj* candidate,Obj* context,bool powers) {
     Obj* model=Engine::BoardPlacement::Model(context);
     if(!model || !candidate)return false;
@@ -46,10 +47,10 @@ inline bool SizeMatches(Obj* query,Obj* candidate,Obj* context,bool powers) {
     static auto comparison=BNM::Class("PvZCards.Engine.Queries","CardsInHandQuery").GetField("ComparisonOperator").cast<int>();
     if(!number.IsValid() || !comparison.IsValid())return false;
     const int expected=Core::Metadata::Bind(number,query).Get();
-    switch(Core::Metadata::Bind(comparison,query).Get()){
-        case 0:return count==expected;
-        case 1:return count<=expected;
-        case 2:return count>=expected;
+    switch(static_cast<PoolSizeComparison>(Core::Metadata::Bind(comparison,query).Get())){
+        case PoolSizeComparison::Equal:return count==expected;
+        case PoolSizeComparison::LessOrEqual:return count<=expected;
+        case PoolSizeComparison::GreaterOrEqual:return count>=expected;
         default:return false;
     }
 }

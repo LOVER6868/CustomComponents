@@ -1,4 +1,5 @@
 #pragma once
+#include "abilities/CustomAbilityIds.hpp"
 #include "history/DomainRecords.hpp"
 
 #include <algorithm>
@@ -42,7 +43,11 @@ CC_MODIFIER_COMPONENT(Burn)
 CC_MODIFIER_COMPONENT(BuffMultiplier)
 #undef CC_MODIFIER_COMPONENT
 
-inline constexpr int DamageBuffId=28,NonCombatDamageBuffId=29,NonCombatTruestrikeId=30,BurnId=31,BuffMultiplierId=32;
+inline constexpr int DamageBuffId=CustomAbilityIds::ToNative(CustomAbilityIds::Id::DamageBuff),
+    NonCombatDamageBuffId=CustomAbilityIds::ToNative(CustomAbilityIds::Id::NonCombatDamageBuff),
+    NonCombatTruestrikeId=CustomAbilityIds::ToNative(CustomAbilityIds::Id::NonCombatTruestrike),
+    BurnId=CustomAbilityIds::ToNative(CustomAbilityIds::Id::Burn),
+    BuffMultiplierId=CustomAbilityIds::ToNative(CustomAbilityIds::Id::BuffMultiplier);
 inline Obj* Get(Obj* entity,const char* name,bool create=false){
     auto type=BNM::Class("PvZCards.Engine.Components",name);
     return type.IsValid()?Engine::Match::Component(entity,type.GetMonoType(),create):nullptr;

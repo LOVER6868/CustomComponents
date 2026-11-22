@@ -17,7 +17,7 @@ namespace CustomComponents::Abilities::TriggeredGrants {
 using Obj=Engine::Match::Obj;
 using Str=BNM::Structures::Mono::String;
 namespace Bridge=Systems::CustomFieldBridgeSystem;
-struct Options {int duration=0,operation=0;bool enabled=false;};
+struct Options {int duration=0;Policy::Operation operation=Policy::Operation::Maximum;bool enabled=false;};
 inline Core::WeakObjectSettings<Options> descriptors,effects;
 struct Ledger : Obj {
     Str* Data=nullptr;
@@ -49,11 +49,11 @@ inline void RecordGrant(Obj* card,const std::vector<Policy::Row>& before,const s
     if(Core::Performance::aiDepth)return;
     std::vector<int> guids;
     for(const auto& rows:{before,after})for(const auto& row:rows)
-        if((guid<0 || row[0]==guid) && std::find(guids.begin(),guids.end(),row[0])==guids.end())guids.push_back(row[0]);
+        if((guid<0 || row.guid==guid) && std::find(guids.begin(),guids.end(),row.guid)==guids.end())guids.push_back(row.guid);
     for(int changed:guids){
         std::vector<Policy::Row> oldRows,newRows;
-        for(const auto& row:before)if(row[0]==changed)oldRows.push_back(row);
-        for(const auto& row:after)if(row[0]==changed)newRows.push_back(row);
+        for(const auto& row:before)if(row.guid==changed)oldRows.push_back(row);
+        for(const auto& row:after)if(row.guid==changed)newRows.push_back(row);
         History::AbilityPayload payload;payload.ability=changed;payload.source=source;payload.duration=duration;
         payload.encoding="triggered-policy-v1";payload.operation=operation;payload.triggered=true;payload.expired=expired;
         payload.before=Policy::Encode(oldRows);payload.after=Policy::Encode(newRows);

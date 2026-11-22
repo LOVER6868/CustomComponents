@@ -113,14 +113,8 @@ namespace CustomComponents::GrantAbilitySerialization {
 
         const std::string operationText = EnumSerializationSupport::Text(rawOperation);
 
-        Operation operation = Operation::Add;
-        if (operationText == "Set" || operationText == "1") {
-            operation = Operation::Set;
-        } else if (operationText == "Add" || operationText == "2" ||
-                   operationText == "None" || operationText == "0" ||
-                   operationText.empty()) {
-            operation = Operation::Add;
-        } else {
+        const auto parsedOperation=NumericAbility::ParseOperation(operationText);
+        if (!parsedOperation) {
             LOG_ERR(
                 "CustomComponents/GrantAbility: invalid ModifyOperation '%s'",
                 operationText.c_str()
@@ -160,7 +154,7 @@ namespace CustomComponents::GrantAbilitySerialization {
 
         descriptorAbility[instance].Set(adapter->id);
 
-        Put(descriptors, instance, operation);
+        Put(descriptors, instance, *parsedOperation);
 
     }
 

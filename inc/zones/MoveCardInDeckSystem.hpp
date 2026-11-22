@@ -33,6 +33,12 @@ namespace CustomComponents::Systems::MoveCardInDeckSystem {
     // native pointer-keyed sidecar state or a second EffectRouter registration.
     // A 27-bit signed position has ample range even for an extremely large deck.
     // Tag 0x7... is disjoint from RemoveFromDiscardPile marker 0x6F000001.
+    enum class MoveMode : int {Invalid=-1,Add=0,Move=1};
+    inline constexpr MoveMode ParseMode(std::string_view name){
+        if(name=="Add")return MoveMode::Add;
+        if(name=="Move")return MoveMode::Move;
+        return MoveMode::Invalid;
+    }
     inline constexpr std::uint32_t kCarrierTagMask = 0xF0000000u;
     inline constexpr std::uint32_t kCarrierTag = 0x70000000u;
     inline constexpr std::uint32_t kModeBit = 0x08000000u;
@@ -91,8 +97,9 @@ namespace CustomComponents::Systems::MoveCardInDeckSystem {
             return nullptr;
         auto* modeValue = descriptorMode[descriptor].Get();
         const std::string mode = (modeValue && !modeValue->str().empty()) ? modeValue->str() : "Add";
-        const bool absolute = mode == "Move";
-        const bool valid = mode == "Add" || absolute;
+        const auto parsedMode=ParseMode(mode);
+        const bool absolute = parsedMode == MoveMode::Move;
+        const bool valid = parsedMode != MoveMode::Invalid;
         const int requested = descriptorPosition[descriptor].Get();
         // Bad descriptors produce a safe no-op carrier, not a stock return that
         // would actually transfer the target out of its current zone.

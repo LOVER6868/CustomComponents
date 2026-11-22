@@ -1,4 +1,5 @@
 #pragma once
+#include "abilities/CustomAbilityIds.hpp"
 #include <algorithm>
 #include "abilities/LaneAttackPolicy.hpp"
 #include <charconv>
@@ -13,7 +14,8 @@
 namespace CustomComponents::Abilities::LaneAttacks {
 using Obj=BNM::IL2CPP::Il2CppObject;
 namespace Bridge=Systems::CustomFieldBridgeSystem;
-inline constexpr int AlsoId=33,OnlyId=34;
+inline constexpr int AlsoId=CustomAbilityIds::ToNative(CustomAbilityIds::Id::AttackAlsoInLanes),
+    OnlyId=CustomAbilityIds::ToNative(CustomAbilityIds::Id::AttackOnlyInLanes);
 #define SPRIG_LANE_COMPONENT(Type,Name) \
 struct Type:Obj {std::uint8_t inherited[8]{};int InnateMask=0; \
 BNM_CustomClass(Type,BNM::CompileTimeClassBuilder("PvZCards.Engine.Components",Name,"EngineLib.dll").Build(),BNM::CompileTimeClassBuilder("PvZCards.Engine.Components","GrantableAbility","EngineLib.dll").Build(),{}); \

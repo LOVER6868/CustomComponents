@@ -8,10 +8,10 @@ inline void Properties(Obj* object,Obj* properties){
     const auto d=Text(duration),op=Text(operation);
     value.duration=duration?Engine::EffectDurations::Parse(d):0;
     if(value.duration<0){LOG_ERR("CustomComponents/TriggeredGrant: unsupported Duration=%s",d.c_str());value.enabled=false;}
-    if(!operation)value.operation=0;
-    else if(op=="Set" || op=="1")value.operation=1;
-    else if(op=="Add" || op=="2")value.operation=2;
-    else {LOG_ERR("CustomComponents/TriggeredGrant: unsupported ModifyOperation=%s",op.c_str());value.enabled=false;}
+    value.operation=Policy::ParseGrantOperation(op);
+    if(operation && value.operation==Policy::Operation::Maximum){
+        LOG_ERR("CustomComponents/TriggeredGrant: unsupported ModifyOperation=%s",op.c_str());value.enabled=false;
+    }
     descriptors.Set(object,value,value.enabled);
     auto remove=BNM::Class(properties).GetMethod("Remove",1).cast<bool>();
     if(remove.IsValid())for(auto key:{"Duration","ModifyOperation"})Core::Metadata::Bind(remove,properties)(BNM::CreateMonoString(key));

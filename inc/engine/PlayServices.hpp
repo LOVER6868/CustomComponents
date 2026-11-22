@@ -4,6 +4,7 @@
 #include "engine/MatchAccess.hpp"
 #include "engine/HandModeCommandPolicy.hpp"
 #include "engine/PlayServiceCompletion.hpp"
+#include "engine/PlayTypeCodes.hpp"
 #include "engine/SimulationChanges.hpp"
 namespace CustomComponents::Engine::PlayServices {
 using Obj=BNM::IL2CPP::Il2CppObject;
@@ -15,15 +16,16 @@ inline void(*observer)(Obj*,Obj*,const void*)=nullptr;
 inline void(*originalLocal)(Obj*,Obj*,const void*)=nullptr;
 inline Obj*(*originalService)(Obj*,int,const void*)=nullptr;
 inline int Type(Obj* play){static auto metadata=BNM::Class("PvZCards.Engine.Dtos","Play").GetField("Type").cast<int>();auto field=metadata;return play?field[play].Get():-1;}
-static Obj* Service(Obj* factory,int type,const void* method){return originalService(factory,type==0?3:type,method);}
+static Obj* Service(Obj* factory,int type,const void* method){return originalService(factory,PlayTypeCodes::Is(type,PlayTypeCodes::Type::Control)?
+    PlayTypeCodes::ToNative(PlayTypeCodes::Type::Surprise):type,method);}
 static void Local(Obj* self,Obj* play,const void* method){
-    if(Type(play)==0){if(control){control(self,play);auto instances=BNM::Class("PvZCards.Core.Services","LocalPlayCardService").GetField("<Instances>k__BackingField").cast<Obj*>();Obj* model=Match::Provide(instances[self].Get(),BNM::Class("PvZCards.Engine","EntityModel").GetMonoType());SimulationChanges::Changed(model);SimulationChanges::settled.Notify(model);}else {auto fail=BNM::Class("PvZCards.Engine","BaseService").GetMethod("DispatchFailureDelegate",1).cast<void>();fail[self](29);}return;}
+    if(PlayTypeCodes::Is(Type(play),PlayTypeCodes::Type::Control)){if(control){control(self,play);auto instances=BNM::Class("PvZCards.Core.Services","LocalPlayCardService").GetField("<Instances>k__BackingField").cast<Obj*>();Obj* model=Match::Provide(instances[self].Get(),BNM::Class("PvZCards.Engine","EntityModel").GetMonoType());SimulationChanges::Changed(model);SimulationChanges::settled.Notify(model);}else {auto fail=BNM::Class("PvZCards.Engine","BaseService").GetMethod("DispatchFailureDelegate",1).cast<void>();fail[self](29);}return;}
     if(observer)observer(self,play,method);else originalLocal(self,play,method);
 }
 inline bool Submit(Obj* card,int player,int entry){
     auto type=BNM::Class("PvZCards.Engine.Dtos","Play");
     auto root=std::make_shared<Core::ManagedRuntime::Root>(type.CreateNewObjectParameters());Obj* play=root->Get();if(!play)return false;
-    type.GetField("Type").cast<int>()[play].Set(0);type.GetField("CardId").cast<int>()[play].Set(Match::Id(card));type.GetField("PlayerId").cast<int>()[play].Set(player);type.GetField("OrderInTargetLocation").cast<int>()[play].Set(HandModeOrder);
+    type.GetField("Type").cast<int>()[play].Set(PlayTypeCodes::ToNative(PlayTypeCodes::Type::Control));type.GetField("CardId").cast<int>()[play].Set(Match::Id(card));type.GetField("PlayerId").cast<int>()[play].Set(player);type.GetField("OrderInTargetLocation").cast<int>()[play].Set(HandModeOrder);
     auto targets=type.GetField("Targets").cast<Obj*>()[play].Get();if(!targets)return false;auto add=BNM::Class(targets).GetMethod("Add",1).cast<void>();if(!add.IsValid())return false;add[targets](entry+1);
     Obj* service=FrontendServices::Provide(BNM::Class("PvZCards.Core.Services","PlayCardService"),FrontendServices::Game());if(!service)return false;
     auto factoryType=BNM::Class("PvZCards.Core.Utilities","ServiceFactory");

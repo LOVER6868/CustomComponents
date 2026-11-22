@@ -1,4 +1,5 @@
 #pragma once
+#include "abilities/CustomAbilityIds.hpp"
 #include <BNM/ClassesManagement.hpp>
 #include <BNM/Defaults.hpp>
 #include "abilities/GrantableAbilityRuntime.hpp"
@@ -8,7 +9,7 @@
 #include "engine/MatchAccess.hpp"
 namespace CustomComponents::Abilities::SelfTeleport {
 using Obj=BNM::IL2CPP::Il2CppObject;
-inline constexpr int Id=26;
+inline constexpr int Id=CustomAbilityIds::ToNative(CustomAbilityIds::Id::SelfTeleport);
 struct Component:Obj {
     unsigned char inherited[8]{};bool Innate=false;
     BNM_CustomClass(Component,BNM::CompileTimeClassBuilder("PvZCards.Engine.Components","SelfTeleport","EngineLib.dll").Build(),BNM::CompileTimeClassBuilder("PvZCards.Engine.Components","GrantableAbility","EngineLib.dll").Build(),{});

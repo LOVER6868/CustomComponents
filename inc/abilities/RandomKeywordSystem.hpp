@@ -1,6 +1,7 @@
 #include "abilities/RandomKeywordPolicy.hpp"
 #include "engine/EffectDurations.hpp"
 #pragma once
+#include "abilities/CustomAbilityIds.hpp"
 #include "history/DomainRecords.hpp"
 #include <cstdio>
 #include "core/Performance.hpp"
@@ -8,7 +9,7 @@
 #include "engine/MatchAccess.hpp"
 namespace CustomComponents::Abilities::RandomKeyword {
 using Obj=Engine::Match::Obj;
-inline constexpr int Id=22;
+inline constexpr int Id=CustomAbilityIds::ToNative(CustomAbilityIds::Id::RandomKeyword);
 inline constexpr const char* ledger="sprig:rk=";
 using KeywordPolicy::Option;using KeywordPolicy::Given;using KeywordPolicy::options;
 inline BNM::Field<int> grantType,grantDuration,removeType,removeDuration,effectTarget,effectSource;

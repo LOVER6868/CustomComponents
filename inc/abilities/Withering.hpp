@@ -1,4 +1,6 @@
 #pragma once
+#include "abilities/CustomAbilityIds.hpp"
+#include <cstdint>
 #include <BNM/ClassesManagement.hpp>
 #include "abilities/GrantableAbilityRuntime.hpp"
 #include "abilities/GrantModesPolicy.hpp"
@@ -6,10 +8,14 @@
 #include "engine/MatchAccess.hpp"
 namespace CustomComponents::Abilities::Withering {
 using Obj=Engine::Match::Obj;
-inline constexpr int Id=23;
+inline constexpr int Id=CustomAbilityIds::ToNative(CustomAbilityIds::Id::Withering);
 struct Component:Obj {
+    // Reserve the inherited GrantableAbility::Counters reference (offset 0x10).
+    std::uint8_t inherited[8]{};
     BNM_CustomClass(Component,BNM::CompileTimeClassBuilder("PvZCards.Engine.Components","Withering","EngineLib.dll").Build(),BNM::CompileTimeClassBuilder("PvZCards.Engine.Components","GrantableAbility","EngineLib.dll").Build(),{});
 };
+static_assert(sizeof(Component) >= sizeof(Obj) + sizeof(void*),
+    "Withering must reserve the inherited GrantableAbility::Counters slot");
 inline void* Get(void* entity,bool create) {
     static auto type=BNM::Class("PvZCards.Engine.Components","Withering");
     return Engine::Match::Component(static_cast<Obj*>(entity),type.GetMonoType(),create);

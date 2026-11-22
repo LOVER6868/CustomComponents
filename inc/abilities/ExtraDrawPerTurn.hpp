@@ -1,5 +1,7 @@
 #pragma once
+#include "abilities/CustomAbilityIds.hpp"
 #include <algorithm>
+#include <cstdint>
 #include <limits>
 #include <BNM/ClassesManagement.hpp>
 #include "abilities/GrantableAbilityRuntime.hpp"
@@ -10,12 +12,17 @@
 
 namespace CustomComponents::Abilities::ExtraDrawPerTurn {
 using Obj=Engine::Match::Obj;
-inline constexpr int Id=35;
+inline constexpr int Id=CustomAbilityIds::ToNative(CustomAbilityIds::Id::ExtraDrawPerTurn);
 struct Component:Obj {
+    // GrantableAbility stores a managed Counters reference immediately after Il2CppObject.
+    // Reserve that inherited slot before registering the BNM-derived class.
+    std::uint8_t inherited[8]{};
     BNM_CustomClass(Component,
         BNM::CompileTimeClassBuilder("PvZCards.Engine.Components","ExtraDrawPerTurn","EngineLib.dll").Build(),
         BNM::CompileTimeClassBuilder("PvZCards.Engine.Components","GrantableAbility","EngineLib.dll").Build(),{});
 };
+static_assert(sizeof(Component) >= sizeof(Obj) + sizeof(void*),
+    "ExtraDrawPerTurn must reserve the inherited GrantableAbility::Counters slot");
 inline void* Get(void* entity,bool create){
     auto* player=static_cast<Obj*>(entity);
     if(!Engine::EntityAccess::Component(player,"Player"))return nullptr;

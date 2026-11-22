@@ -44,17 +44,19 @@ struct BoardEffect:Obj {
     void Construct() {Core::NativeConstruction::Base(this);}
     BNM_CustomMethod(Construct,false,BNM::Defaults::Get<void>(),".ctor");
 };
-struct Route {const char* runtime;const char* base;int mode;};
-inline constexpr Route routes[]={{"WitheringHandEffect","MoveToDiscardPileEffect",1},{"WitheringDeckEffect","DiscardFromDeckEffect",2},{"WitheringBoardEffect","DestroyCardEffect",3}};
+struct Route {const char* runtime;const char* base;GrantModes::WitheringZone mode;};
+inline constexpr Route routes[]={{"WitheringHandEffect","MoveToDiscardPileEffect",GrantModes::WitheringZone::Hand},
+    {"WitheringDeckEffect","DiscardFromDeckEffect",GrantModes::WitheringZone::Deck},
+    {"WitheringBoardEffect","DestroyCardEffect",GrantModes::WitheringZone::Board}};
 inline int RuntimeMode(Obj* effect) {
     if(!effect || !effect->klass || !effect->klass->name)return 0;
-    for(const auto& route:routes)if(std::string_view(effect->klass->name)==route.runtime)return route.mode;
+    for(const auto& route:routes)if(std::string_view(effect->klass->name)==route.runtime)return GrantModes::ToNative(route.mode);
     for(const auto& route:routes)if(std::string_view(effect->klass->name)==route.base)return ownedEffects.Get(effect);
     return 0;
 }
 inline bool InZone(Obj* model,int card,int mode) {
     Obj* entity=Engine::EntityAccess::Find(model,card);if(!entity)return false;
-    if(mode==2)return Zones::Membership::InDeck(model,card);
+    if(GrantModes::ToZone(mode)==GrantModes::WitheringZone::Deck)return Zones::Membership::InDeck(model,card);
     return GrantModes::MatchesZone(mode,Engine::EntityAccess::Component(entity,"HandElement")!=nullptr,Engine::EntityAccess::Component(entity,"DeckElement")!=nullptr,Engine::EntityAccess::Component(entity,"LaneElement")!=nullptr);
 }
 inline bool Guard(const Engine::EffectGuards::Context& context,int) {

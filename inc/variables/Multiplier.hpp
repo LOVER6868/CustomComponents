@@ -1,5 +1,6 @@
 #pragma once
 #include "variables/Resolver.hpp"
+#include "variables/MultiplierPolicy.hpp"
 #include "queries/LaneQueries.hpp"
 #include "engine/ZoneChanges.hpp"
 #include <mutex>
@@ -92,58 +93,73 @@ inline std::optional<int> CurrentOrLastLaneDistance(Obj* model,Obj* source,Obj* 
     auto a=LastKnownOrder(model,source),b=LastKnownOrder(model,target);
     return a && b?std::optional<int>(std::abs(*a-*b)):std::nullopt;
 }
-inline std::optional<int> VariableFactor(VariableMultiplier* spec,Context c){
-    if(!spec || !c.model)return {};
-    auto field=BNM::Class("PvZCards.Engine.Components","QueryMultiplier").GetField("Query").cast<Obj*>();
-    if(!field.IsValid())return {};
-    Obj* query=field[static_cast<Obj*>(spec)].Get();
-    const auto ownerMode=Text(spec->Owner,"");
-    std::vector<Obj*> owners;
-    if(ownerMode=="PrimaryTarget"){
-        // Query describes potentially many entities; it has no well-defined
-        // meaning alongside this per-recipient mode.
-        if(query || c.target<0)return {};
-        if(auto* card=Find(c.model,c.target))owners.push_back(card);
-    }else if(ownerMode=="Self"){
-        if(query)return {};
-        if(auto* card=Find(c.model,c.source))owners.push_back(card);
-    }else if(ownerMode.empty() || ownerMode=="Query"){
-        if(query){QueryScope scope(c);owners=scope.Find(query);}
-        else if(ownerMode.empty()) {if(auto* card=Find(c.model,c.source))owners.push_back(card);}
-        else return {};
-    }else return {}; // Target belongs to the trigger context, not this effect.
-    const auto aggregation=Text(spec->Aggregation,"Single");
-    if(ownerMode=="PrimaryTarget" && aggregation!="Single")return {};
-    if(owners.empty() || (aggregation=="Single" && owners.size()!=1) ||
-        (aggregation!="Single" && aggregation!="Sum" && aggregation!="Min" && aggregation!="Max"))return {};
-    std::int64_t total=0;bool first=true;
-    for(Obj* owner:owners){
-        auto lookup=[&](std::string_view name)->std::optional<Value>{
-            if(name=="LaneDistance" && ownerMode=="PrimaryTarget") {
-                const auto distance=CurrentOrLastLaneDistance(c.model,Find(c.model,c.source),owner);
-                if(!distance){
+// The pure policy owns owner/aggregation validation. Keep managed query
+// evaluation here: QueryScope must use the active native effect context.
+inline std::vector<Obj*> ResolveOwners(MultiplierPolicy::OwnerMode mode,
+                                       MultiplierPolicy::Aggregation aggregation,
+                                       Obj* query, Context c) {
+    using MultiplierPolicy::OwnerMode;
+    if (!c.model || !MultiplierPolicy::ValidSelection(
+            mode, aggregation, query != nullptr, c.target >= 0)) return {};
+
+    if (mode == OwnerMode::PrimaryTarget) {
+        if (auto* card = Find(c.model, c.target)) return {card};
+        return {};
+    }
+    if (mode == OwnerMode::Query || (mode == OwnerMode::Default && query)) {
+        QueryScope scope(c);
+        return scope.Find(query);
+    }
+    if (auto* card = Find(c.model, c.source)) return {card};
+    return {};
+}
+
+inline std::optional<int> VariableFactor(VariableMultiplier* spec, Context c) {
+    if (!spec || !c.model) return {};
+    auto field = BNM::Class("PvZCards.Engine.Components", "QueryMultiplier")
+                     .GetField("Query").cast<Obj*>();
+    if (!field.IsValid()) return {};
+    Obj* query = field[static_cast<Obj*>(spec)].Get();
+
+    const auto ownerMode = MultiplierPolicy::ParseOwner(Text(spec->Owner, ""));
+    const auto aggregation = MultiplierPolicy::ParseAggregation(
+        Text(spec->Aggregation, "Single"));
+    auto owners = ResolveOwners(ownerMode, aggregation, query, c);
+    if (!MultiplierPolicy::ValidOwnerCount(aggregation, owners.size())) return {};
+
+    // A primary target uses the recipient of this one runtime effect, not the
+    // trigger target; retain last-known-lane support for dying source cards.
+    const bool primaryTargetOwner = ownerMode == MultiplierPolicy::OwnerMode::PrimaryTarget;
+    MultiplierPolicy::Accumulator result(aggregation);
+    for (Obj* owner : owners) {
+        auto lookup = [&](std::string_view name) -> std::optional<Value> {
+            if (name == "LaneDistance" && primaryTargetOwner) {
+                const auto distance = CurrentOrLastLaneDistance(
+                    c.model, Find(c.model, c.source), owner);
+                if (!distance) {
                     static std::atomic<unsigned> laneSamples{0};
-                    if(laneSamples.fetch_add(1)<40){
-                        auto* origin=Find(c.model,c.source);
+                    if (laneSamples.fetch_add(1) < 40) {
+                        auto* origin = Find(c.model, c.source);
                         LOG_WARN("CustomComponents/Variables/LANE_DISTANCE_CONTEXT: effect=%d source=%d sourceExists=%d sourceLaneValid=%d target=%d targetLaneValid=%d",
-                            c.effect,c.source,int(origin!=nullptr),int(bool(LastKnownOrder(c.model,origin))),c.target,int(bool(LastKnownOrder(c.model,owner))));
+                            c.effect, c.source, int(origin != nullptr),
+                            int(bool(LastKnownOrder(c.model, origin))), c.target,
+                            int(bool(LastKnownOrder(c.model, owner))));
                     }
                 }
-                return distance?std::optional<Value>(Value{Kind::Int,{*distance}}):std::nullopt;
+                return distance ? std::optional<Value>(Value{Kind::Int, {*distance}})
+                                : std::nullopt;
             }
-            if(auto v=Read(c.model,owner,name))return v;
-            // A bare stat name is not required to be registered as a variable.
-            if(auto stat=Engine::CardStatValues::Read(owner,name))return Value{Kind::Int,{*stat}};
+            if (auto value = Read(c.model, owner, name)) return value;
+            // A bare stat name need not be registered as a variable.
+            if (auto stat = Engine::CardStatValues::Read(owner, name))
+                return Value{Kind::Int, {*stat}};
             return {};
         };
-        auto n=Expressions::Evaluate(Text(spec->Expression),lookup);
-        if(!n)return {};
-        if(aggregation=="Min")total=first?*n:std::min(total,std::int64_t(*n));
-        else if(aggregation=="Max")total=first?*n:std::max(total,std::int64_t(*n));
-        else total+=*n;
-        first=false;
+        auto number = Expressions::Evaluate(Text(spec->Expression), lookup);
+        if (!number) return {};
+        result.Add(*number);
     }
-    return total>=INT32_MIN && total<=INT32_MAX?std::optional<int>(int(total)):std::nullopt;
+    return result.Result();
 }
 
 inline int(*originalSpecific)(Obj*,Obj*,Obj*,Obj*,int,const void*)=nullptr;

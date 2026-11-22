@@ -27,20 +27,20 @@ static Obj* Update(Obj* system,Obj* effect,Obj* card,const void* method){
     Obj* prior=Counter(card,guid);const int count=prior?Core::Metadata::Bind(counterCount,prior).Get():0;
     Policy::Value baseline=prior?Core::Metadata::Bind(counterValue,prior).Get():Policy::Value{};
     auto* state=State(card,true);auto rows=Read(state);const auto historyBefore=rows;
-    for(const auto& row:rows)if(row[0]==guid){baseline={row[6],row[7]};break;}
+    for(const auto& row:rows)if(row.guid==guid){baseline={row.baselineType,row.baselineAmount};break;}
     const auto incoming=Core::Metadata::Bind(effectValue,effect).Get();
-    auto existing=std::find_if(rows.begin(),rows.end(),[&](const auto& row){return row[0]==guid && row[1]==source && row[2]==options.duration;});
+    auto existing=std::find_if(rows.begin(),rows.end(),[&](const auto& row){return row.guid==guid && row.source==source && row.duration==options.duration;});
     const bool duplicate=existing!=rows.end();
     Obj* counter=originalUpdate(system,effect,card,method);if(!counter || !state)return counter;
     if(duplicate){
-        if(options.operation==2 && (*existing)[5]==2){const auto sum=std::int64_t((*existing)[4])+incoming.amount;(*existing)[4]=static_cast<int>(std::clamp(sum,std::int64_t(INT32_MIN),std::int64_t(INT32_MAX)));}
+        if(options.operation==Policy::Operation::Add && existing->operation==Policy::Operation::Add){const auto sum=std::int64_t(existing->amount)+incoming.amount;existing->amount=static_cast<int>(std::clamp(sum,std::int64_t(INT32_MIN),std::int64_t(INT32_MAX)));}
         else {*existing={guid,source,options.duration,incoming.type,incoming.amount,options.operation,baseline.type,baseline.amount};}
         Core::Metadata::Bind(counterCount,counter).Set(count);
     }else rows.push_back({guid,source,options.duration,incoming.type,incoming.amount,options.operation,baseline.type,baseline.amount});
     Save(state,rows);Core::Metadata::Bind(counterValue,counter).Set(Policy::Evaluate(rows,guid,baseline));
-    RecordGrant(card,historyBefore,rows,guid,source,options.duration,options.operation);
+    RecordGrant(card,historyBefore,rows,guid,source,options.duration,Policy::ToNative(options.operation));
     static std::atomic<unsigned> samples{0};if(samples.fetch_add(1)<120)
-        LOG_INFO("CustomComponents/TriggeredGrant/APPLY: card=%d guid=%d source=%d duration=%d operation=%d duplicate=%d",Engine::Match::Id(card),guid,source,options.duration,options.operation,int(duplicate));
+        LOG_INFO("CustomComponents/TriggeredGrant/APPLY: card=%d guid=%d source=%d duration=%d operation=%d duplicate=%d",Engine::Match::Id(card),guid,source,options.duration,Policy::ToNative(options.operation),int(duplicate));
     return counter;
 }
 static void Remove(Obj* system,Obj* effect,const void* method){
@@ -51,10 +51,10 @@ static void Remove(Obj* system,Obj* effect,const void* method){
     static auto guidField=BNM::Class("PvZCards.Engine.Effects","RemoveTriggeredAbilityEffect").GetField("AbilityGuid").cast<int>();
     const int guid=guidField.IsValid()?Core::Metadata::Bind(guidField,effect).Get():-1;
     const int source=Core::Metadata::Bind(effectSource,effect).Get();
-    auto row=std::find_if(rows.begin(),rows.end(),[&](const auto& value){return value[0]==guid && value[1]==source && value[2]<0;});
-    if(row==rows.end())row=std::find_if(rows.begin(),rows.end(),[&](const auto& value){return value[0]==guid && value[1]==source;});
+    auto row=std::find_if(rows.begin(),rows.end(),[&](const auto& value){return value.guid==guid && value.source==source && value.duration<0;});
+    if(row==rows.end())row=std::find_if(rows.begin(),rows.end(),[&](const auto& value){return value.guid==guid && value.source==source;});
     if(row!=rows.end()){
-        const Policy::Value baseline{(*row)[6],(*row)[7]};rows.erase(row);Save(state,rows);
+        const Policy::Value baseline{row->baselineType,row->baselineAmount};rows.erase(row);Save(state,rows);
         Refresh(model,card,guid,baseline,rows);
     }
     originalRemove(system,effect,method);
@@ -66,17 +66,17 @@ inline void Expire(Obj* model,int duration){
     for(int i=0;i<entities->size;++i){
         Obj* card=entities->items->m_Items[i];auto* state=State(card);if(!state)continue;
         auto rows=Read(state);std::vector<Policy::Row> expired;
-        for(const auto& row:rows)if(row[2]==duration)expired.push_back(row);
+        for(const auto& row:rows)if(row.duration==duration)expired.push_back(row);
         if(expired.empty())continue;
         static std::atomic<unsigned> samples{0};if(samples.fetch_add(1)<80)
             LOG_INFO("CustomComponents/TriggeredGrant/EXPIRE: card=%d duration=%d grants=%zu",Engine::Match::Id(card),duration,expired.size());
         const auto historyBefore=rows;
-        for(auto& row:rows)if(row[2]==duration)row[2]=-duration;Save(state,rows);
+        for(auto& row:rows)if(row.duration==duration)row.duration=-duration;Save(state,rows);
         RecordGrant(card,historyBefore,rows,-1,-1,duration,-1,true);
         Obj* instances=Engine::Match::Instances(card);std::vector<Obj*> removals;
         std::vector<std::shared_ptr<Core::ManagedRuntime::Root>> roots;
         for(const auto& row:expired){
-            Refresh(model,card,row[0],{row[6],row[7]},rows);
+            Refresh(model,card,row.guid,{row.baselineType,row.baselineAmount},rows);
             Obj* effect=Core::ManagedPool::Acquire(instances,BNM::Class("PvZCards.Engine.Effects","RemoveTriggeredAbilityEffect"));if(!effect)continue;
             roots.push_back(std::make_shared<Core::ManagedRuntime::Root>(effect));
             static auto guidField=BNM::Class("PvZCards.Engine.Effects","RemoveTriggeredAbilityEffect").GetField("AbilityGuid").cast<int>();
@@ -84,7 +84,7 @@ inline void Expire(Obj* model,int duration){
             static auto player=BNM::Class("PvZCards.Engine","Effect").GetField("PlayerId").cast<int>();
             static auto origin=BNM::Class("PvZCards.Engine","Effect").GetField("EffectEntityId").cast<int>();
             if(!guidField.IsValid() || !validation.IsValid() || !player.IsValid() || !origin.IsValid()){Core::ManagedPool::Return(instances,effect);continue;}
-            Core::Metadata::Bind(guidField,effect).Set(row[0]);Core::Metadata::Bind(effectSource,effect).Set(row[1]);Core::Metadata::Bind(effectTarget,effect).Set(Engine::Match::Id(card));Core::Metadata::Bind(validation,effect).Set(false);
+            Core::Metadata::Bind(guidField,effect).Set(row.guid);Core::Metadata::Bind(effectSource,effect).Set(row.source);Core::Metadata::Bind(effectTarget,effect).Set(Engine::Match::Id(card));Core::Metadata::Bind(validation,effect).Set(false);
             Core::Metadata::Bind(player,effect).Set(Engine::BoardPlacement::Owner(card));Core::Metadata::Bind(origin,effect).Set(-1);
             removals.push_back(effect);
         }
@@ -94,7 +94,7 @@ inline void Expire(Obj* model,int duration){
 inline void Leaving(Obj* model,int id){
     Obj* card=Engine::EntityAccess::Find(model,id);auto* state=State(card);if(!state)return;
     const auto rows=Read(state);
-    for(const auto& row:rows)Refresh(model,card,row[0],{row[6],row[7]},{});
+    for(const auto& row:rows)Refresh(model,card,row.guid,{row.baselineType,row.baselineAmount},{});
     state->Assign(nullptr); // Stock CardResetter removes temporary counters.
     RecordGrant(card,rows,{},-1,-1,-1,-1,true);
 }

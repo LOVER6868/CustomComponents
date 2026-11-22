@@ -8,6 +8,13 @@
 #include "core/ManagedPool.hpp"
 namespace CustomComponents::Effects::AbilityRemoval {
 using Obj=BNM::IL2CPP::Il2CppObject;using Str=BNM::Structures::Mono::String;
+// The string field is authored JSON; the runtime Duration field stays int.
+enum class RemovalMode : int {Invalid=-1,All=0,SourceAndDuration=1};
+inline constexpr RemovalMode ParseMode(std::string_view name){
+    if(name=="All")return RemovalMode::All;
+    if(name=="SourceAndDuration")return RemovalMode::SourceAndDuration;
+    return RemovalMode::Invalid;
+}
 inline constexpr int Complete=0x6f000005;
 struct Descriptor:Obj {
     unsigned char inherited[16]{};Str* Mode=nullptr;
@@ -18,12 +25,12 @@ struct Descriptor:Obj {
     BNM_CustomMethod(DeepCopyFrom,false,BNM::Defaults::Get<void>(),"DeepCopyFrom",BNM::Defaults::Get<Obj*>(),BNM::CompileTimeClassBuilder("PvZCards.Engine","InstanceManager","EngineLib.dll").Build());
     BNM_CustomMethod(HandleReturnToPool,false,BNM::Defaults::Get<void>(),"HandleReturnToPool",BNM::CompileTimeClassBuilder("PvZCards.Engine","InstanceManager","EngineLib.dll").Build());
     Obj* ToEffect(Obj* instances,Obj*) {
-        const auto mode=Mode?Mode->str():"All";
-        if(mode!="All" && mode!="SourceAndDuration"){LOG_ERR("CustomComponents/RemoveAbility: invalid Mode");return nullptr;}
+        const auto mode=ParseMode(Mode?Mode->str():"All");
+        if(mode==RemovalMode::Invalid){LOG_ERR("CustomComponents/RemoveAbility: invalid Mode");return nullptr;}
         auto from=BNM::Class("PvZCards.Engine.Components","GrantAbilityEffectDescriptor");auto type=from.GetField("GrantableAbilityType").cast<int>();auto duration=from.GetField("Duration").cast<int>();
         auto runtime=BNM::Class("PvZCards.Engine.Effects","RemoveGrantAbilityEffect");Obj* effect=Core::ManagedPool::Acquire(instances,runtime);if(!effect)return nullptr;
         runtime.GetField("GrantableAbilityType").cast<int>()[effect].Set(type[static_cast<Obj*>(this)].Get());
-        runtime.GetField("Duration").cast<int>()[effect].Set(mode=="All"?Complete:duration[static_cast<Obj*>(this)].Get());return effect;
+        runtime.GetField("Duration").cast<int>()[effect].Set(mode==RemovalMode::All?Complete:duration[static_cast<Obj*>(this)].Get());return effect;
     }
     BNM_CustomMethod(ToEffect,false,BNM::CompileTimeClassBuilder("PvZCards.Engine","Effect","EngineLib.dll").Build(),"ToEffect",BNM::CompileTimeClassBuilder("PvZCards.Engine","InstanceManager","EngineLib.dll").Build(),BNM::CompileTimeClassBuilder("PvZCards.Engine","Entity","EngineLib.dll").Build());
 };

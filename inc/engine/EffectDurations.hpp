@@ -6,6 +6,8 @@
 // survive the game's own deep-copy, prediction and history serialization.
 #include <array>
 #include <charconv>
+#include <cstdint>
+#include <optional>
 #include <string_view>
 #include <BNM/Class.hpp>
 #include <BNM/Field.hpp>
@@ -20,43 +22,54 @@
 
 namespace CustomComponents::Engine::EffectDurations {
 using Obj=BNM::IL2CPP::Il2CppObject;
-struct Definition {std::string_view name;int id;};
-inline constexpr int Permanent=0;
-inline constexpr int EndOfTurn=1;
-inline constexpr int NextFighter=2;
-inline constexpr int StartOfTricks=3;
+enum class Duration : std::int32_t {Permanent=0,EndOfTurn=1,NextFighter=2,StartOfTricks=3};
+inline constexpr int ToNative(Duration duration){return static_cast<int>(duration);}
+struct Definition {std::string_view name;Duration id;};
 inline constexpr std::array<Definition,4> definitions{{
-    {"Permanent",Permanent}, {"EndOfTurn",EndOfTurn},
-    {"NextFighter",NextFighter}, {"StartOfTricks",StartOfTricks}
+    {"Permanent",Duration::Permanent}, {"EndOfTurn",Duration::EndOfTurn},
+    {"NextFighter",Duration::NextFighter}, {"StartOfTricks",Duration::StartOfTricks}
 }};
-inline bool Known(int duration){
+inline constexpr bool Known(Duration duration){
     for(const auto& value:definitions)if(value.id==duration)return true;
     return false;
 }
-inline bool Timed(int duration){return duration!=0 && Known(duration);}
-inline int Parse(std::string_view name){
+inline constexpr bool Known(int duration){return Known(static_cast<Duration>(duration));}
+inline constexpr bool Timed(Duration duration){return duration!=Duration::Permanent && Known(duration);}
+inline constexpr bool Timed(int duration){return Timed(static_cast<Duration>(duration));}
+inline std::optional<Duration> ParseDuration(std::string_view name){
     for(const auto& value:definitions)if(name==value.name)return value.id;
-    if(name=="UntilEndOfTurn")return 1;
-    if(name=="UntilNextFighter")return 2;
-    if(name=="UntilStartOfTricks")return 3;
+    if(name=="UntilEndOfTurn")return Duration::EndOfTurn;
+    if(name=="UntilNextFighter")return Duration::NextFighter;
+    if(name=="UntilStartOfTricks")return Duration::StartOfTricks;
     int result=-1;
     auto parse=std::from_chars(name.data(),name.data()+name.size(),result);
-    return parse.ec==std::errc{} && parse.ptr==name.data()+name.size() && Known(result)?result:-1;
+    if(parse.ec==std::errc{} && parse.ptr==name.data()+name.size() && Known(result))return static_cast<Duration>(result);
+    return {};
 }
+// Native IL2CPP fields, saved modifier counters and legacy integrations use
+// int; preserve those signatures as explicit conversion boundaries.
+inline int Parse(std::string_view name){auto parsed=ParseDuration(name);return parsed?ToNative(*parsed):-1;}
+inline constexpr int Permanent=ToNative(Duration::Permanent);
+inline constexpr int EndOfTurn=ToNative(Duration::EndOfTurn);
+inline constexpr int NextFighter=ToNative(Duration::NextFighter);
+inline constexpr int StartOfTricks=ToNative(Duration::StartOfTricks);
 inline bool RegisterEnums(){
     const auto type=BNM::Class("PvZCards.Engine.Effects","EffectDuration");
     if(!type.IsValid() || !type.GetMonoType())return false;
     // Keep stock enum-name parsing untouched. Only unsupported new values
     // need interception by DefaultDeserializer.
-    for(const auto& definition:definitions)if(definition.id>2)
-        if(!EnumSerializationSupport::Register(type.GetMonoType(),definition.name.data(),definition.id))return false;
+    for(const auto& definition:definitions)if(ToNative(definition.id)>ToNative(Duration::NextFighter))
+        if(!EnumSerializationSupport::Register(type.GetMonoType(),definition.name.data(),ToNative(definition.id)))return false;
     return true;
 }
 // All grant, triggered-grant, keyword, stat, and cost expiration consumers
 // subscribe to this single channel. Duration=0 is never an expiry boundary.
-inline void Emit(Obj* model,int duration){
+inline void Emit(Obj* model,Duration duration){
     if(!model || !Timed(duration))return;
-    AbilityDurationEvents::expire.Notify(model,duration);
+    AbilityDurationEvents::expire.Notify(model,ToNative(duration));
+}
+inline void Emit(Obj* model,int duration){
+    Emit(model,static_cast<Duration>(duration));
 }
 
 // EffectGuards already owns the router lifecycle and has a simulation-local
@@ -73,7 +86,7 @@ inline void BeforeEffect(const EffectGuards::Context& context){
     if(!IsTricksEffect(context))return;
     if(tricksDepth++)return;
     Obj* model=Core::ModelRegistry::Get(RouterContext::RouterModel(context.router));
-    if(model)Emit(model,StartOfTricks);
+    if(model)Emit(model,Duration::StartOfTricks);
     else LOG_ERR("CustomComponents/Duration: StartOfTricks router has no EntityModel");
 }
 inline void AfterEffect(const EffectGuards::Context& context){
