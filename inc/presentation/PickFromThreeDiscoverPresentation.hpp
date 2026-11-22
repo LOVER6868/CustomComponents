@@ -1562,7 +1562,9 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
     inline std::vector<Pick3::Candidate> firstPrimaryCandidates;
     inline std::vector<int> additionalEligible;
     inline std::vector<Pick3::Candidate> additionalOptions;
-    inline int lastLightsEffect=-1,lastLightsGroup=-1,lastLightsStage=-1;
+    enum class TargetLightStage : int {NotSet=-1,Primary=0,Additional=1,FirstAdditional=2};
+    inline int lastLightsEffect=-1,lastLightsGroup=-1;
+    inline TargetLightStage lastLightsStage=TargetLightStage::NotSet;
     inline unsigned lightsRetryTicks=0;
     inline unsigned stockCommandWaitTicks=0;
     inline unsigned autoSoleWaitTicks=0;
@@ -1604,7 +1606,7 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
         hasRequest=awaitingResult=autoSolePending=awaitingStockCommand=false;
         awaitingAdditionalBoard=choosingAdditionalCards=selectingAdditionalFirst=false;firstAdditionalTarget=-1;firstPrimaryCandidates.clear();additionalEligible.clear();additionalOptions.clear();
         activeRequest={};chosenIndices.clear();currentPromptGuid=-1;
-        lastLightsEffect=lastLightsGroup=lastLightsStage=-1;
+        lastLightsEffect=lastLightsGroup=-1;lastLightsStage=TargetLightStage::NotSet;
         stockCommandWaitTicks=autoSoleWaitTicks=0;
         lastCaptureEffect=lastCaptureGroup=-1;
         {std::lock_guard<std::mutex> lock(groupsMutex);groups.clear();}
@@ -1656,7 +1658,8 @@ namespace CustomComponents::Presentation::PickFromThreeDiscoverPresentation {
     }
     inline void RefreshStageLights() {
         if(!hasRequest || awaitingStockCommand || awaitingResult || !ExactTurn(activeRequest,Pick3::Submission::Remote()))return;
-        const int stage=awaitingAdditionalBoard?(selectingAdditionalFirst?2:1):0;
+        const TargetLightStage stage=awaitingAdditionalBoard?
+            (selectingAdditionalFirst?TargetLightStage::FirstAdditional:TargetLightStage::Additional):TargetLightStage::Primary;
         if(lastLightsEffect==activeRequest.effectEntityId && lastLightsGroup==activeRequest.effectGroupId && lastLightsStage==stage)return;
         if(lightsRetryTicks){--lightsRetryTicks;return;}
         lightsRetryTicks=30; // Bound retries if a frontend dependency is temporarily unavailable.

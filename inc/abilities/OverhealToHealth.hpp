@@ -1,4 +1,5 @@
 #pragma once
+#include "abilities/CustomAbilityIds.hpp"
 #include <BNM/Class.hpp>
 #include <BNM/ClassesManagement.hpp>
 #include <BNM/Defaults.hpp>
@@ -11,7 +12,7 @@
 
 namespace CustomComponents::Abilities::OverhealToHealth {
 using Obj=BNM::IL2CPP::Il2CppObject;
-inline constexpr int Id=27;
+inline constexpr int Id=CustomAbilityIds::ToNative(CustomAbilityIds::Id::OverhealToHealth);
 struct Component:Obj {
     unsigned char inherited[8]{};
     bool Innate=false;

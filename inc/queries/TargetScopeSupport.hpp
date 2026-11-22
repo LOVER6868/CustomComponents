@@ -17,9 +17,11 @@ namespace CustomComponents::Systems::TargetScopeSupport {
     template<typename T>
     using MonoList = BNM::Structures::Mono::List<T>;
 
-    inline constexpr int ListPositionSortValue = 3;
+    enum class SortValue : int {ListPosition=3,LaneIndex=4};
+    inline constexpr int ToNative(SortValue value){return static_cast<int>(value);}
+    inline constexpr int ListPositionSortValue = ToNative(SortValue::ListPosition);
     // Sort fighters by the combat-order index of their current lane.
-    inline constexpr int LaneIndexSortValue = 4;
+    inline constexpr int LaneIndexSortValue = ToNative(SortValue::LaneIndex);
 
     inline BNM::Field<Obj*> scoperEntityModel;
     inline BNM::Field<MonoList<Obj*>*> modelEntities;
@@ -171,13 +173,14 @@ namespace CustomComponents::Systems::TargetScopeSupport {
         if (!originalCalculateSortedValue)
             return 0;
 
-        if (sortValue != ListPositionSortValue && sortValue != LaneIndexSortValue)
+        if (static_cast<SortValue>(sortValue) != SortValue::ListPosition &&
+            static_cast<SortValue>(sortValue) != SortValue::LaneIndex)
             return originalCalculateSortedValue(
                 self, targetEntityId, sortValue, method
             );
 
         Obj* model = scoperEntityModel[static_cast<Obj*>(self)].Get();
-        if (sortValue == LaneIndexSortValue) {
+        if (static_cast<SortValue>(sortValue) == SortValue::LaneIndex) {
             const int laneIndex = FindBoardLaneIndex(model, targetEntityId);
             if (laneIndex < 0) {
                 LOG_ERR("CustomComponents/TargetScope: LaneIndex unresolved entityId=%d", targetEntityId);

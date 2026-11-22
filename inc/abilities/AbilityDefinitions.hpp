@@ -1,4 +1,5 @@
 #pragma once
+#include "abilities/CustomAbilityIds.hpp"
 #include "diagnostics/DiagnosticLogging.hpp"
 
 #include <BNM/Class.hpp>
@@ -18,9 +19,9 @@
 #include "log.h"
 
 namespace CustomComponents::AbilityDefinitions {
-    inline constexpr int Armor = 19;
-    inline constexpr int Charge = 20;
-    inline constexpr int Thrash = 21;
+    inline constexpr int Armor = Abilities::CustomAbilityIds::ToNative(Abilities::CustomAbilityIds::Id::Armor);
+    inline constexpr int Charge = Abilities::CustomAbilityIds::ToNative(Abilities::CustomAbilityIds::Id::Charge);
+    inline constexpr int Thrash = Abilities::CustomAbilityIds::ToNative(Abilities::CustomAbilityIds::Id::Thrash);
     inline constexpr int ArmorSpecialAbilityType = 8;
 
     inline BNM::Method<bool> hasComponent;
@@ -66,9 +67,9 @@ namespace CustomComponents::AbilityDefinitions {
                 GetCharge, nullptr}) ||
             !AbilityRegistry::Register({Thrash, "Thrash", AbilityStorage::Grantable,
                 GetThrash, nullptr}) ||
-            !AbilityRegistry::Register({23,"Withering",AbilityStorage::Grantable,Abilities::Withering::Get,nullptr}) ||
-            !AbilityRegistry::Register({24,"Multishot",AbilityStorage::Marker,Abilities::MarkerGrants::Multishot,nullptr,-1,"GrantedMultishot"}) ||
-            !AbilityRegistry::Register({25,"AttacksOnlyInAdjacentLanes",AbilityStorage::Marker,Abilities::MarkerGrants::Adjacent,nullptr,-1,"GrantedAdjacentAttacks"}) ||
+            !AbilityRegistry::Register({Abilities::CustomAbilityIds::ToNative(Abilities::CustomAbilityIds::Id::Withering),"Withering",AbilityStorage::Grantable,Abilities::Withering::Get,nullptr}) ||
+            !AbilityRegistry::Register({Abilities::CustomAbilityIds::ToNative(Abilities::CustomAbilityIds::Id::Multishot),"Multishot",AbilityStorage::Marker,Abilities::MarkerGrants::Multishot,nullptr,-1,"GrantedMultishot"}) ||
+            !AbilityRegistry::Register({Abilities::CustomAbilityIds::ToNative(Abilities::CustomAbilityIds::Id::AttacksOnlyInAdjacentLanes),"AttacksOnlyInAdjacentLanes",AbilityStorage::Marker,Abilities::MarkerGrants::Adjacent,nullptr,-1,"GrantedAdjacentAttacks"}) ||
             !AbilityRegistry::Register({Abilities::SelfTeleport::Id,"SelfTeleport",AbilityStorage::Grantable,Abilities::SelfTeleport::Get,nullptr}) ||
             !AbilityRegistry::Register({Abilities::OverhealToHealth::Id,"OverhealToHealth",AbilityStorage::Grantable,Abilities::OverhealToHealth::Get,nullptr}) ||
             !AbilityRegistry::Register({Abilities::CombatModifiers::DamageBuffId,"DamageBuff",AbilityStorage::Grantable,Abilities::CombatModifiers::GetDamageBuff,nullptr}) ||

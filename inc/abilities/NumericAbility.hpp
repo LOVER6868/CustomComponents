@@ -2,6 +2,8 @@
 #include <limits>
 #include <cstdint>
 #include <string>
+#include <optional>
+#include <string_view>
 #include <BNM/Class.hpp>
 #include <BNM/Field.hpp>
 #include <BNM/Method.hpp>
@@ -11,6 +13,12 @@
 namespace CustomComponents::NumericAbility {
     // Vanilla StatModOperation values. None/omitted means Add in this extension.
     enum class Operation : int { None = 0, Set = 1, Add = 2 };
+    // Authored ModifyOperation strings, with the pre-existing default of Add.
+    inline std::optional<Operation> ParseOperation(std::string_view value) {
+        if(value=="Set" || value=="1")return Operation::Set;
+        if(value.empty() || value=="Add" || value=="2" || value=="None" || value=="0")return Operation::Add;
+        return {};
+    }
     inline BNM::Class valueClass, modifierClass;
     inline BNM::Field<void*> instancesField, modifiersField;
     inline BNM::Field<int> originalAmount, additiveAmount, durationField, activationField;

@@ -79,6 +79,13 @@ struct ExtraCombatTrigger : Obj {
         BNM::CompileTimeClassBuilder("PvZCards.Engine", "Trigger", "EngineLib.dll").Build());
 };
 
+// These are internal meanings of the existing persisted stage integers.
+enum class StepStage : int {
+    Select=0, BeforeCombat=1, GenerateStrikes=2,
+    StrikesResolved=3, EndCombat=4, Complete=5
+};
+inline constexpr int ToNative(StepStage stage){return static_cast<int>(stage);}
+
 // Managed data is essential: these fields survive stock pool copies, prediction,
 // and queued effects. No native map keyed by managed object pointers.
 struct CombatStepEffect : Obj {
@@ -548,15 +555,15 @@ inline bool Prepare(const Engine::EffectGuards::Context& ctx){
     // The initiating trick may leave play; the selected fighters remain valid
     // model anchors (even if later sent to discard during the encounter).
     if(!instances)instances=Engine::Match::Instances(Engine::EntityAccess::Find(model,
-        stage==0?Field(effect,"TargetId"):step->Read("First")));
-    if(!instances && stage>0)instances=Engine::Match::Instances(
+        stage==ToNative(StepStage::Select)?Field(effect,"TargetId"):step->Read("First")));
+    if(!instances && stage>ToNative(StepStage::Select))instances=Engine::Match::Instances(
         Engine::EntityAccess::Find(model,step->Read("Second")));
     if(!instances){
         static auto manager=BNM::Class("PvZCards.Engine","EntityModel").GetField("InstanceManager").cast<Obj*>();
         if(manager.IsValid())instances=Core::Metadata::Bind(manager,model).Get();
     }
     if(!instances){LOG_ERR("CustomComponents/ExtraCombat: no matching instances");return false;}
-    if(stage==0 || stage==2){
+    if(stage==ToNative(StepStage::Select) || stage==ToNative(StepStage::GenerateStrikes)){
         const auto boundary=Engine::ContinuousEffects::BeforeAction(model,instances,effect);
         if(boundary==Engine::ContinuousEffects::Boundary::Pending){
             if(!Stage(model,instances,step,stage))LOG_ERR("CustomComponents/ExtraCombat: continuous boundary continuation failed");
@@ -568,8 +575,8 @@ inline bool Prepare(const Engine::EffectGuards::Context& ctx){
             return false;
         }
     }
-    switch(stage){
-    case 0: {
+    switch(static_cast<StepStage>(stage)){
+    case StepStage::Select: {
         // A single selected opponent means the source fighter attacks it.
         // Explicit two-fighter selections retain their authored order.
         if(!LiveFighter(model,Field(effect,"SecondaryTargetId")) &&
@@ -591,23 +598,23 @@ inline bool Prepare(const Engine::EffectGuards::Context& ctx){
         RecordEncounter(model,step,"begin");
         LOG_INFO("CustomComponents/ExtraCombat: begin %d lane=%d vs %d lane=%d",first,firstLane,second,secondLane);
         Presentation::CombatFacing::Queue(model,first,second,true,step->HistoryRecord());
-        if(!Stage(model,instances,step,1)){
+        if(!Stage(model,instances,step,ToNative(StepStage::BeforeCombat))){
             Presentation::CombatFacing::Queue(model,first,second,false,step->HistoryRecord());
             LOG_ERR("CustomComponents/ExtraCombat: failed to queue start");
         }
         break;
     }
-    case 1: {
+    case StepStage::BeforeCombat: {
         RecordEncounter(model,step,"before-combat");
         Dispatch(model,step,"CombatStartTrigger");
         Dispatch(model,step,"LaneCombatStartTrigger");
-        if(!Stage(model,instances,step,2)){
+        if(!Stage(model,instances,step,ToNative(StepStage::GenerateStrikes))){
             Presentation::CombatFacing::Queue(model,step->Read("First"),step->Read("Second"),false,step->HistoryRecord());
             LOG_ERR("CustomComponents/ExtraCombat: failed to queue first strike");
         }
         break;
     }
-    case 2: {
+    case StepStage::GenerateStrikes: {
         // Before-combat effects have resolved. Retire their casualties through
         // the native discard pipeline before deciding who is still attacking.
         bool disposing=false;
@@ -622,12 +629,12 @@ inline bool Prepare(const Engine::EffectGuards::Context& ctx){
                 const int bit=id==step->Read("First")?1:2;
                 if(step->Read("DeathsRequested",0)&bit){
                     if(Engine::EntityAccess::Component(card,"PreDiscardPending")){disposing=true;continue;}
-                    RecordEncounter(model,step,"cancelled-death-drain");return Stage(model,instances,step,4);
+                    RecordEncounter(model,step,"cancelled-death-drain");return Stage(model,instances,step,ToNative(StepStage::EndCombat));
                 }
                 Core::Metadata::Bind(discard,discarder->Get())(card);step->Write("DeathsRequested",step->Read("DeathsRequested",0)|bit);disposing=true;
             }
         }
-        if(disposing){RecordEncounter(model,step,"before-combat-deaths");return Stage(model,instances,step,2);}
+        if(disposing){RecordEncounter(model,step,"before-combat-deaths");return Stage(model,instances,step,ToNative(StepStage::GenerateStrikes));}
         // Generate both sides before either damage effect resolves. Stock
         // combat is simultaneous: a fighter killed by the first generated
         // damage still gets its already-earned counterattack.
@@ -657,7 +664,7 @@ inline bool Prepare(const Engine::EffectGuards::Context& ctx){
         }
         // AddAfterCurrentGroup inserts a whole group at the same boundary.
         // A separate Stage call would insert the continuation ahead of damage.
-        Obj* continuation=Next(instances,step,3);
+        Obj* continuation=Next(instances,step,ToNative(StepStage::StrikesResolved));
         Core::ManagedRuntime::Root continuationRoot(continuation);
         if(continuation)effects.push_back(continuation);
         if(!continuation || !Enqueue(model,instances,effects)){
@@ -668,24 +675,24 @@ inline bool Prepare(const Engine::EffectGuards::Context& ctx){
         else RecordEncounter(model,step,"attacks-queued",effects);
         break;
     }
-    case 3: {
+    case StepStage::StrikesResolved: {
         RecordEncounter(model,step,"attacks-resolved");
-        if(!Stage(model,instances,step,4)){
+        if(!Stage(model,instances,step,ToNative(StepStage::EndCombat))){
             Presentation::CombatFacing::Queue(model,step->Read("First"),step->Read("Second"),false,step->HistoryRecord());
             RecordEncounter(model,step,"cancelled-enqueue");
             LOG_ERR("CustomComponents/ExtraCombat: failed to queue combat-end");
         }
         break;
     }
-    case 4: {
+    case StepStage::EndCombat: {
         Presentation::CombatFacing::Queue(model,step->Read("First"),step->Read("Second"),false,step->HistoryRecord());
         RecordEncounter(model,step,"after-combat");
         Dispatch(model,step,"LaneCombatEndTrigger");
         Dispatch(model,step,"CombatEndTrigger");
-        if(!Stage(model,instances,step,5))LOG_ERR("CustomComponents/ExtraCombat: failed to queue extra-combat event");
+        if(!Stage(model,instances,step,ToNative(StepStage::Complete)))LOG_ERR("CustomComponents/ExtraCombat: failed to queue extra-combat event");
         break;
     }
-    case 5: {
+    case StepStage::Complete: {
         const bool triggerQueued=Dispatch(model,step,"ExtraCombatTrigger");
         RecordEncounter(model,step,"complete");
         ContinueTargets(model,instances,step);

@@ -263,7 +263,7 @@ inline bool Prepare(const Engine::EffectGuards::Context& context){
                     // Timed mutations are reversible overlays; no reset effect is necessary.
                     // Non-numeric timed operations are rejected rather than corrupting saved values.
                     auto amount=value->Integer();auto entries=Timed(owner);
-                    if(amount && entries && entries->size()<256 && (operation=="Set" || operation=="Add" || operation=="Subtract")){
+                    if(amount && entries && entries->size()<256 && TimedOperationSupported(ParseOperation(operation))){
                         entries->push_back({Text(spec->Variable),operation,durationId,*amount});
                         if(WriteTimed(model,owner,*entries)){applied=true;if(onVariableAssigned)onVariableAssigned(model,owner,Text(spec->Variable));}
                         else ++failedWrite;

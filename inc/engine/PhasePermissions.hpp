@@ -7,7 +7,7 @@ inline bool(*originalWhite)(Obj*,Obj*,Obj*,const void*)=nullptr;
 inline bool(*originalBlack)(Obj*,Obj*,Obj*,const void*)=nullptr;
 inline Obj* ModelFromTypes(Obj* types){auto field=BNM::Class("PvZCards.Core.Utilities","CardTypeUtils").GetField("<EntityModel>k__BackingField").cast<Obj*>();return types?field[types].Get():nullptr;}
 inline bool LocalPermission(Obj* model,Obj* play){
-    if(!model || Variables::Field(play,"Type")!=3)return false;int player=Variables::Field(play,"PlayerId");Obj* card=EntityAccess::Find(model,Variables::Field(play,"CardId"));Obj* owner=EntityAccess::Find(model,player);
+    if(!model || !PlayTypeCodes::Is(Variables::Field(play,"Type"),PlayTypeCodes::Type::Surprise))return false;int player=Variables::Field(play,"PlayerId");Obj* card=EntityAccess::Find(model,Variables::Field(play,"CardId"));Obj* owner=EntityAccess::Find(model,player);
     return card && EntityAccess::Component(card,"HandElement") && BoardPlacement::Owner(card)==player && EntityAccess::Component(owner,"Zombies") && Variables::Reactive::Active(model,card);
 }
 static bool Fighter(Obj* self,Obj* play,Obj* errors,const void* method){
