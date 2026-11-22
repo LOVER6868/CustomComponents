@@ -5,6 +5,13 @@
 #include <BNM/Method.hpp>
 
 #include "abilities/Armor.hpp"
+#include "abilities/MarkerGrantState.hpp"
+#include "abilities/Withering.hpp"
+#include "abilities/SelfTeleport.hpp"
+#include "abilities/OverhealToHealth.hpp"
+#include "abilities/CombatModifiers.hpp"
+#include "abilities/LaneAttacks.hpp"
+#include "abilities/ExtraDrawPerTurn.hpp"
 #include "abilities/Charge.hpp"
 #include "abilities/Thrash.hpp"
 #include "core/AbilityRegistry.hpp"
@@ -24,8 +31,9 @@ namespace CustomComponents::AbilityDefinitions {
 
     inline void* GetComponent(void* entity, BNM::MonoType* type, bool create) {
         if (!entity || !type) return nullptr;
-        if (hasComponent[entity](type)) return getComponent[entity](type);
-        return create ? getOrAddComponent[entity](type) : nullptr;
+        auto has=hasComponent;auto get=getComponent;auto add=getOrAddComponent;
+        if (has[entity](type)) return get[entity](type);
+        return create ? add[entity](type) : nullptr;
     }
 
     inline void* GetCharge(void* entity, bool create) {
@@ -37,6 +45,7 @@ namespace CustomComponents::AbilityDefinitions {
     }
 
     inline bool Initialize() {
+        if(!Abilities::LaneAttacks::Initialize() || !Abilities::ExtraDrawPerTurn::Initialize())return false;
         auto entity = BNM::Class("PvZCards.Engine", "Entity");
         auto charge = BNM::Class("PvZCards.Engine.Components", "Charge");
         auto thrash = BNM::Class("PvZCards.Engine.Components", "Thrash");
@@ -50,12 +59,23 @@ namespace CustomComponents::AbilityDefinitions {
         if (!hasComponent.IsValid() || !getComponent.IsValid() ||
             !getOrAddComponent.IsValid() || !chargeType || !thrashType) return false;
 
+        if (!Abilities::MarkerGrants::Initialize() || !Abilities::Withering::Initialize() || !Abilities::SelfTeleport::Initialize() || !Abilities::OverhealToHealth::Initialize() || !Abilities::CombatModifiers::Register()) return false;
         if (!AbilityRegistry::Register({Armor, "Armor", AbilityStorage::Numeric,
                 nullptr, Armor::GetValue, ArmorSpecialAbilityType}) ||
             !AbilityRegistry::Register({Charge, "Charge", AbilityStorage::Grantable,
                 GetCharge, nullptr}) ||
             !AbilityRegistry::Register({Thrash, "Thrash", AbilityStorage::Grantable,
-                GetThrash, nullptr})) {
+                GetThrash, nullptr}) ||
+            !AbilityRegistry::Register({23,"Withering",AbilityStorage::Grantable,Abilities::Withering::Get,nullptr}) ||
+            !AbilityRegistry::Register({24,"Multishot",AbilityStorage::Marker,Abilities::MarkerGrants::Multishot,nullptr,-1,"GrantedMultishot"}) ||
+            !AbilityRegistry::Register({25,"AttacksOnlyInAdjacentLanes",AbilityStorage::Marker,Abilities::MarkerGrants::Adjacent,nullptr,-1,"GrantedAdjacentAttacks"}) ||
+            !AbilityRegistry::Register({Abilities::SelfTeleport::Id,"SelfTeleport",AbilityStorage::Grantable,Abilities::SelfTeleport::Get,nullptr}) ||
+            !AbilityRegistry::Register({Abilities::OverhealToHealth::Id,"OverhealToHealth",AbilityStorage::Grantable,Abilities::OverhealToHealth::Get,nullptr}) ||
+            !AbilityRegistry::Register({Abilities::CombatModifiers::DamageBuffId,"DamageBuff",AbilityStorage::Grantable,Abilities::CombatModifiers::GetDamageBuff,nullptr}) ||
+            !AbilityRegistry::Register({Abilities::CombatModifiers::NonCombatDamageBuffId,"NonCombatDamageBuff",AbilityStorage::Grantable,Abilities::CombatModifiers::GetNonCombatDamageBuff,nullptr}) ||
+            !AbilityRegistry::Register({Abilities::CombatModifiers::NonCombatTruestrikeId,"NonCombatTruestrike",AbilityStorage::Grantable,Abilities::CombatModifiers::GetNonCombatTruestrike,nullptr}) ||
+            !AbilityRegistry::Register({Abilities::CombatModifiers::BurnId,"Burn",AbilityStorage::Grantable,Abilities::CombatModifiers::GetBurn,nullptr}) ||
+            !AbilityRegistry::Register({Abilities::CombatModifiers::BuffMultiplierId,"BuffMultiplier",AbilityStorage::Grantable,Abilities::CombatModifiers::GetBuffMultiplier,nullptr})) {
             LOG_ERR("CustomComponents/Abilities: registry registration failed");
             return false;
         }

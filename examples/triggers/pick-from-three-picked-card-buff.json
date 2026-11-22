@@ -1,0 +1,46 @@
+{
+  "$type": "PvZCards.Engine.Components.EffectEntitiesDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "entities": [
+      {
+        "components": [
+          {
+            "$type": "PvZCards.Engine.Components.EffectEntityGrouping, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {
+              "AbilityGroupId": 1
+            }
+          },
+          {
+            "$type": "PvZCards.Engine.Components.PickFromThreeTrigger, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {}
+          },
+          {
+            "$type": "PvZCards.Engine.Components.PrimaryTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {
+              "SelectionType": "All",
+              "NumTargets": 0,
+              "TargetScopeType": "All",
+              "TargetScopeSortValue": "None",
+              "TargetScopeSortMethod": "None",
+              "AdditionalTargetType": "None",
+              "AdditionalTargetQuery": null,
+              "OnlyApplyEffectsOnAdditionalTargets": false,
+              "Query": {
+                "$type": "PvZCards.Engine.Queries.PickedFromThreeEntityQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                "$data": {}
+              }
+            }
+          },
+          {
+            "$type": "PvZCards.Engine.Components.BuffEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {
+              "AttackAmount": 1,
+              "HealthAmount": 1,
+              "BuffDuration": "Permanent"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

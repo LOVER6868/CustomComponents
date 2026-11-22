@@ -4,3 +4,19 @@
 Thumbs.db
 *.swp
 *.tmp
+.build/
+__pycache__/
+*.pyc
+*.obj
+*.exe
+docs/history
+audit
+.vs
+docs/diagnostics
+
+# Local development files stay on this computer.
+/tests/
+/tools/
+/.build/
+/.local/
+/Clean-Project.ps1

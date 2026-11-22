@@ -1,3 +1,4 @@
+#include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 // CardView lifecycle coordinator and return presentation guard.
@@ -15,6 +16,7 @@
 #include <BNM/Utils.hpp>
 #include <dlfcn.h>
 #include <array>
+#include <map>
 #include <cstdint>
 #include <mutex>
 #include <utility>
@@ -91,6 +93,7 @@ namespace CustomComponents::Core::CardViewLifecycleCoordinator {
         unsigned long generation = 0;
         unsigned frames = 0;
         std::uintptr_t blockedView = 0; // old view observed at deferral
+        bool replacement = false;
         bool stockRetired = false;      // only stock delete or owned hand cleanup
     };
     // Accessed only by CreateHook, Unity EventSystem.Update and scene Awake.
@@ -114,8 +117,21 @@ namespace CustomComponents::Core::CardViewLifecycleCoordinator {
     }
     // Declared here; defined after originalCreate/Outstanding/GetMapped.
     inline void ProcessDeferredOnFrontendTick();
+    struct RetiringView {std::shared_ptr<ManagedRuntime::Root> view;bool confirmed=false;};
+    inline std::map<int,RetiringView> retiringViews; // frontend thread only
+    inline bool Alive(Obj* view){
+        static auto alive=BNM::Class("UnityEngine","Object").GetMethod("op_Implicit",1).cast<bool>();
+        return view && alive.IsValid() && alive(view);
+    }
+    inline void TrackRetiringView(int id,Obj* view){
+        if(id<0 || !view)return;
+        auto found=retiringViews.find(id);
+        if(found!=retiringViews.end() && found->second.view->Get()==view)return;
+        retiringViews[id]={std::make_shared<ManagedRuntime::Root>(view),false};
+    }
     inline void ConfirmRetirement(int id, Obj* oldView, const char* origin) {
         if (id < 0 || !oldView) return;
+        if(auto it=retiringViews.find(id);it!=retiringViews.end() && it->second.view->Get()==oldView)it->second.confirmed=true;
         for (auto& item : deferred) {
             if (item.id == id && item.blockedView == reinterpret_cast<std::uintptr_t>(oldView)) {
                 item.stockRetired = true;
@@ -238,6 +254,7 @@ namespace CustomComponents::Core::CardViewLifecycleCoordinator {
             for (const auto& pending : deferred) FreeDeferred(pending);
             deferred.clear();
         }
+        retiringViews.clear();
         unsigned long generation = 0;
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -293,20 +310,23 @@ namespace CustomComponents::Core::CardViewLifecycleCoordinator {
             ? cardMapperToViewMapper[static_cast<Obj*>(self)].Get() : nullptr;
         Obj* existing = GetMapped(mapper, id);
         const int outstanding = Outstanding(id);
+        const auto retiring=retiringViews.find(id);
+        Obj* oldView=retiring!=retiringViews.end()?retiring->second.view->Get():nullptr;
         bool alreadyQueued = false;
         for (const auto& item : deferred)
             if (item.id == id) { alreadyQueued = true; break; }
 
         // Never touch non-return or replacement loads. The stock replacement
         // mechanism is reserved for stock transforms and the existing hand path.
-        if (guardEnabled && !replacement && id >= 0 && IsReturned(id) &&
-            (existing || outstanding || alreadyQueued)) {
+        if (guardEnabled && (!replacement || oldView) && id >= 0 && (IsReturned(id) || oldView) &&
+            (existing || outstanding || alreadyQueued || Alive(oldView))) {
             if (deferred.size() < kMaxDeferred) {
                 DeferredCreate item;
                 item.id = id;
                 item.method = method;
                 item.generation = sceneGeneration;
-                item.blockedView = reinterpret_cast<std::uintptr_t>(existing);
+                item.blockedView = reinterpret_cast<std::uintptr_t>(oldView?oldView:existing);
+                item.replacement=replacement;
                 if (Pin(item, static_cast<Obj*>(self), cardData, callback, parentGO)) {
                     deferred.push_back(item);
                     Record("CREATE_DEFERRED", id, mapper, existing, callback,
@@ -346,9 +366,12 @@ namespace CustomComponents::Core::CardViewLifecycleCoordinator {
             // capture its eventual mapped view before waiting for retirement.
             if (existing && !item.blockedView)
                 item.blockedView = reinterpret_cast<std::uintptr_t>(existing);
-            const bool retirementConfirmed = !item.blockedView || item.stockRetired;
+            const auto retiring=retiringViews.find(item.id);
+            Obj* oldView=retiring!=retiringViews.end()?retiring->second.view->Get():nullptr;
+            const bool destroyed=oldView && !Alive(oldView);
+            const bool retirementConfirmed = !item.blockedView || item.stockRetired || destroyed;
             const bool release = cardMapper && data && callback && viewMapper &&
-                !existing && retirementConfirmed && Outstanding(item.id) == 0 &&
+                !existing && retirementConfirmed && (!oldView || destroyed) && Outstanding(item.id) == 0 &&
                 std::find(releasedIds.begin(), releasedIds.end(), item.id) == releasedIds.end();
             if (!release) {
                 if (++item.frames == kWarningFrames ||
@@ -370,8 +393,13 @@ namespace CustomComponents::Core::CardViewLifecycleCoordinator {
                      id, pending.frames, deferred.size());
             // Dispatch using stock CreateCardAsync. We deliberately do not
             // bypass its callback: LoadCardsTask must complete normally.
-            SubmitCreate(cardMapper, data, callback, parent, false, method, id);
+            SubmitCreate(cardMapper, data, callback, parent, pending.replacement, method, id);
+            retiringViews.erase(id);
             FreeDeferred(pending);
+        }
+        for(auto it=retiringViews.begin();it!=retiringViews.end();) {
+            const bool waiting=std::any_of(deferred.begin(),deferred.end(),[&](const auto& item){return item.id==it->first;});
+            if(!waiting && !Alive(it->second.view->Get()))it=retiringViews.erase(it);else ++it;
         }
         draining = false;
     }
@@ -389,7 +417,7 @@ namespace CustomComponents::Core::CardViewLifecycleCoordinator {
         Obj* after = GetMapped(mapper, id);
         Record("DELETE_AFTER", id, mapper, after, view);
         // Only confirm the exact old view's stock removal; no mutation here.
-        if (!after) ConfirmRetirement(id, view, "stock-delete");
+        ConfirmRetirement(id, view, "stock-delete");
     }
     static void DeleteReplacementHook(void* self, Obj* view, const void* method) {
         const int id = CardId(view);
@@ -404,7 +432,9 @@ namespace CustomComponents::Core::CardViewLifecycleCoordinator {
         const int id = deathCardId[anim].Get();
         Obj* mapper = deathToViewMapper[anim].Get();
         Record("DEATH_START_BEFORE", id, anim, GetMapped(mapper, id));
+        TrackRetiringView(id,GetMapped(mapper,id));
         originalDeathStart(self, method);
+        TrackRetiringView(id,deathCaptured[anim].Get());
         Record("DEATH_START_AFTER", id, anim, GetMapped(mapper, id), deathCaptured[anim].Get());
     }
     static void TriggeredDeathStartHook(void* self, const void* method) {
@@ -412,7 +442,9 @@ namespace CustomComponents::Core::CardViewLifecycleCoordinator {
         const int id = triggeredDeathCardId[anim].Get();
         Obj* mapper = triggeredDeathToViewMapper[anim].Get();
         Record("ONDEATH_START_BEFORE", id, anim, GetMapped(mapper, id));
+        TrackRetiringView(id,GetMapped(mapper,id));
         originalTriggeredDeathStart(self, method);
+        TrackRetiringView(id,triggeredDeathCaptured[anim].Get());
         Record("ONDEATH_START_AFTER", id, anim, GetMapped(mapper, id), triggeredDeathCaptured[anim].Get());
     }
     static void DeathCompleteHook(void* self, Obj* sender, Obj* args, const void* method) {
@@ -459,7 +491,7 @@ namespace CustomComponents::Core::CardViewLifecycleCoordinator {
         triggeredDeathCardId = triggeredDeath.GetField("DestroyedCardId");
         triggeredDeathToViewMapper = triggeredDeath.GetField("<EntityViewMapper>k__BackingField");
         triggeredDeathCaptured = triggeredDeath.GetField("<CardView>k__BackingField");
-        getView = viewMapper.GetMethod("GetViewObject", 1).cast<Obj*>();
+        getView = viewMapper.GetMethod("GetViewObject", {std::string_view("entityId")}).cast<Obj*>();
         if (!cardDataId.IsValid() || !cardViewId.IsValid() ||
             !cardMapperToViewMapper.IsValid() || !deleterToViewMapper.IsValid() ||
             !deathCardId.IsValid() || !deathToViewMapper.IsValid() || !deathCaptured.IsValid() ||
@@ -482,7 +514,7 @@ namespace CustomComponents::Core::CardViewLifecycleCoordinator {
                 LOG_ERR("CustomComponents/CardLife: method missing %s", label);
                 return false;
             }
-            BNM::BasicHook(method, hook, original);
+            CustomComponents::Core::Hooks::Install(method, hook, original);
             const bool ok = original != nullptr;
             CC_DIAG("CustomComponents/CardLife: hook %s = %d", label, (int)ok);
             return ok;

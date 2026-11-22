@@ -1,0 +1,9 @@
+{
+  "$type": "PvZCards.Engine.Queries.ListPositionQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "Pool": "Deck",
+    "Position": 2,
+    "FromEnd": false,
+    "ComparisonOperator": "LessOrEqual"
+  }
+}

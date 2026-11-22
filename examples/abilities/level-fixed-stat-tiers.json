@@ -1,0 +1,17 @@
+{
+  "$type": "PvZCards.Engine.Components.Level, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "Levels": [
+      {
+        "SunCost": 2,
+        "Attack": 2,
+        "Health": 2
+      },
+      {
+        "SunCost": 3,
+        "Attack": 4,
+        "Health": 4
+      }
+    ]
+  }
+}

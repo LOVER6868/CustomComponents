@@ -1,0 +1,131 @@
+{
+  "entities": [
+    {
+      "components": [
+        {
+          "$type": "PvZCards.Engine.Components.EffectEntityGrouping, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "$data": {
+            "AbilityGroupId": 0
+          }
+        },
+        {
+          "$type": "PvZCards.Engine.Components.PlayTrigger, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "$data": {}
+        },
+        {
+          "$type": "PvZCards.Engine.Components.TriggerTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "$data": {
+            "Query": {
+              "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+              "$data": {}
+            }
+          }
+        },
+        {
+          "$type": "PvZCards.Engine.Components.PrimaryTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "$data": {
+            "SelectionType": "Manual",
+            "NumTargets": 1,
+            "TargetScopeType": "All",
+            "TargetScopeSortValue": "None",
+            "TargetScopeSortMethod": "None",
+            "AdditionalTargetType": "None",
+            "AdditionalTargetQuery": null,
+            "OnlyApplyEffectsOnAdditionalTargets": false,
+            "Query": {
+              "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+              "$data": {
+                "queries": [
+                  {
+                    "$type": "PvZCards.Engine.Queries.HasComponentQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                    "$data": {
+                      "ComponentType": "PvZCards.Engine.Components.Plants, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
+                    }
+                  },
+                  {
+                    "$type": "PvZCards.Engine.Queries.TargetableInPlayFighterQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                    "$data": {}
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "$type": "PvZCards.Engine.Components.MoveCardToLanesEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "$data": {}
+        },
+        {
+          "$type": "PvZCards.Engine.Components.SecondaryTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "$data": {
+            "SelectionType": "Manual",
+            "NumTargets": 1,
+            "TargetScopeType": "All",
+            "TargetScopeSortValue": "None",
+            "TargetScopeSortMethod": "None",
+            "AdditionalTargetType": "None",
+            "AdditionalTargetQuery": null,
+            "OnlyApplyEffectsOnAdditionalTargets": false,
+            "Query": {
+              "$type": "PvZCards.Engine.Queries.OpenLaneQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+              "$data": {
+                "PlayerFactionType": "PvZCards.Engine.Components.Plants, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                "IsForTeamupCard": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "components": [
+        {
+          "$type": "PvZCards.Engine.Components.EffectEntityGrouping, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "$data": {
+            "AbilityGroupId": 1
+          }
+        },
+        {
+          "$type": "PvZCards.Engine.Components.MoveTrigger, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "$data": {}
+        },
+        {
+          "$type": "PvZCards.Engine.Components.TriggerSourceFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "$data": {
+            "Query": {
+              "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+              "$data": {}
+            }
+          }
+        },
+        {
+          "$type": "PvZCards.Engine.Components.PrimaryTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "$data": {
+            "SelectionType": "All",
+            "NumTargets": 0,
+            "TargetScopeType": "All",
+            "TargetScopeSortValue": "None",
+            "TargetScopeSortMethod": "None",
+            "AdditionalTargetType": "None",
+            "AdditionalTargetQuery": null,
+            "OnlyApplyEffectsOnAdditionalTargets": false,
+            "Query": {
+              "$type": "PvZCards.Engine.Queries.PrimaryTargetsQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+              "$data": {
+                "FromAbilityGroupId": 0
+              }
+            }
+          }
+        },
+        {
+          "$type": "PvZCards.Engine.Components.BuffEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "$data": {
+            "AttackAmount": 1,
+            "HealthAmount": 1,
+            "BuffDuration": "Permanent"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -15,26 +15,8 @@
         return klass && klass->name ? klass->name : "?";
     }
 
-    inline Obj* FindComponent(Obj* entity, const char* name) {
-        if (!entity)
-            return nullptr;
-        for (auto* component : Items(entityComponents[entity].Get())) {
-            if (TypeName(component) == name)
-                return component;
-        }
-        return nullptr;
-    }
-
-    // EntityId 0 is valid (notably the local player).
-    inline Obj* FindEntity(Obj* model, int id) {
-        if (!model || id < 0)
-            return nullptr;
-        for (auto* entity : Items(modelEntities[model].Get())) {
-            if (entity && entityId[entity].Get() == id)
-                return entity;
-        }
-        return nullptr;
-    }
+    inline Obj* FindComponent(Obj* entity,const char* name) { return Engine::EntityAccess::Component(entity,name); }
+    inline Obj* FindEntity(Obj* model,int id) { return Engine::EntityAccess::Find(model,id); }
 
     inline bool DiscardContains(Obj* discardPileEntity, int cardId) {
         auto* discard = FindComponent(discardPileEntity, "DiscardPile");

@@ -1,0 +1,10 @@
+{
+  "$type": "PvZCards.Engine.Components.VariableMultiplier, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "Expression": "LaneDistance",
+    "Owner": "PrimaryTarget",
+    "Aggregation": "Single",
+    "Divider": 1,
+    "Query": null
+  }
+}

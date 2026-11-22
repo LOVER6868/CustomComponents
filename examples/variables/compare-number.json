@@ -1,0 +1,12 @@
+{
+  "$type": "PvZCards.Engine.Queries.VariableComparisonQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "EntityQuery": {
+      "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+      "$data": {}
+    },
+    "Expression": "CardsOnBoard * 2",
+    "Value": 6,
+    "ComparisonOperator": "GreaterOrEqual"
+  }
+}

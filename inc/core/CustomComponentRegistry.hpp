@@ -27,7 +27,7 @@ namespace CustomComponents {
 
     class CustomComponentRegistry {
     public:
-        static constexpr std::size_t MaxComponents = 164;
+        static constexpr std::size_t MaxComponents = 256;
 
         static bool Register(ComponentDescriptor descriptor) {
             if (sCount >= MaxComponents) return false;

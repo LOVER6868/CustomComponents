@@ -1,0 +1,18 @@
+{
+  "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "queries": [
+      {
+        "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {}
+      },
+      {
+        "$type": "PvZCards.Engine.Queries.LeveledQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "Value": 3,
+          "ComparisonOperator": "Equal"
+        }
+      }
+    ]
+  }
+}

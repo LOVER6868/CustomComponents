@@ -1,0 +1,39 @@
+{
+  "$type": "PvZCards.Engine.Components.DrawCardFromSubsetInDeckEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "SubsetQuery": {
+      "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+      "$data": {
+        "queries": [
+          {
+            "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {
+              "queries": [
+                {
+                  "$type": "PvZCards.Engine.Queries.InDeckQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {}
+                },
+                {
+                  "$type": "PvZCards.Engine.Queries.SameFactionQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {}
+                }
+              ]
+            }
+          },
+          {
+            "$type": "PvZCards.Engine.Queries.ListPositionQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+            "$data": {
+              "Pool": "Deck",
+              "Position": 4,
+              "FromEnd": true,
+              "ComparisonOperator": "LessOrEqual"
+            }
+          }
+        ]
+      }
+    },
+    "DrawAmount": 1,
+    "PluckFailSafe": false,
+    "SubsetQueryUsesEntities": true
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "$type": "PvZCards.Engine.Components.SetVariableEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "Owner": "Self",
+    "Variable": "RememberedCards",
+    "Operation": "RemoveValue",
+    "ValueType": "Entity",
+    "ValueSource": "Target"
+  }
+}

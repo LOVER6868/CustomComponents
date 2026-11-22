@@ -1,0 +1,8 @@
+{
+  "$type": "PvZCards.Engine.Components.SetVariableEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "Owner": "Self",
+    "Variable": "SavedHealth",
+    "ValueSource": "Health"
+  }
+}

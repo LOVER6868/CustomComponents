@@ -1,0 +1,6 @@
+{
+  "$type": "PvZCards.Engine.Queries.PrimaryTargetsGuidQuery, EngineLib",
+  "$data": {
+    "FromAbilityGroupId": 0
+  }
+}

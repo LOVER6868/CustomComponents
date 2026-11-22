@@ -17,10 +17,11 @@
 #include "presentation/DiscardFromHandPresentationSystem.hpp"
 
 // Discard pile transfers and origin tracking
-#include "zones/DiscardPileTransferSystem.hpp"
+#include "zones/ZoneTransferSystem.hpp"
 #include "zones/DiscardProvenanceSystem.hpp"
 
 // Discard and return trigger components
 #include "triggers/ReturnedFromDiscardPileTrigger.hpp"
 #include "triggers/DiscardOutsidePlayTrigger.hpp"
+#include "triggers/PickFromThreeTrigger.hpp"
 

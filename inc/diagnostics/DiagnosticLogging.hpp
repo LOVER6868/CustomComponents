@@ -8,9 +8,13 @@
 #ifndef CUSTOMCOMPONENTS_VERBOSE_DIAGNOSTICS
 #define CUSTOMCOMPONENTS_VERBOSE_DIAGNOSTICS 0
 #endif
+#ifndef CUSTOMCOMPONENTS_SELECTION_DIAGNOSTICS
+#define CUSTOMCOMPONENTS_SELECTION_DIAGNOSTICS CUSTOMCOMPONENTS_VERBOSE_DIAGNOSTICS
+#endif
 
 namespace CustomComponents::Diagnostics {
     inline constexpr bool kVerbose = CUSTOMCOMPONENTS_VERBOSE_DIAGNOSTICS != 0;
+    inline constexpr bool kSelectionTrace = CUSTOMCOMPONENTS_SELECTION_DIAGNOSTICS != 0;
 }
 
 // Release builds omit incidental tracing in gameplay hooks and UI ticks.
@@ -20,4 +24,10 @@ namespace CustomComponents::Diagnostics {
 #define CC_DIAG(...) LOG_INFO(__VA_ARGS__)
 #else
 #define CC_DIAG(...) ((void)0)
+#endif
+
+#if CUSTOMCOMPONENTS_SELECTION_DIAGNOSTICS
+#define CC_SELECTION_DIAG(...) LOG_INFO(__VA_ARGS__)
+#else
+#define CC_SELECTION_DIAG(...) ((void)0)
 #endif

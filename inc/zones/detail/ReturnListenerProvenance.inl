@@ -70,6 +70,7 @@
         Obj* card = FindEntity(model, cardId);
         if (!card || !entityHas[card](discardedType)) return;
         const int origin = GetSource(model, cardId);
+        Zones::MarkedForDiscard::Clear(card);
         Obj* removed = entityRemove[card](discardedType);
         CC_DIAG("CustomComponents/Discarded: REMOVE model=%p card=%d Source=%d reason=%s removed=%p remaining=%d",
             model, cardId, origin, why ? why : "?", removed,

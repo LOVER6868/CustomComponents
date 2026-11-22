@@ -1,3 +1,4 @@
+#include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 #include <BNM/Class.hpp>
@@ -290,10 +291,10 @@ namespace CustomComponents::Systems {
                 return false;
             }
 
-            BNM::BasicHook(
+            CustomComponents::Core::Hooks::Install(
                 processBlockableDamage, ProcessBlockableDamageHook, originalProcessBlockableDamage
             );
-            BNM::BasicHook(getChargeAmount, GetChargeAmountHook, originalGetChargeAmount);
+            CustomComponents::Core::Hooks::Install(getChargeAmount, GetChargeAmountHook, originalGetChargeAmount);
 
             if (!originalProcessBlockableDamage || !originalGetChargeAmount) {
                 LOG_ERR("CustomComponents/Charge: gameplay hook installation failed");

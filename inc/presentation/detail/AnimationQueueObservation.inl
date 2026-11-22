@@ -1,3 +1,4 @@
+#include "diagnostics/DiagnosticLogging.hpp"
 // Internal implementation fragment for ZoneTriggeredAbilityPresentationSystem.
 // Animation-queue observation and post-animation frame flush.
 // Included at its original declaration position inside the owning namespace.
@@ -28,6 +29,18 @@
             }
         }
         return snapshot;
+    }
+
+    // A diagnostic label only; a queued head is not proof of active ownership.
+    inline const char* PerformanceQueueHead(Obj* queue) {
+        if(!Core::Performance::enabled || !queue)return "none";
+        for(auto* field:{&queueFrontAnimations,&queueAnimations}) {
+            if(!field->IsValid())continue;
+            auto* list=reinterpret_cast<BNM::Structures::Mono::List<Obj*>*>((*field)[queue].Get());
+            if(!list || !list->items || list->size<=0 || list->size>int(list->items->capacity))continue;
+            Obj* head=list->items->m_Items[0];if(head && head->klass)return head->klass->name;
+        }
+        return "empty";
     }
 
     inline void LogQueueLifecycle(Obj* queue, const char* phase, bool force = false) {
@@ -66,6 +79,35 @@
         LogQueueLifecycle(lifecycleTargetQueue, "AFTER completion check", true);
     }
 
+    // These are stock-initiated calls only. Never invoke animation methods from
+    // the picker, and never hold gameplay progression in a diagnostic hook.
+    static void QueueAddAnimationHook(void* self, Obj* animation, const void* method) {
+        CustomComponents::Core::ObserveReplayPresentation("queue-add",self,animation);
+        Diagnostics::HistoryTrace::Animation("ENQUEUE",self,animation,animation && animation->klass?animation->klass->name:nullptr);
+        if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualQueueGate::ObserveEnqueue(self, animation, false);
+        if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualBarrierTracker::Enqueue(self, animation);
+        CC_SELECTION_DIAG("CustomComponents/Pick3/ANIMATION_LIFECYCLE: event=ENQUEUE queue=%p animation=%p front=0", self, animation);
+        originalQueueAddAnimation(self, animation, method);
+        frameStatsDirty = true;
+    }
+    static void QueueAddFrontAnimationHook(void* self, Obj* animation, const void* method) {
+        CustomComponents::Core::ObserveReplayPresentation("queue-front",self,animation);
+        Diagnostics::HistoryTrace::Animation("ENQUEUE_FRONT",self,animation,animation && animation->klass?animation->klass->name:nullptr);
+        if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualQueueGate::ObserveEnqueue(self, animation, true);
+        if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualBarrierTracker::Enqueue(self, animation);
+        CC_SELECTION_DIAG("CustomComponents/Pick3/ANIMATION_LIFECYCLE: event=ENQUEUE queue=%p animation=%p front=1", self, animation);
+        originalQueueAddFrontAnimation(self, animation, method);
+        frameStatsDirty = true;
+    }
+    static void QueueStartAnimationHook(void* self, Obj* animation, const void* method) {
+        CustomComponents::Core::ObserveReplayPresentation("queue-start",self,animation);
+        Diagnostics::HistoryTrace::Animation("START",self,animation,animation && animation->klass?animation->klass->name:nullptr);
+        if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualQueueGate::ObserveStart(self, animation);
+        if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualBarrierTracker::Start(self, animation);
+        CC_SELECTION_DIAG("CustomComponents/Pick3/ANIMATION_LIFECYCLE: event=START queue=%p animation=%p", self, animation);
+        originalQueueStartAnimation(self, animation, method);
+    }
+
     static void QueueUpdateHook(void* self, const void* method) {
         Obj* queue = static_cast<Obj*>(self);
         const auto queueKey = reinterpret_cast<std::uintptr_t>(self);
@@ -85,17 +127,89 @@
                 entry = {};  // A canceled creation cannot fill the table forever.
             }
         }
-        const bool traced = self == lifecycleTargetQueue && lifecycleTargetAnimation;
+        const bool traced = Diagnostics::kSelectionTrace && self == lifecycleTargetQueue && lifecycleTargetAnimation;
         if (traced) {
             ++lifecycleQueueUpdates;
             LogQueueLifecycle(queue, "UPDATE BEFORE");
         }
         const auto previousQueue = activeQueueUpdate;
         activeQueueUpdate = queueKey;
-        originalQueueUpdate(self, method);
+        // Snapshots are taken around stock Update; a decreasing count signals
+        // queue retirement, not necessarily visual completion of that animation.
+        if constexpr(Diagnostics::kSelectionTrace) {
+        const auto beforeNormal = InspectQueueList(queue, queueAnimations);
+        const auto beforeFront = InspectQueueList(queue, queueFrontAnimations);
+        {Core::Performance::Scope stockCost(Core::Performance::Area::StockQueue,PerformanceQueueHead(queue));originalQueueUpdate(self, method);}
+        const auto afterNormal = InspectQueueList(queue, queueAnimations);
+        const auto afterFront = InspectQueueList(queue, queueFrontAnimations);
+        // Passive identities across both stock queue lists. Disappearance only
+        // signals LEFT_LIST, never completed animation or permission to open UI.
+        std::vector<std::uintptr_t> observedIdentities;
+        for (auto* field : {&queueAnimations, &queueFrontAnimations}) {
+            if (!field->IsValid()) continue;
+            Obj* listObj = (*field)[queue].Get();
+            if (!listObj) continue;
+            auto* list = reinterpret_cast<BNM::Structures::Mono::List<Obj*>*>(listObj);
+            const int size = list->GetSize();
+            if (size < 0 || size > 4096) continue;
+            Obj** values = list->GetData();
+            if (!values) continue;
+            for (int i = 0; i < size; ++i)
+                if (values[i]) observedIdentities.push_back(reinterpret_cast<std::uintptr_t>(values[i]));
+        }
+        ::CustomComponents::Presentation::Pick3VisualBarrierTracker::ObserveList(self, observedIdentities);
+        for (const auto& change : ::CustomComponents::Presentation::Pick3VisualBarrierTracker::CollectTransitions(self))
+            CC_SELECTION_DIAG("CustomComponents/Pick3/VISUAL_BARRIER: event=%s effect=%d group=%d candidateQueue=%p remaining=%d ownership=%s policy=OBSERVE_ONLY",
+                change.remaining == 0 ? "BARRIER_LIST_DRAINED" : "BARRIER_PENDING",
+                change.effect, change.group, self, change.remaining,
+                change.ownershipVerified ? "VERIFIED" : "UNKNOWN");
+        ::CustomComponents::Presentation::Pick3VisualQueueGate::ObserveStockUpdate();
+        if (beforeNormal.count != afterNormal.count || beforeFront.count != afterFront.count) {
+            if ((beforeNormal.count >= 0 && afterNormal.count >= 0 && afterNormal.count < beforeNormal.count) ||
+                (beforeFront.count >= 0 && afterFront.count >= 0 && afterFront.count < beforeFront.count))
+                ::CustomComponents::Presentation::Pick3VisualQueueGate::retireTransitions.fetch_add(1, std::memory_order_relaxed);
+            CC_SELECTION_DIAG("CustomComponents/Pick3/ANIMATION_LIFECYCLE: event=QUEUE_TRANSITION queue=%p normal=%d->%d front=%d->%d",
+                self, beforeNormal.count, afterNormal.count, beforeFront.count, afterFront.count);
+        }
+        ::CustomComponents::Presentation::Pick3VisualQueueGate::normalCount.store(afterNormal.count, std::memory_order_relaxed);
+        ::CustomComponents::Presentation::Pick3VisualQueueGate::frontCount.store(afterFront.count, std::memory_order_relaxed);
+        } else {Core::Performance::Scope stockCost(Core::Performance::Area::StockQueue,PerformanceQueueHead(queue));originalQueueUpdate(self,method);}
         activeQueueUpdate = previousQueue;
+        // One native Update hook owns the stock call. Presentation subsystems
+        // observe only after stock Update, without installing competing hooks.
+        Core::AnimationQueuePostUpdate::Notify(self, method);
         if (traced) LogQueueLifecycle(queue, "UPDATE AFTER");
-        FlushCompletedIdleLaneFrames(queue);
+        {Core::Performance::Scope reconciliationCost(Core::Performance::Area::FrameReconciliation);FlushCompletedIdleLaneFrames(queue);FlushIdleHandFrames(queue);}
+        Core::Performance::Report();
+        // CRASH FIX: Do not invoke CanYield during Queue.Update.
+        // The matching PvP crash (libil2cpp.so+0x17C7EE0, null+0x38)
+        // occurred through a BNM::TryInvoke callback on UnityMain while
+        // opening the mulligan. Merely having a Method handle does not
+        // establish that every queue instance/context is safe to invoke.
+        // Disable this experimental visual gate until the stock active
+        // animation queue can be observed at a verified safe boundary.
+    }
+
+    // Observe only calls initiated by stock. No extra native invocations,
+    // no timed UI gate, and no dependency on mulligan queue initialization.
+    static bool QueueCanYieldHook(void* self, const void* method) {
+        const bool result = originalQueueCanYield(self, method);
+        if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualQueueGate::ObserveStockYield(self, result);
+        // lifecycleTargetQueue is an observed animation owner, NOT proof of
+        // the globally active game/presentation queue.
+        if (self == lifecycleTargetQueue && lifecycleTargetAnimation) {
+            static void* lastQueue = nullptr;
+            static int lastResult = -1;
+            if (lastQueue != self || lastResult != static_cast<int>(result)) {
+                lastQueue = self;
+                lastResult = static_cast<int>(result);
+                const auto normal = InspectQueueList(static_cast<Obj*>(self), queueAnimations);
+                const auto front = InspectQueueList(static_cast<Obj*>(self), queueFrontAnimations);
+                CC_SELECTION_DIAG("CustomComponents/Pick3/PASSIVE_VISUAL: event=STOCK_CAN_YIELD queue=%p result=%d normal=%d front=%d tracked=1",
+                    self, static_cast<int>(result), normal.count, front.count);
+            }
+        }
+        return result;
     }
 
     static bool QueueIsEmptyHook(void* self, const void* method) {
@@ -115,4 +229,5 @@
         }
         return result;
     }
+
 

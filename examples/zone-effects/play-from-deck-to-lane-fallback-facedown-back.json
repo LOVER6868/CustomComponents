@@ -1,0 +1,14 @@
+{
+  "$type": "PvZCards.Engine.Components.PlayFromDeckToLaneEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "PluckFailSafe": true,
+    "ForceFaceDown": true,
+    "GrantTeamup": false,
+    "GrantAquatic": false,
+    "CreationPosition": "Back",
+    "SubsetQuery": {
+      "$type": "PvZCards.Engine.Queries.PickedFromThreeQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+      "$data": {}
+    }
+  }
+}

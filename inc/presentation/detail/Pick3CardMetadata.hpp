@@ -1,3 +1,4 @@
+#include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 // Read-only card preview metadata, sourced from the SAME CardDataMapper used
@@ -7,6 +8,7 @@
 #include <unordered_map>
 #include <mutex>
 #include <string>
+#include "queries/CardClassificationPolicy.hpp"
 #include <BNM/Class.hpp>
 #include <BNM/Field.hpp>
 #include <BNM/Method.hpp>
@@ -42,7 +44,7 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
     inline BNM::Field<int> displayAttack, displayHealth, displayCost;
     inline BNM::Field<bool> isFighter, isEnvironment;
     inline BNM::Field<int> faction, cardColorField;
-    inline BNM::Field<Str*> prefabName, baseId;
+    inline BNM::Field<Str*> prefabName, baseId, cardSet;
     inline BNM::Field<Obj*> specialAbilities;
     inline BNM::Method<int> attackIconDecider, healthIconDecider;
     inline bool useTraitIcons = true;
@@ -60,6 +62,10 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
         bool fighter=false, environment=false;
     };
     inline std::unordered_map<int,Snapshot> snapshots;
+    // Independently cached top-level CardData.Set metadata, keyed by GUID.
+    // Does not depend on the optional Pick3 UI being enabled.
+    inline std::unordered_map<int,std::string> setSnapshots;
+    inline std::unordered_map<int,int> colorSnapshots;
     inline std::mutex snapshotMutex;
     inline unsigned int snapshotCount=0;
     // Passive capture of game-driven card_data initialization. The game calls
@@ -69,11 +75,25 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
     inline SetCardDataFn originalSetCardData = nullptr;
     inline bool mapperCaptureActive = false;
     inline unsigned int mapperCaptured = 0;
+    using SharedObserver = void (*)(void*, int, void*, const void*);
+    inline SharedObserver sharedObserver = nullptr;
+    inline bool RegisterSharedObserver(SharedObserver observer) {
+        if (!observer) return false;
+        if (sharedObserver && sharedObserver != observer) return false;
+        sharedObserver = observer;
+        return true;
+    }
     inline void CaptureSnapshot(int guid, Obj* data);
+    inline void CaptureSet(int guid, Obj* data);
     inline void SetCardDataCapture(Obj* self, int guid, Obj* data, const void* method) {
         if (!originalSetCardData) return;
         // Preserve game behavior before performing any optional observations.
         originalSetCardData(self, guid, data, method);
+        // Notify other Bloom modules after the stock mapper has updated.
+        if (sharedObserver) sharedObserver(self, guid, data, method);
+        if (self && guid>0 && data && mapperClass.IsValid() &&
+            dataClass.IsValid() && BNM::IsA(self, mapperClass) && BNM::IsA(data, dataClass))
+            CaptureSet(guid, data);
         if (mapperCaptureActive && self && guid>0 && data &&
             mapperClass.IsValid() && BNM::IsA(self,mapperClass) &&
             dataClass.IsValid() && BNM::IsA(data,dataClass)) {
@@ -87,8 +107,39 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
         const auto method=mapperClass.GetMethod("SetCardData",2);
         const auto* info=method.IsValid()?method.GetInfo():nullptr;
         if (!info || info->parameters_count!=2 || !info->methodPointer) return false;
-        BNM::BasicHook(method,SetCardDataCapture,originalSetCardData);
+        CustomComponents::Core::Hooks::Install(method,SetCardDataCapture,originalSetCardData);
         return originalSetCardData!=nullptr;
+    }
+
+    inline bool EnsureSetCapture() {
+        mapperClass = BNM::Class("PvZCards.Core.Utilities", "CardDataMapper");
+        dataClass = BNM::Class("PvZCards.Core.Utilities", "CardData");
+        if (!mapperClass.IsValid() || !dataClass.IsValid()) return false;
+        cardSet = dataClass.GetField("Set").cast<Str*>();
+        cardColorField = dataClass.GetField("Color").cast<int>();
+        return cardSet.IsValid() && cardColorField.IsValid() && InstallMapperCapture();
+    }
+    inline void CaptureSet(int guid, Obj* data) {
+        if (!cardSet.IsValid() || guid<=0 || !data) return;
+        Str* setName = cardSet[data].Get();
+        const std::string value = setName ? setName->str() : "";
+        std::lock_guard<std::mutex> lock(snapshotMutex);
+        setSnapshots[guid] = value;
+        if (cardColorField.IsValid()) colorSnapshots[guid] = cardColorField[data].Get();
+    }
+    inline bool HasCapturedSet(int guid, std::string_view expected) {
+        if (guid<=0) return false;
+        std::lock_guard<std::mutex> lock(snapshotMutex);
+        const auto it = setSnapshots.find(guid);
+        return it != setSnapshots.end() &&
+            Queries::CardClassificationPolicy::HasSet(it->second, expected);
+    }
+
+    inline bool HasCapturedClass(int guid, int classFlag) {
+        if (guid <= 0 || classFlag <= 0) return false;
+        std::lock_guard<std::mutex> lock(snapshotMutex);
+        const auto it = colorSnapshots.find(guid);
+        return it != colorSnapshots.end() && (it->second & classFlag) == classFlag;
     }
 
     // Capture only scalar values / copied strings, NEVER a Unity or managed pointer.
@@ -155,6 +206,7 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
             cardColorField = dataClass.GetField("Color");
             prefabName = dataClass.GetField("PrefabName");
             baseId = dataClass.GetField("BaseId");
+            cardSet = dataClass.GetField("Set").cast<Str*>();
             specialAbilities = dataClass.GetField("SpecialAbilities").cast<Obj*>();
         }
         const BNM::Class attackDecider("PvZCards.Game", "AttackIconDecider");
@@ -177,7 +229,7 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
             isFighter.IsValid() && isEnvironment.IsValid() && faction.IsValid() &&
             prefabName.IsValid() && baseId.IsValid();
         localizationReady = localizedMediatorClass.IsValid() && localizationClass.IsValid() &&
-            localizationInMediator.IsValid() && findAll.IsValid() && nameKey.IsValid() &&
+            localizationInMediator.IsValid() && nameKey.IsValid() &&
             descriptionKey.IsValid() && hasKey.IsValid() && translate.IsValid();
         CC_DIAG("CustomComponents/Pick3/DATA: SETUP cardData=%d localization=%d",
                  dataReady ? 1 : 0, localizationReady ? 1 : 0);
@@ -186,22 +238,74 @@ namespace CustomComponents::Presentation::Pick3CardMetadata {
                  healthIconDecider.IsValid() ? 1 : 0, useTraitIcons?1:0);
     }
 
-    inline Obj* FindLocalizationMapper() {
-        if (!localizationReady) return nullptr;
-        ObjectArray* mediators = nullptr;
-        const auto ex = BNM::TryInvoke([&] {
-            mediators = findAll(localizedMediatorClass.GetMonoType());
-        });
-        if (ex.IsValid() || !mediators) return nullptr;
-        // Do not keep scene-owned mediator pointers across scene changes.
-        const auto count = mediators->GetCapacity();
-        for (BNM::IL2CPP::il2cpp_array_size_t i = 0; i < count; ++i) {
-            Obj* mediator = mediators->m_Items[i];
-            if (!mediator || !BNM::IsA(mediator, localizedMediatorClass)) continue;
-            Obj* mapper = localizationInMediator[mediator].Get();
-            if (mapper && BNM::IsA(mapper, localizationClass)) return mapper;
+    // Patch 1.7.3: capture the injected mapper after the game's OnRegister.
+    // The adjacent set_LocalizationMapper is only 8 ARM64 bytes long:
+    //     0x1EC4A70 .. 0x1EC4A77
+    // OnRegister starts at 0x1EC4A78. Dobby's default (non-near) arm64
+    // trampoline needs 12 or 16 bytes, so inline-hooking the setter
+    // overwrote OnRegister's prologue before its own detour was installed.
+    // Never inline-hook this eight-byte setter. OnRegister already exposes
+    // the game-injected LocalizationMapper field after stock registration.
+    using MediatorRegisterFn = void (*)(Obj*, const void*);
+    inline MediatorRegisterFn originalMediatorOnRegister = nullptr;
+    inline Obj* capturedLocalizationMapper = nullptr;
+    inline uintptr_t capturedLocalizationHandle = 0;
+    inline uintptr_t (*localizationPin)(Obj*, bool) = nullptr;
+    inline void (*localizationUnpin)(uintptr_t) = nullptr;
+    inline unsigned localizationVersion = 0;
+    inline void CaptureInjectedLocalizationMapper(Obj* mapper) {
+        if (!mapper || !localizationPin || !localizationUnpin) return;
+        if (mapper == capturedLocalizationMapper) return;
+        uintptr_t next = localizationPin(mapper, false);
+        if (!next) return;
+        if (capturedLocalizationHandle) localizationUnpin(capturedLocalizationHandle);
+        capturedLocalizationHandle = next;
+        capturedLocalizationMapper = mapper;
+        ++localizationVersion;
+        LOG_INFO("CustomComponents/Pick3/LOCALIZATION_CAPTURE: source=stock_mediator version=%u", localizationVersion);
+    }
+    inline void MediatorOnRegisterCapture(Obj* self, const void* method) {
+        // The original game registration MUST run exactly once; a recursion
+        // guard that returns early can leave the injected view uninitialized.
+        if (originalMediatorOnRegister)
+            originalMediatorOnRegister(self, method);
+        if (self && localizationInMediator.IsValid()) {
+            Obj* mapper = localizationInMediator[self].Get();
+            if (mapper) CaptureInjectedLocalizationMapper(mapper);
         }
-        return nullptr;
+    }
+    inline bool InstallLocalizationCapture(uintptr_t (*pin)(Obj*,bool), void (*unpin)(uintptr_t)) {
+        localizationPin = pin;
+        localizationUnpin = unpin;
+        if (!localizationReady || !pin || !unpin || !localizedMediatorClass.IsValid()) return false;
+        if (!originalMediatorOnRegister) {
+            const auto onRegister = localizedMediatorClass.GetMethod("OnRegister", 0);
+            const auto* info = onRegister.IsValid() ? onRegister.GetInfo() : nullptr;
+            if (info && info->parameters_count == 0 && info->methodPointer) {
+                // Unlike BNM's BasicHook wrapper, check the actual Dobby status.
+                void* trampoline = nullptr;
+                const int status = CustomComponents::Core::Hooks::InstallNative(reinterpret_cast<void*>(info->methodPointer),
+                                             reinterpret_cast<void*>(&MediatorOnRegisterCapture),
+                                             &trampoline);
+                if (status == 0 && trampoline &&
+                    trampoline != reinterpret_cast<void*>(&MediatorOnRegisterCapture)) {
+                    originalMediatorOnRegister = reinterpret_cast<MediatorRegisterFn>(trampoline);
+                    LOG_INFO("CustomComponents/Pick3/LOCALIZATION_CAPTURE: ON_REGISTER_HOOK_OK target=%p trampoline=%p",
+                             reinterpret_cast<void*>(info->methodPointer), trampoline);
+                } else {
+                    LOG_ERR("CustomComponents/Pick3/LOCALIZATION_CAPTURE: ON_REGISTER_HOOK_FAILED status=%d target=%p trampoline=%p",
+                            status, reinterpret_cast<void*>(info->methodPointer), trampoline);
+                    return false;
+                }
+            }
+        }
+        LOG_INFO("CustomComponents/Pick3/LOCALIZATION_CAPTURE: hooks setter=0 register=%d noSceneScan=1 setterInlineUnsafe=1",
+                 originalMediatorOnRegister ? 1 : 0);
+        return originalMediatorOnRegister != nullptr;
+    }
+    inline Obj* FindLocalizationMapper() {
+        // No FindObjectsOfTypeAll, no transient scene-owned mediator pointers.
+        return localizationReady && capturedLocalizationHandle ? capturedLocalizationMapper : nullptr;
     }
 
     inline bool TryTranslate(Obj* mapper, const std::string& asset, bool forName,

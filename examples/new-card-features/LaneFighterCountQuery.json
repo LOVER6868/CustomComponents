@@ -1,0 +1,8 @@
+{
+  "$type": "PvZCards.Engine.Queries.LaneFighterCountQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "Minimum": 2,
+    "Maximum": -1,
+    "Faction": "Plants"
+  }
+}

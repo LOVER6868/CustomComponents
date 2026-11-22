@@ -47,14 +47,25 @@ namespace CustomComponents::GrantableAbilityRuntime {
     }
 
     inline bool Active(void* component) {
-        return component && isActive.IsValid() && isActive[component]();
+        auto active=isActive;return component && active.IsValid() && active[component]();
+    }
+
+    inline bool HasDuration(void* component,int duration) {
+        auto countersMetadata=countersField;auto entriesMetadata=entriesField;
+        if(!component)return false;
+        auto* counters=countersMetadata[component].Get();
+        auto* list=counters?static_cast<BNM::Structures::Mono::List<CounterEntry>*>(entriesMetadata[counters].Get()):nullptr;
+        if(!list || !list->items || list->size<0 || list->size>int(list->items->capacity))return false;
+        for(int i=0;i<list->size;++i)if(list->items->m_Items[i].duration==duration)return true;
+        return false;
     }
 
     inline int SumValues(void* component) {
         if (!component || !countersField.IsValid() || !entriesField.IsValid()) return 0;
-        auto* counters = countersField[component].Get();
+        auto countersMetadata=countersField;auto entriesMetadata=entriesField;
+        auto* counters = countersMetadata[component].Get();
         if (!counters) return 0;
-        auto* rawList = entriesField[counters].Get();
+        auto* rawList = entriesMetadata[counters].Get();
         if (!rawList) return 0;
         auto* list = static_cast<BNM::Structures::Mono::List<CounterEntry>*>(rawList);
         if (!list->items) return 0;
@@ -65,24 +76,26 @@ namespace CustomComponents::GrantableAbilityRuntime {
 
     inline bool Apply(void* component, int duration, int source, int value,
                       NumericAbility::Operation operation) {
-        if (!component || !addCounter.IsValid()) return false;
-        if (operation == NumericAbility::Operation::Set && removeCounter.IsValid()) {
-            removeCounter[component](duration, source);
+        auto add=addCounter;auto remove=removeCounter;
+        if (!component || !add.IsValid()) return false;
+        if (operation == NumericAbility::Operation::Set && remove.IsValid()) {
+            remove[component](duration, source);
             // Match the old ModifiableInt Set semantics: AbilityValue describes
             // the desired total ability value, not an additional counter.
             value -= SumValues(component);
         }
-        addCounter[component](duration, source, value);
+        add[component](duration, source, value);
         return true;
     }
 
     inline void Remove(void* component, int duration, int source, bool expiry) {
+        auto remove=removeCounter;auto removeDuration=removeAllCountersForDuration;
         if (!component) return;
         if (expiry) {
-            if (removeAllCountersForDuration.IsValid())
-                removeAllCountersForDuration[component](duration);
-        } else if (removeCounter.IsValid()) {
-            removeCounter[component](duration, source);
+            if (removeDuration.IsValid())
+                removeDuration[component](duration);
+        } else if (remove.IsValid()) {
+            remove[component](duration, source);
         }
     }
 }

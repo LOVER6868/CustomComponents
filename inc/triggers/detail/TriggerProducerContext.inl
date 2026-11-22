@@ -10,7 +10,7 @@
         if (!entity || !componentName)
             return nullptr;
 
-        auto* components = entityComponents[entity].Get();
+        auto* components = Core::Metadata::Bind(entityComponents,entity).Get();
         if (!components || !components->items)
             return nullptr;
 
@@ -34,7 +34,7 @@
         if (!component)
             return false;
 
-        auto* managedName = customTriggerName[component].Get();
+        auto* managedName = Core::Metadata::Bind(customTriggerName,component).Get();
         return managedName && managedName->str() == eventName;
     }
 
@@ -51,43 +51,38 @@
         return markerMatch || CustomTriggerMatches(entity, eventName);
     }
 
-    inline Obj* ReadObjectFieldByOffset(Obj* object, std::uintptr_t offset) {
-        if (!object)
-            return nullptr;
-        return *reinterpret_cast<Obj**>(
-            reinterpret_cast<std::uintptr_t>(object) + offset
-        );
-    }
-
     inline bool RefreshStockTriggerContext(StockTriggerContext& context) {
         if (!context.triggerSystem)
             return false;
-
-        Obj* instances = ReadObjectFieldByOffset(
-            context.triggerSystem,
-            kTriggerSystemInstancesOffset
-        );
-        Obj* triggeredEffects = ReadObjectFieldByOffset(
-            context.triggerSystem,
-            kTriggerSystemTriggeredEffectsOffset
-        );
-        Obj* finder = ReadObjectFieldByOffset(
-            context.triggerSystem,
-            kTriggerSystemFinderOffset
-        );
+        auto instancesField=producerInstancesField;
+        auto triggeredField=producerTriggeredEffectsField;
+        auto finderField=producerFinderField;
+        Obj* instances=instancesField.IsValid()?instancesField[context.triggerSystem].Get():nullptr;
+        Obj* triggeredEffects=triggeredField.IsValid()?triggeredField[context.triggerSystem].Get():nullptr;
+        Obj* finder=finderField.IsValid()?finderField[context.triggerSystem].Get():nullptr;
+        auto reject = [&](const char* reason) {
+            static std::atomic<unsigned> samples{0};
+            if (samples.fetch_add(1) < 32)
+                LOG_WARN("CustomComponents/CustomTrigger: producer rejected reason=%s system=%p instances=%p triggered=%p finder=%p finderType=%s model=%p fields=%d/%d/%d/%d",
+                    reason, context.triggerSystem, instances, triggeredEffects, finder,
+                    TypeName(finder), finder && finderModelField.IsValid()
+                        ? Core::Metadata::Bind(finderModelField,finder).Get() : nullptr,
+                    int(producerInstancesField.IsValid()),
+                    int(producerTriggeredEffectsField.IsValid()),
+                    int(producerFinderField.IsValid()), int(finderModelField.IsValid()));
+            return false;
+        };
 
         if (!instances || !triggeredEffects || !finder)
-            return false;
+            return reject("missing-injected-value");
 
         if (std::strcmp(TypeName(finder), "GenericEffectEntityFinder`1") != 0)
-            return false;
+            return reject("unexpected-finder-type");
 
-        Obj* model = ReadObjectFieldByOffset(
-            finder,
-            kGenericFinderModelOffset
-        );
+        auto modelField=finderModelField;
+        Obj* model=modelField.IsValid()?modelField[finder].Get():nullptr;
         if (!model)
-            return false;
+            return reject("missing-finder-model");
 
         context.instances = instances;
         context.triggeredEffects = triggeredEffects;
@@ -96,53 +91,43 @@
         return true;
     }
 
-    inline void RememberStockTriggerCandidate(Obj* triggerSystem) {
-        if (!triggerSystem)
-            return;
-
-        // The DI container assigns TriggerSystem<T>'s injected fields through
-        // generated setters. RegisterEffectHandlers can run before Finder is
-        // assigned in this build, so keep the TriggerSystem object itself and
-        // resolve its injected fields lazily when an event is fired.
-        for (std::size_t i = 0; i < stockTriggerContextCount; ++i) {
-            if (stockTriggerContexts[i].triggerSystem != triggerSystem)
-                continue;
-
-            StockTriggerContext refreshed = stockTriggerContexts[i];
-            RefreshStockTriggerContext(refreshed);
-
-            for (std::size_t j = i + 1; j < stockTriggerContextCount; ++j)
-                stockTriggerContexts[j - 1] = stockTriggerContexts[j];
-
-            stockTriggerContexts[stockTriggerContextCount - 1] = refreshed;
-            return;
+    inline std::vector<StockTriggerContext> SnapshotStockTriggerContexts() {
+        std::vector<std::shared_ptr<Core::ManagedRuntime::Root>> references;
+        {
+            std::lock_guard<std::mutex> guard(producerLock);
+            producerReferences.erase(std::remove_if(producerReferences.begin(),producerReferences.end(),
+                [](const auto& reference){return !reference->Get();}),producerReferences.end());
+            references=producerReferences;
         }
-
-        StockTriggerContext candidate{};
-        candidate.triggerSystem = triggerSystem;
-        RefreshStockTriggerContext(candidate);
-
-        if (stockTriggerContextCount < stockTriggerContexts.size()) {
-            stockTriggerContexts[stockTriggerContextCount++] = candidate;
-        } else {
-            // Only evict once the large recency window is genuinely full.
-            // This preserves all producer systems from the current match and
-            // its prediction models under normal play.
-            for (std::size_t i = 1; i < stockTriggerContexts.size(); ++i)
-                stockTriggerContexts[i - 1] = stockTriggerContexts[i];
-            stockTriggerContexts[stockTriggerContexts.size() - 1] = candidate;
+        std::vector<StockTriggerContext> contexts;
+        for(const auto& reference:references) {
+            auto instanceField=producerInstancesField;
+            Obj* system=reference->Get();
+            Obj* instances=system && instanceField.IsValid()?instanceField[system].Get():nullptr;
+            // Every TriggerSystem<T> in one DI scope shares these services.
+            // Keep one coherent producer per scope instead of rooting and
+            // validating every marker specialization on every enqueue.
+            if(instances && std::any_of(contexts.begin(),contexts.end(),
+                [&](const auto& c){return c.instances==instances;}))continue;
+            auto lifetime=std::make_shared<Core::ManagedRuntime::Root>(reference->Get());
+            StockTriggerContext candidate;
+            candidate.lifetime=lifetime;candidate.triggerSystem=lifetime->Get();
+            if(RefreshStockTriggerContext(candidate)) contexts.push_back(std::move(candidate));
         }
-
-        if constexpr (CustomComponents::Diagnostics::kVerbose) CC_DIAG(
-            "CustomComponents/CustomTrigger: captured TriggerSystem candidate system=%p instances=%p triggered=%p finder=%p model=%p count=%zu",
-            candidate.triggerSystem,
-            candidate.instances,
-            candidate.triggeredEffects,
-            candidate.finder,
-            candidate.model,
-            stockTriggerContextCount
-        );
+        return contexts;
     }
+    inline StockTriggerContext* SelectedStockTriggerContext(const StockTriggerContext& context) {
+        thread_local StockTriggerContext selected;
+        selected=context;return &selected;
+    }
+    inline void RememberStockTriggerCandidate(Obj* triggerSystem) {
+        if(!triggerSystem) return;
+        std::lock_guard<std::mutex> guard(producerLock);
+        for(const auto& reference:producerReferences) if(reference->Get()==triggerSystem) return;
+        auto reference=std::make_shared<Core::ManagedRuntime::Root>(triggerSystem,true);
+        if(reference->Get()) producerReferences.push_back(reference);
+    }
+
 
     static void TriggerSystemRegisterEffectHandlersHook(
         void* self,
@@ -153,7 +138,13 @@
         // injected fields to be populated yet. In this build Finder can still
         // be null when RegisterEffectHandlers runs. RefreshStockTriggerContext
         // resolves Instances/TriggeredEffects/Finder/Model lazily at fire time.
+        if (!originalTriggerSystemRegisterHandlers)
+            return;
         RememberStockTriggerCandidate(static_cast<Obj*>(self));
+        static std::atomic<unsigned> samples{0};
+        if (samples.fetch_add(1) < 3)
+            LOG_INFO("CustomComponents/CustomTrigger: producer registration observed system=%p",
+                self);
         originalTriggerSystemRegisterHandlers(self, router, method);
     }
 
@@ -163,32 +154,30 @@
         if (!stateCheckSystem)
             return nullptr;
 
-        Obj* effectAdder = ReadObjectFieldByOffset(
-            static_cast<Obj*>(stateCheckSystem),
-            kStateCheckEffectAdderOffset
-        );
+        Obj* effectAdder = stateCheckAdderField.IsValid()
+            ? Core::Metadata::Bind(stateCheckAdderField,static_cast<Obj*>(stateCheckSystem)).Get() : nullptr;
         if (!effectAdder)
             return nullptr;
 
-        return ReadObjectFieldByOffset(
-            effectAdder,
-            kStateCheckAdderInstancesOffset
-        );
+        return stateCheckAdderInstancesField.IsValid()
+            ? Core::Metadata::Bind(stateCheckAdderInstancesField,effectAdder).Get() : nullptr;
     }
 
     inline StockTriggerContext* FindStockTriggerContextForEffect(
         Obj* effect,
         Obj* preferredInstances = nullptr
     ) {
+        auto stockTriggerContexts=SnapshotStockTriggerContexts();
+        const auto stockTriggerContextCount=stockTriggerContexts.size();
         if (!effect)
             return nullptr;
 
         const int effectEntityId =
             effectEffectEntityId.IsValid()
-                ? effectEffectEntityId[effect].Get()
+                ? Core::Metadata::Bind(effectEffectEntityId,effect).Get()
                 : -1;
-        const int targetId = effectTargetId[effect].Get();
-        const int sourceId = effectSourceId[effect].Get();
+        const int targetId = Core::Metadata::Bind(effectTargetId,effect).Get();
+        const int sourceId = Core::Metadata::Bind(effectSourceId,effect).Get();
 
         // First choice: exact DI/simulation scope identity.
         //
@@ -213,7 +202,7 @@
                     context.triggeredEffects,
                     context.finder
                 );
-                return &context;
+                return SelectedStockTriggerContext(context);
             }
 
             // Do not fall back to recycled entity-id matching when a concrete
@@ -250,7 +239,7 @@
                         stockTriggerContexts[i].finder,
                         effectEntityId
                     );
-                    return &stockTriggerContexts[i];
+                    return SelectedStockTriggerContext(stockTriggerContexts[i]);
                 }
             }
         }
@@ -265,7 +254,7 @@
                         stockTriggerContexts[i].finder,
                         targetId
                     );
-                    return &stockTriggerContexts[i];
+                    return SelectedStockTriggerContext(stockTriggerContexts[i]);
                 }
             }
         }
@@ -280,7 +269,7 @@
                         stockTriggerContexts[i].finder,
                         sourceId
                     );
-                    return &stockTriggerContexts[i];
+                    return SelectedStockTriggerContext(stockTriggerContexts[i]);
                 }
             }
         }
@@ -295,17 +284,49 @@
         return nullptr;
     }
 
+    // A caller with an authoritative EntityModel must not guess the producer
+    // from reused EffectEntity / card ids. In particular, discard-to-lane
+    // already has the stock lane system's exact live model. Prediction clones
+    // can contain every one of those ids while targeting a different queue.
+    inline StockTriggerContext* FindStockTriggerContextForModel(
+        Obj* expectedModel,
+        Obj* preferredInstances = nullptr
+    ) {
+        auto stockTriggerContexts=SnapshotStockTriggerContexts();
+        const auto stockTriggerContextCount=stockTriggerContexts.size();
+        if (!expectedModel)
+            return nullptr;
+
+        for (std::size_t i = stockTriggerContextCount; i-- > 0;) {
+            StockTriggerContext& candidate = stockTriggerContexts[i];
+            if (!RefreshStockTriggerContext(candidate) ||
+                candidate.model != expectedModel)
+                continue;
+            if (preferredInstances && candidate.instances != preferredInstances)
+                continue;
+            return SelectedStockTriggerContext(candidate);
+        }
+
+        LOG_ERR(
+            "CustomComponents/CustomTrigger: exact-model producer missing model=%p activeInstances=%p contexts=%zu",
+            expectedModel,
+            preferredInstances,
+            stockTriggerContextCount
+        );
+        return nullptr;
+    }
+
     inline bool ModelContainsEntityId(Obj* model, int id) {
         if (!model || id < 0)
             return false;
 
-        auto* entities = modelEntities[model].Get();
+        auto* entities = Core::Metadata::Bind(modelEntities,model).Get();
         if (!entities || !entities->items)
             return false;
 
         for (int i = 0; i < entities->size; ++i) {
             Obj* entity = entities->items->m_Items[i];
-            if (entity && entityId[entity].Get() == id)
+            if (entity && Core::Metadata::Bind(entityId,entity).Get() == id)
                 return true;
         }
         return false;
@@ -315,13 +336,13 @@
         if (!model || id < 0)
             return nullptr;
 
-        auto* entities = modelEntities[model].Get();
+        auto* entities = Core::Metadata::Bind(modelEntities,model).Get();
         if (!entities || !entities->items)
             return nullptr;
 
         for (int i = 0; i < entities->size; ++i) {
             Obj* entity = entities->items->m_Items[i];
-            if (entity && entityId[entity].Get() == id)
+            if (entity && Core::Metadata::Bind(entityId,entity).Get() == id)
                 return entity;
         }
         return nullptr;

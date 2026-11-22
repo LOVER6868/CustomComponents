@@ -1,3 +1,5 @@
+#include "engine/Events.hpp"
+#include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 
@@ -13,10 +15,12 @@
 #include <BNM/Method.hpp>
 
 #include "zones/Discarded.hpp"
+#include "zones/MarkedForDiscard.hpp"
 #include "core/CustomComponentRegistry.hpp"
 #include "core/CustomFieldBridgeSystem.hpp"
 #include "presentation/ZoneTriggeredAbilityPresentationSystem.hpp"
 #include "log.h"
+#include "pick3/SelectionTransactionRuntime.hpp"
 
 namespace CustomComponents::Systems::DiscardedSystem {
 
@@ -72,6 +76,7 @@ namespace CustomComponents::Systems::DiscardedSystem {
     #include "zones/detail/ReturnEffectQueueCompletion.inl"
     inline bool Initialize() {
         if (ready) return true;
+        if(!Zones::MarkedForDiscard::Initialize())return false;
         if (!CustomComponentRegistry::FindByName("PvZCards.Engine.Components", "Discarded")) {
             if (!CustomComponentRegistry::Register({
                     "Discarded", "PvZCards.Engine.Components", "EngineLib.dll",
@@ -179,24 +184,29 @@ namespace CustomComponents::Systems::DiscardedSystem {
         auto shiftMethod = queue.GetMethod("Shift", 0);
         auto processEffectsMethod = processor.GetMethod("ProcessEffects", 1);
         auto completeEffectMethod = processor.GetMethod("CompleteEffect", 1);
-        BNM::BasicHook(resolverMethod, ResolverHook, originalResolver);
-        BNM::BasicHook(hasNextMethod, QueueHasNextHook, originalQueueHasNext);
+        CustomComponents::Core::Hooks::Install(resolverMethod, ResolverHook, originalResolver);
+        CustomComponents::Core::Hooks::Install(hasNextMethod, QueueHasNextHook, originalQueueHasNext);
         // Shift is diagnostic-only and optional; the existing cleanup behavior
         // is unchanged if this entry point cannot be hooked.
         if (groupMetadataReady && shiftMethod.IsValid())
-            BNM::BasicHook(shiftMethod, QueueShiftHook, originalQueueShift);
-        BNM::BasicHook(processEffectsMethod, ProcessEffectsHook, originalProcessEffects);
+            CustomComponents::Core::Hooks::Install(shiftMethod, QueueShiftHook, originalQueueShift);
+        CustomComponents::Core::Hooks::Install(processEffectsMethod, ProcessEffectsHook, originalProcessEffects);
         // An optional *read-only* hook to expose the processor's completion
         // boundary. If unavailable the base v2 lifecycle still initializes.
         if (completeEffectMethod.IsValid())
-            BNM::BasicHook(completeEffectMethod, CompleteEffectHook, originalCompleteEffect);
+            CustomComponents::Core::Hooks::Install(completeEffectMethod, CompleteEffectHook, originalCompleteEffect);
+        Engine::Events::effectCompletionReady=originalCompleteEffect!=nullptr;
         if (groupMetadataReady && startSystemModel.IsValid() && startMethod.IsValid())
-            BNM::BasicHook(startMethod, StartHandlerHook, originalStartHandler);
-        if (groupMetadataReady && buffSystemModel.IsValid() && buffMethod.IsValid())
-            BNM::BasicHook(buffMethod, BuffHandlerHook, originalBuffHandler);
+            CustomComponents::Core::Hooks::Install(startMethod, StartHandlerHook, originalStartHandler);
+        // Buff is also the common pre-stock modifier dispatch point. Unlike
+        // optional return-chain probes, it must not depend on group metadata.
+        // BeginHandlerProbes already skips observation when metadata is absent.
+        if (buffSystemModel.IsValid() && buffMethod.IsValid())
+            CustomComponents::Core::Hooks::Install(buffMethod, BuffHandlerHook, originalBuffHandler);
+        Engine::Events::buffHookReady = originalBuffHandler != nullptr;
         if (groupMetadataReady && endSystemModel.IsValid() && endMethod.IsValid())
-            BNM::BasicHook(endMethod, EndHandlerHook, originalEndHandler);
-        CC_DIAG("CustomComponents/Discarded/CHAIN: stock handlers START=%d BUFF=%d END=%d (read-only; RVAs 0x21FC764 / 0x21FD444 / 0x21F2034)",
+            CustomComponents::Core::Hooks::Install(endMethod, EndHandlerHook, originalEndHandler);
+        CC_DIAG("CustomComponents/Discarded/CHAIN: stock handlers START=%d BUFF=%d END=%d (shared BUFF pre/post dispatch; RVAs 0x21FC764 / 0x21FD444 / 0x21F2034)",
             originalStartHandler ? 1 : 0,
             originalBuffHandler ? 1 : 0,
             originalEndHandler ? 1 : 0);
@@ -208,6 +218,7 @@ namespace CustomComponents::Systems::DiscardedSystem {
             LOG_ERR("CustomComponents/Discarded: stock hook installation failed");
             return false;
         }
+        CustomComponents::Variables::QueuedTriggerValues::resolverOwnerConnected=true;
         ready = true;
         if constexpr (false) CC_DIAG("CustomComponents/Discarded/GROUP: metadata=%d Shift hooked=%d (RVA 0x227FBDC; read-only group lineage diagnostics)",
             groupMetadataReady ? 1 : 0, originalQueueShift ? 1 : 0);

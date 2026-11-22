@@ -27,11 +27,11 @@
         BNM::Structures::Mono::String* managedName = nullptr;
         bool ignoreTriggerConditions = false;
         if (targeted) {
-            managedName = fireTriggerName[descriptor].Get();
+            managedName = Core::Metadata::Bind(fireTriggerName,descriptor).Get();
             ignoreTriggerConditions =
-                fireTriggerIgnoreTriggerConditions[descriptor].Get();
+                Core::Metadata::Bind(fireTriggerIgnoreTriggerConditions,descriptor).Get();
         } else {
-            managedName = fireCustomTriggerName[descriptor].Get();
+            managedName = Core::Metadata::Bind(fireCustomTriggerName,descriptor).Get();
         }
 
         Obj* runtime = targeted
@@ -48,10 +48,10 @@
 
         const int sourceEffectEntityId =
             effectEntity && entityId.IsValid()
-                ? entityId[effectEntity].Get()
+                ? Core::Metadata::Bind(entityId,effectEntity).Get()
                 : -1;
 
-        effectEffectEntityId[runtime] = sourceEffectEntityId;
+        Core::Metadata::Bind(effectEffectEntityId,runtime) = sourceEffectEntityId;
 
         StoreCarrierMetadata(
             runtime,
@@ -110,9 +110,9 @@
                 triggerName.c_str(),
                 metadata.targeted ? 1 : 0,
                 metadata.ignoreTriggerConditions ? 1 : 0,
-                effectSourceId[effect].Get(),
-                effectTargetId[effect].Get(),
-                effectEffectEntityId[effect].Get()
+                Core::Metadata::Bind(effectSourceId,effect).Get(),
+                Core::Metadata::Bind(effectTargetId,effect).Get(),
+                Core::Metadata::Bind(effectEffectEntityId,effect).Get()
             );
 
             if (triggerName.empty()) {
@@ -124,7 +124,7 @@
 
             bool fired = false;
             if (metadata.targeted) {
-                const int targetId = effectTargetId[effect].Get();
+                const int targetId = Core::Metadata::Bind(effectTargetId,effect).Get();
                 if (targetId < 0) {
                     LOG_ERR(
                         "CustomComponents/CustomTrigger/StateCheck: targeted carrier missing TargetId"

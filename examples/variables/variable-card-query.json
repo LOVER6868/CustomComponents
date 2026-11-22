@@ -1,0 +1,10 @@
+{
+  "$type": "PvZCards.Engine.Queries.VariableCardQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "EntityQuery": {
+      "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+      "$data": {}
+    },
+    "Variable": "ChosenAnimal"
+  }
+}

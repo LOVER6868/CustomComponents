@@ -227,7 +227,17 @@
         const QueueSnapshot before =
             (hasPendingReturn.load(std::memory_order_acquire) && cardId >= 0)
                 ? CaptureQueue(queue) : QueueSnapshot{};
-        originalResolver(self, effect, method);
+        {
+            namespace TX=CustomComponents::Pick3::Transaction;
+            namespace RT=CustomComponents::Pick3::TransactionRuntime;
+            const auto modelToken=RT::ModelOf(model);
+            auto selection=RT::TakeTriggerData(modelToken,data,effectEntity,sourceId,RT::ReadContext(context));
+            TX::Scoped selectionScope(selection,effectEntity,RT::IntAt(context,0x18));
+            if(selection) LOG_INFO("CustomComponents/Pick3/PF3_TX: phase=LISTENER_EXECUTION_BOUND listener=%d seq=%llu",effectEntity,(unsigned long long)selection->sequence);
+            CustomComponents::Variables::QueuedTriggerValues::DuringResolve(effect,[&]{
+                originalResolver(self,effect,method);
+            });
+        }
 
         if (!model || !queue || cardId < 0) return;
         std::lock_guard<std::mutex> lock(pendingMutex);
@@ -256,7 +266,8 @@
     // TriggeredAbilityEnd handlers. The game dump identifies the methods as
     // Core.Systems.{TriggeredAbilityStart,Buff,TriggeredAbilityEnd}System.
     // Their processing is distinct from the collection's CompleteEffect and
-    // from frontend animation completion. All probes are read-only.
+    // from frontend animation completion. Probes are read-only; pre-buff
+    // observers are the separate gameplay mutation phase before stock.
     using StockHandlerFn = void (*)(void*, Obj*, const void*);
     inline StockHandlerFn originalStartHandler = nullptr;
     inline StockHandlerFn originalBuffHandler = nullptr;
@@ -392,10 +403,14 @@
         Obj* model = self && buffSystemModel.IsValid()
             ? buffSystemModel[static_cast<Obj*>(self)].Get() : nullptr;
         const int count = BeginHandlerProbes("BUFF", model, effect, probes);
+        // The single BuffSystem detour owns both pre-stock mutations and
+        // post-stock observation. Never install another BuffSystem hook.
+        Engine::Events::beforeBuff.Notify({static_cast<Obj*>(self),model,effect});
         ZoneTriggeredAbilityPresentationSystem::AuditOwnedEffect(0, self, effect, [&] {
             originalBuffHandler(self, effect, method);
         });
         if (count) EndHandlerProbes("BUFF", probes, count);
+        Engine::Events::afterBuff.Notify({static_cast<Obj*>(self),model,effect});
     }
 
     static void EndHandlerHook(void* self, Obj* effect, const void* method) {
@@ -615,6 +630,7 @@
     }
 
     static void CompleteEffectHook(void* self, Obj* effects, const void* method) {
+        Engine::Events::beforeEffectComplete.Notify(static_cast<Obj*>(self),effects);
         TraceProcessing(DiagnosticBoundary::CompleteEnter, effects);
         // Verified in stock ARM64: EffectCollectionProcessor.CompleteEffect
         // invokes EffectCollection.CompleteEffect, which calls Shift() DURING
@@ -659,5 +675,6 @@
         TraceProcessing(DiagnosticBoundary::CompleteExit, effects);
         // Do not remove here: another listener may still be resolving in the
         // enclosing ProcessEffects pass. Cleanup runs at processor exit.
+        Engine::Events::afterEffectComplete.Notify(static_cast<Obj*>(self),effects);
     }
 

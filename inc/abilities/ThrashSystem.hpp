@@ -1,3 +1,5 @@
+#include "engine/EffectGuards.hpp"
+#include "core/HookRegistry.hpp"
 #pragma once
 #include <BNM/Class.hpp>
 #include <BNM/Field.hpp>
@@ -11,6 +13,7 @@
 #include "core/CustomComponentRegistry.hpp"
 #include "abilities/GrantableAbilityRuntime.hpp"
 #include "log.h"
+#include "pick3/SelectionTransactionRuntime.hpp"
 
 namespace CustomComponents::Systems {
     namespace ThrashSystem {
@@ -268,7 +271,24 @@ namespace CustomComponents::Systems {
             void* previousRouter = activeEffectRouter;
             activeEffectRouter = self;
 
-            originalEffectRouterProcess(self, effect, method);
+            auto* runtimeEffect=static_cast<BNM::IL2CPP::Il2CppObject*>(effect);
+            const char* effectName=runtimeEffect && runtimeEffect->klass?runtimeEffect->klass->name:"none";
+            CustomComponents::Core::Performance::Scope timing(CustomComponents::Core::Performance::Area::EffectRouter,effectName,
+                CustomComponents::Pick3::TransactionRuntime::IntAt(runtimeEffect,0x30),CustomComponents::Pick3::TransactionRuntime::IntAt(runtimeEffect,0x28));
+            CustomComponents::Pick3::TransactionRuntime::ScopedRouter selectionScope(
+                static_cast<BNM::IL2CPP::Il2CppObject*>(self),
+                static_cast<BNM::IL2CPP::Il2CppObject*>(effect));
+            CustomComponents::Pick3::TransactionRuntime::AuditBoundCostTarget(
+                selectionScope.model,
+                static_cast<BNM::IL2CPP::Il2CppObject*>(effect));
+            {CustomComponents::Core::Performance::Scope stock(CustomComponents::Core::Performance::Area::StockEffectRouter,effectName,
+                CustomComponents::Pick3::TransactionRuntime::IntAt(runtimeEffect,0x30),CustomComponents::Pick3::TransactionRuntime::IntAt(runtimeEffect,0x28));
+             if(CustomComponents::Engine::EffectGuards::Allows(static_cast<BNM::IL2CPP::Il2CppObject*>(self),runtimeEffect)) {
+                 const CustomComponents::Engine::EffectGuards::Context context{static_cast<BNM::IL2CPP::Il2CppObject*>(self),runtimeEffect};
+                 CustomComponents::Engine::EffectGuards::ProcessingScope lifecycle(context);if(CustomComponents::Engine::EffectGuards::Prepare(context))originalEffectRouterProcess(self,effect,method);
+             }}
+            CustomComponents::Pick3::TransactionRuntime::CompleteAutomaticSelection(selectionScope.link,
+                static_cast<BNM::IL2CPP::Il2CppObject*>(effect));
 
             activeEffectRouter = previousRouter;
         }
@@ -786,19 +806,21 @@ namespace CustomComponents::Systems {
                 return false;
             }
 
-            BNM::BasicHook(
+            CustomComponents::Core::Hooks::Install(
                 createAndAddDamageEffect,
                 CreateAndAddDamageEffectHook,
                 originalCreateAndAddDamageEffect
             );
 
-            BNM::BasicHook(
+            CustomComponents::Core::Hooks::Install(
                 effectRouterProcess,
                 EffectRouterProcessHook,
                 originalEffectRouterProcess
             );
 
-            BNM::BasicHook(
+            CustomComponents::Pick3::TransactionRuntime::externalRouterHook = originalEffectRouterProcess != nullptr;
+
+            CustomComponents::Core::Hooks::Install(
                 damageTarget,
                 DamageTargetHook,
                 originalDamageTarget

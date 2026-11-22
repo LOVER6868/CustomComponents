@@ -1,0 +1,399 @@
+{
+  "entity": {
+    "components": [
+      {
+        "$type": "PvZCards.Engine.Components.Card, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "Guid": 734
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Components.Attack, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "AttackValue": {
+            "BaseValue": 2
+          }
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Components.Health, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "MaxHealth": {
+            "BaseValue": 3
+          },
+          "CurrentDamage": 0
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Components.SunCost, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "SunCostValue": {
+            "BaseValue": 2
+          }
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Components.Plants, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {}
+      },
+      {
+        "$type": "PvZCards.Engine.Components.Rarity, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "Value": "R3"
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Components.Subtypes, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "subtypes": [
+            22,
+            21
+          ]
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Components.Tags, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "tags": [
+            "anyplantfighter",
+            "notpineclone",
+            "randomplantcard",
+            "cost6orless"
+          ]
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Components.Charge, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "Counters": {
+            "IsPersistent": true,
+            "Counters": [
+              {
+                "SourceId": -1,
+                "Duration": 0,
+                "Value": 20
+              }
+            ]
+          }
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Components.EffectEntitiesDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "entities": [
+            {
+              "components": [
+                {
+                  "$type": "PvZCards.Engine.Components.EffectEntityGrouping, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "AbilityGroupId": 0
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.PlayTrigger, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {}
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.TriggerTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.HasComponentQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {
+                        "ComponentType": "PvZCards.Engine.Components.Plants, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
+                      }
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.SelfEntityFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {
+                        "queries": [
+                          {
+                            "$type": "PvZCards.Engine.Queries.WillTriggerEffectsQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          },
+                          {
+                            "$type": "PvZCards.Engine.Queries.IsAliveQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          },
+                          {
+                            "$type": "PvZCards.Engine.Queries.IsAliveQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.PrimaryTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "SelectionType": "All",
+                    "NumTargets": 0,
+                    "TargetScopeType": "All",
+                    "TargetScopeSortValue": "None",
+                    "TargetScopeSortMethod": "None",
+                    "AdditionalTargetType": "None",
+                    "AdditionalTargetQuery": null,
+                    "OnlyApplyEffectsOnAdditionalTargets": false,
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {}
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.SetVariableEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "Owner": "Self",
+                    "Variable": "PlantPlaysThisTurn",
+                    "Operation": "Add",
+                    "Value": 1,
+                    "Duration": "EndOfTurn"
+                  }
+                }
+              ]
+            },
+            {
+              "components": [
+                {
+                  "$type": "PvZCards.Engine.Components.EffectEntityGrouping, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "AbilityGroupId": 0
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.PlayTrigger, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {}
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.TriggerTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.HasComponentQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {
+                        "ComponentType": "PvZCards.Engine.Components.Plants, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
+                      }
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.OncePerTurnCondition, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {}
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.SelfEntityFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {
+                        "queries": [
+                          {
+                            "$type": "PvZCards.Engine.Queries.WillTriggerEffectsQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          },
+                          {
+                            "$type": "PvZCards.Engine.Queries.IsAliveQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          },
+                          {
+                            "$type": "PvZCards.Engine.Queries.VariableComparisonQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {
+                              "EntityQuery": {
+                                "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                                "$data": {}
+                              },
+                              "Expression": "PlantPlaysThisTurn",
+                              "Value": 3,
+                              "ComparisonOperator": "Equal"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.PrimaryTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "SelectionType": "All",
+                    "NumTargets": 0,
+                    "TargetScopeType": "All",
+                    "TargetScopeSortValue": "None",
+                    "TargetScopeSortMethod": "None",
+                    "AdditionalTargetType": "None",
+                    "AdditionalTargetQuery": null,
+                    "OnlyApplyEffectsOnAdditionalTargets": false,
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {}
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.BuffEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "AttackAmount": 2,
+                    "HealthAmount": 2,
+                    "BuffDuration": "Permanent"
+                  }
+                }
+              ]
+            },
+            {
+              "components": [
+                {
+                  "$type": "PvZCards.Engine.Components.EffectEntityGrouping, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "AbilityGroupId": 0
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.PlayTrigger, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {}
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.TriggerTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.HasComponentQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {
+                        "ComponentType": "PvZCards.Engine.Components.Plants, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
+                      }
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.OncePerTurnCondition, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {}
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.SelfEntityFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {
+                        "queries": [
+                          {
+                            "$type": "PvZCards.Engine.Queries.WillTriggerEffectsQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          },
+                          {
+                            "$type": "PvZCards.Engine.Queries.IsAliveQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {}
+                          },
+                          {
+                            "$type": "PvZCards.Engine.Queries.VariableComparisonQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {
+                              "EntityQuery": {
+                                "$type": "PvZCards.Engine.Queries.SelfQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                                "$data": {}
+                              },
+                              "Expression": "PlantPlaysThisTurn",
+                              "Value": 3,
+                              "ComparisonOperator": "Equal"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.PrimaryTargetFilter, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "SelectionType": "All",
+                    "NumTargets": 0,
+                    "TargetScopeType": "All",
+                    "TargetScopeSortValue": "None",
+                    "TargetScopeSortMethod": "None",
+                    "AdditionalTargetType": "None",
+                    "AdditionalTargetQuery": null,
+                    "OnlyApplyEffectsOnAdditionalTargets": false,
+                    "Query": {
+                      "$type": "PvZCards.Engine.Queries.CompositeAllQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                      "$data": {
+                        "queries": [
+                          {
+                            "$type": "PvZCards.Engine.Queries.HasComponentQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {
+                              "ComponentType": "PvZCards.Engine.Components.Plants, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
+                            }
+                          },
+                          {
+                            "$type": "PvZCards.Engine.Queries.HasComponentQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                            "$data": {
+                              "ComponentType": "PvZCards.Engine.Components.Player, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "$type": "PvZCards.Engine.Components.DrawCardEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+                  "$data": {
+                    "DrawAmount": 1
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "$type": "PvZCards.Engine.Components.Variables, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+        "$data": {
+          "Values": [
+            {
+              "Name": "PlantPlaysThisTurn",
+              "Type": "Int",
+              "Value": 0
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "prefabName": "Halfbread",
+  "baseId": "Base",
+  "color": "Kabloom",
+  "set": "Set5",
+  "rarity": 2,
+  "setAndRarityKey": "Familiar_SuperRare",
+  "displayHealth": 3,
+  "displayAttack": 2,
+  "displaySunCost": 2,
+  "faction": "Plants",
+  "ignoreDeckLimit": false,
+  "isPower": false,
+  "isPrimaryPower": false,
+  "isFighter": true,
+  "isEnv": false,
+  "isAquatic": false,
+  "isTeamup": false,
+  "subtypes": [
+    "Animal",
+    "Seed"
+  ],
+  "tags": [
+    "anyplantfighter",
+    "notpineclone",
+    "randomplantcard",
+    "cost6orless"
+  ],
+  "subtype_affinities": [],
+  "subtype_affinity_weights": [],
+  "tag_affinities": [],
+  "tag_affinity_weights": [],
+  "card_affinities": [],
+  "card_affinity_weights": [],
+  "usable": true,
+  "special_abilities": [],
+  "craftingBuy": 1000,
+  "craftingSell": 250
+}

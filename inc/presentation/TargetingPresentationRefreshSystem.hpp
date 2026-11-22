@@ -1,3 +1,4 @@
+#include "core/HookRegistry.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 
@@ -10,6 +11,8 @@
 #include <BNM/Method.hpp>
 
 #include "log.h"
+#include "core/Observers.hpp"
+#include "engine/FrontendServices.hpp"
 
 namespace CustomComponents::Systems::TargetingPresentationRefreshSystem {
 
@@ -37,6 +40,9 @@ namespace CustomComponents::Systems::TargetingPresentationRefreshSystem {
     };
 
     inline TargetingIdentity lastTargetingIdentity{};
+    // Updated on every stock Update, including invalid/no-effect frames;
+    // unlike lastTargetingIdentity this never retains a stale holder owner.
+    inline TargetingIdentity observedTargetingIdentity{};
 
     inline BNM::Field<int> gameInputState;
     inline BNM::Field<Obj*> gameInputStateChangedSignal;
@@ -50,11 +56,15 @@ namespace CustomComponents::Systems::TargetingPresentationRefreshSystem {
     inline UpdateFn originalUpdate = nullptr;
     // Another module may observe the already-owned Update hook. One native
     // trampoline per IL2CPP method: avoid stacking BNM::BasicHook on this RVA.
-    inline void (*afterUpdateObserver)(Obj*) = nullptr;
+    inline Core::Observers<Obj*> afterUpdateObservers;
+    // A separate UI observer runs after the submission binder has captured the
+    // current live EntityModel. Do not add another detour to stock Update.
+    inline Core::Observers<Obj*> afterSubmissionPresentationObservers;
+    inline bool RegisterAfterSubmissionPresentationObserver(void (*observer)(Obj*)) {
+        return originalUpdate && afterSubmissionPresentationObservers.Add(observer);
+    }
     inline bool RegisterAfterUpdateObserver(void (*observer)(Obj*)) {
-        if (!observer || !originalUpdate || afterUpdateObserver) return false;
-        afterUpdateObserver = observer;
-        return true;
+        return originalUpdate && afterUpdateObservers.Add(observer);
     }
 
     inline const char* TypeName(Obj* object) {
@@ -162,10 +172,13 @@ namespace CustomComponents::Systems::TargetingPresentationRefreshSystem {
 
         originalUpdate(self, method);
 
+        Engine::FrontendServices::Capture(holder);
+
         const int stateAfter = gameInputState[holder].Get();
         Obj* currentEffect = getFirstEffectInQueue[holder]();
         TargetingIdentity current =
             ReadIdentity(holder, stateAfter, currentEffect);
+        observedTargetingIdentity=current;
 
         const bool sameTargetState =
             stateBefore == stateAfter &&
@@ -204,7 +217,8 @@ namespace CustomComponents::Systems::TargetingPresentationRefreshSystem {
         } else if (!IsTriggeredTargetState(stateAfter)) {
             lastTargetingIdentity = {};
         }
-        if (afterUpdateObserver) afterUpdateObserver(holder);
+        afterUpdateObservers.Notify(holder);
+        afterSubmissionPresentationObservers.Notify(holder);
     }
 
     inline bool Initialize() {
@@ -258,7 +272,7 @@ namespace CustomComponents::Systems::TargetingPresentationRefreshSystem {
             return false;
         }
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             update,
             UpdateHook,
             originalUpdate

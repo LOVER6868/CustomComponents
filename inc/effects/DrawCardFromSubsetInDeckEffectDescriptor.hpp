@@ -18,8 +18,9 @@ namespace CustomComponents::Components {
     //     EntityQuery SubsetQuery;
     //     int DrawAmount;
     //
-    // New field:
+    // New fields:
     //     bool PluckFailSafe;
+    //     bool SubsetQueryUsesEntities; // exact live deck entries; never conjures
     //
     // false: no matching card in the real deck -> draw nothing.
     // true : no matching card in the real deck -> run the ordinary stock
@@ -29,6 +30,7 @@ namespace CustomComponents::Components {
         // Preserve the inherited 0x10 bytes after the Il2CppObject header.
         unsigned char _baseStorage[0x10]{};
         bool PluckFailSafe{};
+        bool SubsetQueryUsesEntities{};
 
         BNM_CustomClass(
             DrawCardFromSubsetInDeckEffectDescriptor,
@@ -50,6 +52,8 @@ namespace CustomComponents::Components {
             BNM::Defaults::Get<bool>(),
             "PluckFailSafe"
         );
+
+        BNM_CustomField(SubsetQueryUsesEntities,BNM::Defaults::Get<bool>(),"SubsetQueryUsesEntities");
 
         BNM::IL2CPP::Il2CppObject* ToEffect(
             BNM::IL2CPP::Il2CppObject* instances,

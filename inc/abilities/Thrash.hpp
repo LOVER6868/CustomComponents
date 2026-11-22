@@ -8,6 +8,7 @@ namespace CustomComponents::Traits {
     // Thrash is a flag GrantableAbility. Presence/activation is represented by
     // the inherited GrantableAbility.Counters table exactly like stock flags.
     struct Thrash : BNM::IL2CPP::Il2CppObject {
+        std::uint8_t inherited[8]{};
         BNM_CustomClass(
             Thrash,
             BNM::CompileTimeClassBuilder(

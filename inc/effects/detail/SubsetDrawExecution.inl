@@ -16,6 +16,39 @@
             deckForPlayer[player] = deck;
         }
         originalProcessDraw(self, effect, method);
+        static auto entities=BNM::Class("PvZCards.Core.Systems","DrawCardSystem").GetField("<Entities>k__BackingField").cast<Obj*>();
+        static auto drawn=BNM::Class("PvZCards.Engine.Effects","DrawCardEffect").GetMethod("get_DrawnCardId",0).cast<int>();
+        Obj* model=self && entities.IsValid()?Core::Metadata::Bind(entities,self).Get():nullptr;
+        static thread_local Obj* traceModel=nullptr;static thread_local unsigned traceCount=0;
+        if(traceModel!=model){traceModel=model;traceCount=0;}
+        const bool presentationModel = model &&
+            reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity();
+        if (effect && presentationModel && traceCount++<96)
+            LOG_INFO("CustomComponents/Draw/DELIVERY: player=%d hand=%d deck=%d drawn=%d",Core::Metadata::Bind(effectPlayer,effect).Get(),Core::Metadata::Bind(drawHandId,effect)(),Core::Metadata::Bind(drawDeckId,effect)(),drawn.IsValid()?Core::Metadata::Bind(drawn,effect)():-1);
+        // v3 recorder observer: only observe the actual presentation game model.
+        // The stock draw has already completed. No GC references are retained,
+        // no disk writes, no callbacks into the game's effect router.
+        if (effect && presentationModel && drawn.IsValid()) {
+            if (auto callback = CustomComponents::Integration::ReplayDrawObserver::Listener()) {
+                const int drawnId = Core::Metadata::Bind(drawn,effect)();
+                if (drawnId >= 0) {
+                    const int handId = Core::Metadata::Bind(drawHandId,effect)();
+                    Obj* cardEntity = FindEntity(model,drawnId);
+                    const int cardGuidValue = cardEntity ? GuidOf(cardEntity) : -1;
+                    int owner = -1;
+                    // Effect.PlayerId is often -1; read the hand's stock Owner
+                    // component when available, otherwise report unknown.
+                    Obj* handEntity = FindEntity(model,handId);
+                    Obj* ownerComponent = FindComponent(handEntity,"Owner");
+                    static auto ownerIdField = BNM::Class(
+                        "PvZCards.Engine.Components","Owner").GetField("OwnerId").cast<int>();
+                    if (ownerComponent && ownerIdField.IsValid())
+                        owner = Core::Metadata::Bind(ownerIdField,ownerComponent).Get();
+                    callback(handId,Core::Metadata::Bind(drawDeckId,effect)(),
+                        drawnId,cardGuidValue,Core::Metadata::Bind(effectPlayer,effect).Get(),owner);
+                }
+            }
+        }
     }
 
     // CardFromSubsetFinder still owns all subset semantics. We only change its
@@ -26,18 +59,20 @@
         const void* method
     ) {
         if (!currentPluck || !currentPluck->active)
-            return originalPickRandomGuid(self, cards, method);
+            return Engine::SubsetSelection::PickDatabase(static_cast<Obj*>(self),cards,method,originalPickRandomGuid,GuidOf);
 
         currentPluck->pickerCalled = true;
 
         if (TypeName(cards) != "List`1") {
-            return originalPickRandomGuid(self, cards, method);
+            return Engine::SubsetSelection::PickDatabase(static_cast<Obj*>(self),cards,method,originalPickRandomGuid,GuidOf);
         }
 
+        const auto rules=Engine::SubsetSelection::candidateRules.Read();
+        const auto context=Engine::SubsetSelection::Request(static_cast<Obj*>(self),Engine::SubsetSelection::Purpose::DeckDraw,currentPluck->deckEntity);
         std::set<int> candidateGuids;
         for (auto* card : Items(reinterpret_cast<MonoList<Obj*>*>(cards))) {
             const int guid = GuidOf(card);
-            if (guid >= 0)
+            if (guid >= 0 && Core::CandidateRules<Engine::SubsetSelection::Context>::Allows(rules,context,guid))
                 candidateGuids.insert(guid);
         }
 
@@ -60,7 +95,55 @@
             return -1;
 
         // This path is only expected for PluckFailSafe=true fallback.
-        return originalPickRandomGuid(self, cards, method);
+        return Engine::SubsetSelection::PickDatabase(static_cast<Obj*>(self),cards,method,originalPickRandomGuid,GuidOf);
+    }
+
+    // Explicit live-query mode. Evaluate in the real model and intersect exact
+    // entity IDs with this deck's physical entries; never choose a GUID copy.
+    inline int FindEntitySubsetEntry(Obj* finder,Obj* query,Obj* effect,Obj* model,Obj* deck,
+            const std::vector<Obj*>& entries,const std::set<Obj*>& reserved) {
+        static auto contextClass=BNM::Class("PvZCards.Engine","EntityQueryContext");
+        static auto finderClass=BNM::Class("PvZCards.Engine","EntityFinder");
+        static auto instancesField=BNM::Class("PvZCards.Core.Systems.Utilities","CardFromSubsetFinder").GetField("<Instances>k__BackingField").cast<Obj*>();
+        static auto acquire=BNM::Class("PvZCards.Engine","InstanceManager").GetMethod("Acquire",2).cast<Obj*>();
+        static auto release=BNM::Class("PvZCards.Engine","InstanceManager").GetMethod("Return",1).cast<void>();
+        static auto copy=BNM::Class("PvZCards.Engine","EffectData").GetMethod("CopyFrom",1).cast<void>();
+        static auto modelField=contextClass.GetField("<Model>k__BackingField").cast<Obj*>();
+        static auto selfField=contextClass.GetField("SelfId").cast<int>();
+        static auto find=finderClass.GetMethod("FindEntities",{std::string_view("query"),std::string_view("context")}).cast<Obj*>();
+        if(!finder || !query || !model || !instancesField.IsValid() || !acquire.IsValid() || !release.IsValid() || !copy.IsValid() || !modelField.IsValid() || !selfField.IsValid() || !find.IsValid()) {
+            LOG_ERR("CustomComponents/DrawCardFromSubsetInDeck: ENTITY_QUERY_API_MISSING finder=%d query=%d model=%d instancesField=%d acquire=%d return=%d copy=%d modelField=%d selfField=%d find=%d",
+                finder!=nullptr,query!=nullptr,model!=nullptr,instancesField.IsValid(),acquire.IsValid(),release.IsValid(),copy.IsValid(),modelField.IsValid(),selfField.IsValid(),find.IsValid());return -1;
+        }
+        Obj* instances=instancesField[finder].Get();
+        if(!instances) return -1;
+        Obj* context=acquire[instances](reinterpret_cast<Obj*>(contextClass.GetMonoType()),true);
+        if(!context) return -1;
+        Obj* ec=*reinterpret_cast<Obj**>(reinterpret_cast<std::uint8_t*>(context)+0x18);
+        if(!ec) {release[instances](context);return -1;}
+        modelField[context]=model;
+        selfField[context]=effectSource[effect].Get();
+        for(auto pair:{std::pair<std::size_t,std::size_t>{0x10,0x28},{0x14,0x24},{0x18,0x30},{0x1C,0x2C}})
+            *reinterpret_cast<int*>(reinterpret_cast<std::uint8_t*>(ec)+pair.first)=*reinterpret_cast<int*>(reinterpret_cast<std::uint8_t*>(effect)+pair.second);
+        Obj* data=*reinterpret_cast<Obj**>(reinterpret_cast<std::uint8_t*>(ec)+0x20);
+        Obj* sourceData=*reinterpret_cast<Obj**>(reinterpret_cast<std::uint8_t*>(effect)+0x10);
+        if(!data || !sourceData) {release[instances](context);return -1;}
+        copy[data](sourceData);
+        Obj* liveFinder=finderClass.CreateNewObjectParameters(model);
+        Obj* matches=liveFinder?find[liveFinder](query,context):nullptr;
+        std::vector<std::pair<int,int>> identities;
+        const auto rules=Engine::SubsetSelection::candidateRules.Read();
+        auto selection=Engine::SubsetSelection::Request(finder,Engine::SubsetSelection::Purpose::DeckDraw,deck);
+        selection.model=model;selection.effect=effect;selection.query=query;
+        for(auto* entity:Items(reinterpret_cast<MonoList<Obj*>*>(matches)))
+            if(entity && GuidOf(entity)>0 && Core::CandidateRules<Engine::SubsetSelection::Context>::Allows(rules,selection,GuidOf(entity)))
+                identities.push_back({entityId[entity].Get(),GuidOf(entity)});
+        std::vector<CustomComponents::DeckSelection::Entry> physical;
+        for(auto* entry:entries)
+            physical.push_back(entry?CustomComponents::DeckSelection::Entry{entryEntityId[entry].Get(),entryGuid[entry].Get(),reserved.count(entry)!=0}:CustomComponents::DeckSelection::Entry{});
+        const int chosen=CustomComponents::DeckSelection::FirstExactEntry(physical,identities);
+        release[instances](context);
+        return chosen;
     }
 
     static void ProcessSubsetHook(
@@ -93,7 +176,7 @@
 
         // No usable real deck: TRUE keeps vanilla conjure behavior; FALSE fizzles.
         if (!list) {
-            if (pending->pluckFailSafe)
+            if (pending->pluckFailSafe && !pending->entityQuery)
                 originalProcessSubset(self, effect, method);
             else
                 effectCancel[effect]();
@@ -104,6 +187,21 @@
 
         const auto entries = Items(list);
         const auto reserved = Reserved(model, deck, entries);
+        if(pending->entityQuery) {
+            Obj* finder=subsetSystemFinder[static_cast<Obj*>(self)].Get();
+            const int index=FindEntitySubsetEntry(finder,subsetEffectQuery[effect].Get(),effect,model,FindEntity(model,deck),entries,reserved);
+            Obj* ability=AbilitySystemFor(model);
+            Obj* handEntity=FindEntity(model,hand);
+            if(index>=0 && ability && handEntity && MoveToTop(list,index,entries[index])) {
+                Obj* entry=entries[index];
+                {std::lock_guard lock(deckMapMutex);reservedEntries[{model,deck}].push_back(entry);}
+                LOG_INFO("CustomComponents/DrawCardFromSubsetInDeck: mode=ENTITY entity=%d guid=%d deck=%d",entryEntityId[entry].Get(),entryGuid[entry].Get(),deck);
+                drawCardsFromDeck[ability](handEntity,effect,1);
+            } else LOG_INFO("CustomComponents/DrawCardFromSubsetInDeck: mode=ENTITY noDeckMatchOrDelivery=1 deck=%d",deck);
+            effectCancel[effect]();
+            --pending->remaining;CleanupPending();return;
+        }
+
 
         ActivePluck state;
         state.active = true;

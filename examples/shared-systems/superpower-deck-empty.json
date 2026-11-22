@@ -1,0 +1,7 @@
+{
+  "$type": "PvZCards.Engine.Queries.SuperpowerDeckSizeQuery, EngineLib",
+  "$data": {
+    "NumCards": 0,
+    "ComparisonOperator": "Equal"
+  }
+}

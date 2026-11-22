@@ -1,0 +1,9 @@
+{
+  "$type": "PvZCards.Engine.Components.AttackOnlyInLanes, EngineLib",
+  "$data": {
+    "Lanes": [
+      1,
+      3
+    ]
+  }
+}

@@ -1,3 +1,4 @@
+#include "core/HookRegistry.hpp"
 #pragma once
 // Single owner of PvZCards.Game.CardViewMapper.MapCardView.
 //
@@ -52,7 +53,7 @@ namespace CustomComponents::Core::CardViewMappingCoordinator {
         chooseReplacement = replacementPolicy;
         beforeMap = mapBefore;
         afterMap = mapAfter;
-        BNM::BasicHook(mapCardView, MapCardViewHook, originalMapCardView);
+        CustomComponents::Core::Hooks::Install(mapCardView, MapCardViewHook, originalMapCardView);
         if (!originalMapCardView) {
             chooseReplacement = nullptr;
             beforeMap = nullptr;

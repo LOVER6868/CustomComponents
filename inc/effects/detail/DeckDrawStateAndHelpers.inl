@@ -59,6 +59,7 @@
         const int source = effectSource[effect].Get();
         const int player = effectPlayer[effect].Get();
         const int group = effectGroup[effect].Get();
+        const int definition = effectDefinition[effect].Get();
 
         // Prefer exact EffectGroupId. Fall back to source/player because some
         // queue-building paths can assign the child group after CopyDefaultIds.
@@ -66,6 +67,7 @@
             if (pending.remaining > 0 &&
                 pending.sourceId == source &&
                 pending.playerId == player &&
+                pending.effectEntityId == definition &&
                 pending.effectGroupId == group) {
                 return &pending;
             }
@@ -73,7 +75,8 @@
         for (auto& pending : pendingDraws) {
             if (pending.remaining > 0 &&
                 pending.sourceId == source &&
-                pending.playerId == player) {
+                pending.playerId == player &&
+                pending.effectEntityId == definition) {
                 return &pending;
             }
         }

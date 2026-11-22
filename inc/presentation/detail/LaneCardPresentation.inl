@@ -31,7 +31,7 @@
     inline BNM::Field<int> laneEventCardId;
     inline BNM::Field<int> laneEventOrder;
     inline BNM::Field<bool> laneEventFaceDown;
-    inline BNM::Field<int> laneRecordTargetId;
+    inline BNM::Method<int> laneRecordTargetId;
     inline BNM::Method<Obj*> laneRecordGetCard;
     inline BNM::Field<int> laneCardDataEntityId;
     inline std::uint64_t laneTraceStartCount = 0;
@@ -65,7 +65,7 @@
 
     inline void LaneTraceCardFrame(Obj* view, const char* stage) {
         if (!view || !cardViewEntityId.IsValid() || !cardViewFrame.IsValid() ||
-            std::strcmp(TraceObjectType(view), "CardViewComponent") != 0) return;
+            !IsMappedCardView(view)) return;
         const int id = cardViewEntityId[view].Get();
         Obj* model = nullptr;
         for (const auto& bound : frameViewBindings) {
@@ -90,42 +90,6 @@
         );
     }
 
-    // DISCARD -> LANE: the original entity is already in the lane when the
-    // stock create-card animation runs, but its new frame is populated from
-    // printed prefab values. Reuse the proven Fix3 reconciliation only after
-    // the stock ShowCard board-entry initialization has finished.
-    // The provenance check excludes ordinary hand plays, stock-created cards,
-    // and other off-board movement; gameplay entities remain untouched.
-    inline void ReconcileReturnedLaneView(Obj* view) {
-        if (!view || !cardViewEntityId.IsValid() ||
-            std::strcmp(TraceObjectType(view), "CardViewComponent") != 0)
-            return;
-        const int id = cardViewEntityId[view].Get();
-        if (id < 0) return;
-        Obj* model = nullptr;
-        for (const auto& binding : frameViewBindings) {
-            if (binding.view == view && binding.id == id) {
-                model = binding.model;
-                break;
-            }
-        }
-        if (!model ||
-            (!IsDiscardToLaneOrigin(model, id) && !HasLaneReturnSnapshot(model, id)) ||
-            !entityExists.IsValid() || !getEntityById.IsValid() ||
-            !entityExists[model](id)) return;
-        Obj* entity = getEntityById[model](id);
-        if (!entity || !TraceFindComponent(entity, "LaneElement") ||
-            TraceFindComponent(entity, "DiscardPileElement")) {
-            CUSTOMCOMPONENTS_LANE_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/RETURN-LANE-SYNC: SKIP card=%d model=%p reason=not-in-lane", id, model);
-            return;
-        }
-        CUSTOMCOMPONENTS_LANE_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/RETURN-LANE-SYNC: BEGIN card=%d model=%p view=%p", id, model, view);
-        RememberFrameSync(model, id);
-        ReconcileVisibleAttack(view, "RETURN_TO_LANE");
-        LaneTraceCardFrame(view, "RETURN-LANE FRAME AFTER SYNC");
-        CUSTOMCOMPONENTS_LANE_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/RETURN-LANE-SYNC: END card=%d view=%p", id, view);
-    }
-
     static Obj* LaneCreateCardEventTraceHook(void* self, Obj* record, const void* method) {
         const auto n = ++laneTraceEventCount;
         int recordCardId = -1;
@@ -136,7 +100,7 @@
         if (n <= 200) CUSTOMCOMPONENTS_LANE_TRACE(
             "CustomComponents/ZoneTriggeredAbilityPresentation/LANEENTRY: CREATE_EVENT ENTER seq=%llu record=%p card=%d laneTarget=%d",
             (unsigned long long)n, record, recordCardId,
-            record && laneRecordTargetId.IsValid() ? laneRecordTargetId[record].Get() : -1);
+            record && laneRecordTargetId.IsValid() ? laneRecordTargetId[record]() : -1);
         Obj* action = originalLaneCreateCardEvent(self, record, method);
         if (n <= 200) CUSTOMCOMPONENTS_LANE_TRACE(
             "CustomComponents/ZoneTriggeredAbilityPresentation/LANEENTRY: CREATE_EVENT EXIT seq=%llu action=%p type=%s actionCard=%d order=%d faceDown=%d",
@@ -189,13 +153,8 @@
             ? laneAnimationCardId[animation].Get() : -1;
         if (laneView && model && id >= 0 && cardViewEntityId.IsValid() &&
             cardViewEntityId[laneView].Get() == id &&
-            std::strcmp(TraceObjectType(laneView), "CardViewComponent") == 0) {
+            IsMappedCardView(laneView)) {
             BindFrameView(laneView, model, id);
-            // Preserve the existing pre-trigger snapshot on the initiating
-            // client. Opponent clients have no such ticket; the deferred idle
-            // reconciliation below works directly from their live model.
-            if (IsDiscardToLaneOrigin(model, id) || HasLaneReturnSnapshot(model, id))
-                ReconcileReturnedLaneView(laneView);
             // Do not expose unrevealed face-down cards through stat changes.
             if (laneAnimationFaceDown.IsValid() &&
                 !laneAnimationFaceDown[animation].Get())
@@ -212,8 +171,6 @@
         const auto n = ++laneTraceCompleteCount;
         if (n <= 200) LaneTraceAnimation(static_cast<Obj*>(self), "CREATE_COMPLETED BEFORE");
         originalLaneCompleted(self, method);
-        if (laneAnimationCardView.IsValid())
-            RepairResetLaneFrame(laneAnimationCardView[static_cast<Obj*>(self)].Get(), "CREATE_COMPLETED");
         // Stock creation completed. Actual model-to-frame correction waits
         // until this animation's owning queue is empty (after buff visuals).
         CompleteIdleLaneFrame(static_cast<Obj*>(self));
@@ -239,10 +196,8 @@
         const auto n = ++laneTraceBoardCount;
         if (n <= 200) LaneTraceCardFrame(static_cast<Obj*>(self), "PLAYED_TO_BOARD BEFORE");
         originalLanePlayedToBoard(self, state, method);
-        // Late binding fallback, then repair only a reset to printed stats.
-        // The one-shot pre-trigger snapshot is never consumed twice.
-        ReconcileReturnedLaneView(static_cast<Obj*>(self));
-        RepairResetLaneFrame(static_cast<Obj*>(self), "PLAYED_TO_BOARD");
+        frameStatsDirty=true;
         if (n <= 200) LaneTraceCardFrame(static_cast<Obj*>(self), "PLAYED_TO_BOARD AFTER");
     }
+
 

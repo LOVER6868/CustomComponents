@@ -1,3 +1,5 @@
+#include "core/HookRegistry.hpp"
+#include "presentation/InspectionStatPresentation.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 
@@ -45,6 +47,10 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
 
     inline InspectTappedExecuteFn originalInspectTappedExecute = nullptr;
     inline PickTargetFn originalPickTarget = nullptr;
+    // Share the existing board-tap trampoline with Discover-style PF3 UI.
+    // The callback returns true only for taps owned by an active PF3 screen.
+    inline bool (*externalPickerTap)(Obj*, int*) = nullptr;
+    inline bool (*externalAdditionalTap)(Obj*,Obj*,int*) = nullptr;
 
     // InspectTappedCardEntityCommand
     inline BNM::Field<Obj*> commandGestureData;
@@ -80,6 +86,9 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
 
     // InspectionItem
     inline BNM::Method<void> inspectionItemCtor;
+    // Stock InspectionItem(int cardId) initializes EntityId and CreationSourceGuid
+    // to -1.  The card inspection panel consumes CardId + CreationSourceGuid;
+    // a discard-pile entity is not a stable inspection resource identity.
     inline BNM::Method<void> inspectionItemSetEntityId;
 
     // CardInspectionOverlayConfig
@@ -96,6 +105,37 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
 
     inline BNM::Class inspectionItemClass;
     inline BNM::Class inspectionConfigClass;
+
+    // The stock inspection overlay recycles only a few panels and loads card
+    // views asynchronously. Coalesce touch navigation while the current panel
+    // generation is still loading; do not let re-entrant swipe requests race
+    // panel callbacks and pool-return operations.
+    using ScrollFn = void (*)(void*, const void*);
+    inline ScrollFn originalScrollNext = nullptr;
+    inline ScrollFn originalScrollPrev = nullptr;
+    inline BNM::Field<int> overlayActiveLoads;
+    inline BNM::Field<bool> overlayDismissed;
+    inline unsigned int coalescedScrolls = 0;
+    inline bool GuardScroll(Obj* mediator, const char* direction) {
+        if (!mediator || !overlayActiveLoads.IsValid() || !overlayDismissed.IsValid())
+            return false;
+        const int loading = overlayActiveLoads[mediator].Get();
+        if (loading <= 0 && !overlayDismissed[mediator].Get())
+            return false;
+        if (++coalescedScrolls <= 16 || (coalescedScrolls % 32) == 0)
+            CC_DIAG("CustomComponents/DiscardPileViewer/SCROLL: coalesced dir=%s pendingLoads=%d dismissed=%d count=%u",
+                    direction, loading, overlayDismissed[mediator].Get() ? 1 : 0,
+                    coalescedScrolls);
+        return true;
+    }
+    static void ScrollNextHook(void* self, const void* method) {
+        if (GuardScroll(static_cast<Obj*>(self), "next")) return;
+        if (originalScrollNext) originalScrollNext(self, method);
+    }
+    static void ScrollPrevHook(void* self, const void* method) {
+        if (GuardScroll(static_cast<Obj*>(self), "prev")) return;
+        if (originalScrollPrev) originalScrollPrev(self, method);
+    }
 
     template <typename T>
     inline T* ListAt(BNM::Structures::Mono::List<T*>* list, int index) {
@@ -250,11 +290,16 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
             }
 
             inspectionItemCtor[item](guid);
+            Presentation::InspectionStats::Remember(item,cardEntity,model);
 
-            // Keep the exact discarded EntityId attached to the inspection entry.
-            // Stock InspectionItem explicitly supports this field.
-            inspectionItemSetEntityId[item](entityId);
-
+            // Artwork keeps its GUID identity; InspectionStats separately owns
+            // a value snapshot for this exact physical card. The stock
+            // InspectionItem(int) constructor leaves EntityId=-1 and
+            // CreationSourceGuid=-1. A card may leave the discard pile while
+            // asynchronously loaded inspection panels are being recycled;
+            // setting EntityId to that short-lived match object would create
+            // a second, unnecessary lifetime dependency during fast swipes.
+            // Gameplay and targeting still use the real discarded EntityId.
             items->Add(item);
         }
 
@@ -298,16 +343,63 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
         return true;
     }
 
+    // Reusable stock card-inspection overlay for PF3 option GUID snapshots.
+    // Entity IDs from CardDatabase options are not real engine entities; never
+    // forward their virtual CardViewMapper IDs to the inspection system.
+    inline bool ShowCardGuidList(Obj* showSignal, const int* /*ids*/,
+                                 const int* guids, int count, int initial,
+                                 const Presentation::InspectionStats::Snapshot* stats=nullptr) {
+        if (!showSignal || !guids || count <= 0 ||
+            !inspectionItemClass.IsValid() || !inspectionConfigClass.IsValid() ||
+            !inspectionItemCtor.IsValid() || !inspectionConfigCtor.IsValid() ||
+            !inspectionConfigItems.IsValid() || !showInspectionDispatch.IsValid()) {
+            LOG_WARN("CustomComponents/DiscardPileViewer: PF3 inspection unavailable signal=%p count=%d",
+                     static_cast<void*>(showSignal), count);
+            return false;
+        }
+        MonoObjList* items = inspectionItemClass.NewList<Obj*>();
+        if (!items) return false;
+        int focus = 0;
+        for (int i = 0; i < count; ++i) {
+            if (guids[i] <= 0) continue;
+            Obj* item = inspectionItemClass.CreateNewInstance();
+            if (!item) continue;
+            inspectionItemCtor[item](guids[i]);
+            if(stats) Presentation::InspectionStats::Store(Presentation::InspectionStats::items,item,stats[i]);
+            // Artwork uses the GUID; optional stats are per-physical-card values.
+            if (i == initial) focus = items->size;
+            items->Add(item);
+        }
+        if (items->size == 0) return false;
+        Obj* config = inspectionConfigClass.CreateNewInstance();
+        if (!config) return false;
+        inspectionConfigCtor[config]();
+        inspectionConfigItems[config] = items;
+        inspectionConfigInitialIndex[config] = focus;
+        inspectionConfigWrapping[config] = false;
+        inspectionConfigLockUnownedHeroes[config] = false;
+        inspectionConfigAllowHeroPurchase[config] = false;
+        inspectionConfigShowCrafting[config] = false;
+        LOG_INFO("CustomComponents/DiscardPileViewer: PF3 inspection open count=%d focus=%d", items->size, focus);
+        showInspectionDispatch[showSignal](config);
+        return true;
+    }
+
     static int PickTargetHook(
         void* self,
         Obj* overlappedEntities,
         const void* method
     ) {
+        int pickerResult = -1;
+        if (externalPickerTap && externalPickerTap(static_cast<Obj*>(self), &pickerResult))
+            return pickerResult;
         const int stockResult =
             originalPickTarget
             ? originalPickTarget(self, overlappedEntities, method)
             : -1;
 
+        int additionalResult=stockResult;
+        if(externalAdditionalTap && externalAdditionalTap(static_cast<Obj*>(self),overlappedEntities,&additionalResult))return additionalResult;
         // Preserve every normal stock board-tap target.
         // EntityId 0 is valid in this build (the local player commonly uses it).
         if (stockResult >= 0)
@@ -487,6 +579,10 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
             "PvZCards.CardInspection",
             "ShowCardInspectionOverlaySignal"
         );
+        auto inspectionMediator = BNM::Class(
+            "PvZCards.CardInspection",
+            "CardInspectionOverlayViewMediator"
+        );
 
         if (!inspectCommand.IsValid() ||
             !boardTapCommand.IsValid() ||
@@ -579,7 +675,7 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
 
         inspectionItemCtor =
             inspectionItemClass
-            .GetMethod(".ctor", 1)
+            .GetMethod(".ctor", {std::string_view("cardId")})
             .cast<void>();
 
         inspectionItemSetEntityId =
@@ -721,13 +817,13 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
             return false;
         }
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             execute,
             InspectTappedExecuteHook,
             originalInspectTappedExecute
         );
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             pickTarget,
             PickTargetHook,
             originalPickTarget
@@ -742,6 +838,27 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
             return false;
         }
 
+        // The overlay itself is stock-owned. Install a narrowly scoped
+        // navigation gate for async panel recycling; normal swipes are
+        // forwarded unchanged once ActivePanelLoadRequests reaches zero.
+        if (inspectionMediator.IsValid()) {
+            overlayActiveLoads = inspectionMediator.GetField("ActivePanelLoadRequests").cast<int>();
+            overlayDismissed = inspectionMediator.GetField("Dismissed").cast<bool>();
+            auto next = inspectionMediator.GetMethod("ScrollToNext", 0);
+            auto prev = inspectionMediator.GetMethod("ScrollToPrev", 0);
+            if (overlayActiveLoads.IsValid() && overlayDismissed.IsValid() &&
+                next.IsValid() && prev.IsValid()) {
+                CustomComponents::Core::Hooks::Install(next, ScrollNextHook, originalScrollNext);
+                CustomComponents::Core::Hooks::Install(prev, ScrollPrevHook, originalScrollPrev);
+                LOG_INFO("CustomComponents/DiscardPileViewer/SCROLL: guard installed next=%d prev=%d",
+                         originalScrollNext ? 1 : 0, originalScrollPrev ? 1 : 0);
+            } else {
+                LOG_ERR("CustomComponents/DiscardPileViewer/SCROLL: stock mediator metadata unavailable; cannot serialize scroll loads");
+            }
+        } else {
+            LOG_ERR("CustomComponents/DiscardPileViewer/SCROLL: stock mediator not found");
+        }
+
         CC_DIAG(
             "CustomComponents/DiscardPileViewer: ready "
             "(tap either hero to inspect that player's discard pile; board-tap player fallback enabled)"
@@ -751,3 +868,7 @@ namespace CustomComponents::Utilities::DiscardPileViewer {
     }
 
 } // namespace CustomComponents::Utilities::DiscardPileViewer
+
+
+
+

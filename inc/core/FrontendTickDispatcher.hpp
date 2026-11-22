@@ -1,3 +1,4 @@
+#include "core/HookRegistry.hpp"
 #pragma once
 // Single owner of the Unity frontend tick hook.
 //
@@ -9,6 +10,7 @@
 // Keep callbacks feature-owned: the dispatcher never manipulates game views
 // or calls into gameplay code itself. Install only once, on module startup.
 #include <BNM/Class.hpp>
+#include "core/Observers.hpp"
 #include <BNM/Method.hpp>
 #include "log.h"
 
@@ -19,7 +21,8 @@ namespace CustomComponents::Core::FrontendTickDispatcher {
     inline UnityTickFn originalEventSystemUpdate = nullptr;
     inline FrontendTask reconcileHandDiscards = nullptr;
     inline FrontendTask processDeferredCardViews = nullptr;
-    inline FrontendTask optionalPreviewTick = nullptr; // UI-only test; runs after stock Update
+    inline Core::Observers<> additionalPresentationTicks;
+    inline FrontendTask presentationTick = nullptr; // Presentation observer; runs after stock input Update
 
     inline bool IsAvailable() {
         auto eventSystem = BNM::Class("UnityEngine.EventSystems", "EventSystem");
@@ -31,12 +34,13 @@ namespace CustomComponents::Core::FrontendTickDispatcher {
         if (reconcileHandDiscards) reconcileHandDiscards();
         if (processDeferredCardViews) processDeferredCardViews();
         originalEventSystemUpdate(self, method);
-        if (optionalPreviewTick) optionalPreviewTick();
+        if (presentationTick) presentationTick();
+        additionalPresentationTicks.Notify();
     }
 
-    inline bool RegisterOptionalPreviewTick(FrontendTask task) {
-        if (!task || !originalEventSystemUpdate || optionalPreviewTick) return false;
-        optionalPreviewTick = task;
+    inline bool RegisterPresentationTick(FrontendTask task) {
+        if (!task || !originalEventSystemUpdate || presentationTick) return false;
+        presentationTick = task;
         return true;
     }
 
@@ -62,7 +66,7 @@ namespace CustomComponents::Core::FrontendTickDispatcher {
         }
         reconcileHandDiscards = handReconcile;
         processDeferredCardViews = deferredCardViews;
-        BNM::BasicHook(update, EventSystemUpdateHook, originalEventSystemUpdate);
+        CustomComponents::Core::Hooks::Install(update, EventSystemUpdateHook, originalEventSystemUpdate);
         if (!originalEventSystemUpdate) {
             reconcileHandDiscards = nullptr;
             processDeferredCardViews = nullptr;

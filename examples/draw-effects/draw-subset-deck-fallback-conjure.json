@@ -1,0 +1,14 @@
+{
+  "$type": "PvZCards.Engine.Components.DrawCardFromSubsetInDeckEffectDescriptor, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "SubsetQuery": {
+      "$type": "PvZCards.Engine.Queries.SubsetQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+      "$data": {
+        "Subset": "Gourmet"
+      }
+    },
+    "DrawAmount": 1,
+    "PluckFailSafe": true,
+    "SubsetQueryUsesEntities": false
+  }
+}

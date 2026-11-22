@@ -1,0 +1,10 @@
+{
+  "$type": "PvZCards.Engine.Queries.OpenLaneForCardQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+  "$data": {
+    "CardQuery": {
+      "$type": "PvZCards.Engine.Queries.PickedFromThreeQuery, EngineLib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+      "$data": {}
+    },
+    "CardQueryUsesEntities": false
+  }
+}

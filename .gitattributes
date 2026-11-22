@@ -1,2 +1,13 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Development files stay local; generated production assets remain included.
+/tests export-ignore
+/tests/** export-ignore
+/tools export-ignore
+/tools/** export-ignore
+/.build export-ignore
+/.build/** export-ignore
+/.local export-ignore
+/.local/** export-ignore
+/Clean-Project.ps1 export-ignore

@@ -1,26 +1,30 @@
-# Feature status
+# Features
 
-This is a **scope summary**, not a claim of universal regression coverage. Implementation details live in [architecture](../ARCHITECTURE.md) and source under `inc/`.
+This is a map of the card-authoring features, not a list of internal runtime components. For field names and restrictions, follow the linked guide or example.
 
-| Area | Implemented behavior | Important qualification |
+| What you want to do | Use | Details |
 | --- | --- | --- |
-| Abilities | Armor (19), Charge (20), Thrash (21), GrantAbility serialization and lifecycle | Ability-specific timing and Team-Up edge cases need explicit testing |
-| Deck identity | Persistent `EntityId` on main-deck `CardPoolEntry` across mulligan | Preserve stock card ownership and entry order |
-| Queries | `InDeckQuery`, `InDiscardPileQuery`, Guid-based zone queries, `DiscardedFromQuery` | `DiscardedFromQuery.Source` supports numeric `1`/`2` in the tested baseline; string aliases are not established |
-| Ordered targeting | Custom `ListPosition = 3` sort on deck/discard | Registered by `TargetScopeSupport` through the shared enum serializer |
-| Draw | `DrawCardFromSubsetInDeck` against real deck entries | Stock CardDatabase-backed subset queries are a distinct domain |
-| Discard / return | Deck/hand discards, discard pile removal, returns to hand/deck/lane | Repeated transitions and effect groups remain sensitive to lifecycle timing |
-| Triggers | Custom named triggers, global/targeted fire, discard and return triggers | Must preserve trigger eligibility and queue semantics |
-| Inspection | Discard pile shown through stock inspection UI | No custom Unity screen needed |
-| Presentation | Local/opponent hand-discard reconciliation, lane-card stat correction, off-board trigger animation guarding | Opponent stat correction worked in subsequent testing; one mid-match device crash was observed but not attributed; animation stalls remain under investigation |
-| Lifecycle | Guard against duplicate CardView creation and defer until safe retirement | Production coordinator is `core/CardViewLifecycleCoordinator.hpp`; the obsolete compatibility include was retired from the cleaned source |
+| Choose from deck, discard, or card database | `PickFromThree` selection modes | [Guide](PICKFROMTHREE.md) |
+| Change a card's cost and stats when played | `Level`, `Leveled`, `LeveledQuery` | [Guide](LEVEL.md) |
+| Remember counters, GUIDs, entities, or arrays | `Variables`, `SetVariableEffectDescriptor` | [Guide](VARIABLES.md) |
+| Scale a stock effect using saved data | `VariableMultiplier`, `LevelSpentMultiplier` | [Variables](VARIABLES.md) |
+| Grant or remove an ability | `GrantAbilityEffectDescriptor`, `RemoveGrantAbilityEffectDescriptor` | [Abilities](reference/abilities.md) |
+| Restrict when an ability can be played | `PlayRequirement` | [Requirements](reference/play-requirements.md) |
+| Move, tutor, create, discard, or return cards | Zone and deck effect descriptors | [Zone effects](reference/zone-effects.md) |
+| Check identities, deck positions or legal lanes | Custom entity queries | [Queries](reference/queries.md) |
+| Compare base/current stats or test buffs | `StatComparisonQuery`, `StatModifierQuery` | [Card stats](reference/card-stats.md) |
+| Change a card's tags or subtypes | `Add/RemoveTag`, `Add/RemoveSubtype` descriptors | [Card stats](reference/card-stats.md) |
+| Heal by each recipient's missing health | `HealEffectDescriptor` + `VariableMultiplier` | [Healing](reference/healing-and-swap.md) |
+| Convert excess healing to health buffs | Grantable `OverhealToHealth` | [Healing](reference/healing-and-swap.md) |
+| Exchange two fighters' board positions | `SwapPositionEffectDescriptor` | [Swapping](reference/healing-and-swap.md) |
+| Shuffle selected fighters across different lanes | `SwapRandomlyEffectDescriptor` | [Random lane shuffle](SWAP.md#random-lane-shuffle) |
+| Transform, copy or consume an in-play donor | `TransformCardIntoExistingCardEffectDescriptor` | [Transform](reference/transform-existing.md) |
+| Increase player turn-start draws | Grantable `ExtraDrawPerTurn` | [Ability grants](reference/abilities.md#extradrawperturn) |
+| Change stats on creation | `HeraldEntities` with a creation descriptor | [Creation heralds](reference/zone-effects.md#creation-heralds) |
+| Fire or listen for custom events | Custom trigger components | [Abilities and triggers](reference/abilities.md) |
+| Use a card-local extra play window | `SelfTeleport` | [Abilities](reference/abilities.md#selfteleport) |
+| Change card frames, heralds and stat icons | Presentation extensions | [Presentation](reference/presentation.md) |
 
-## Regression scenarios
+The [JSON example index](../examples/README.md) contains the actual snippets. If something behaves differently in a native build, check [compatibility](reference/compatibility.md) before treating a source test as a gameplay test.
 
-When modifying code affecting a row above, test at least: match startup on physical phone, both client viewpoints, discard from hand/deck, return to hand/deck/lane, lane → discard → lane, rapid repeat returns, stock played Trick reveal, stock buffs, and animation queue advancement.
-
-See [known issues](KNOWN_ISSUES.md) before modifying anything in presentation or lifecycle code.
-
-## Experimental deck positioning
-
-`MoveCardInDeckEffectDescriptor` changes the position of a targeted live deck card using `Mode` (`Add` / `Move`) and signed `Position`. See [reference](reference/move-card-in-deck.md). Runtime testing is pending.
+- [Lane attack markers, pre-discard death cancellation, duration-aware triggered grants, superpower creation and deck queries](LANES_DEATH_SUPERPOWERS.md).

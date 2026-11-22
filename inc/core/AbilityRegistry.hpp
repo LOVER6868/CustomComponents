@@ -6,6 +6,7 @@
 namespace CustomComponents {
     enum class AbilityStorage {
         Numeric,
+        Marker,
         Grantable
     };
 
@@ -18,6 +19,8 @@ namespace CustomComponents {
         void* (*component)(void* entity, bool create){};
         void* (*numericValue)(void* entity, bool create){};
         int specialAbilityType{NoSpecialAbilityType};
+        // Optional storage component name when a public marker uses a tracker.
+        const char* storageComponent{};
     };
 
     using AbilityAdapter = AbilityDescriptor;
@@ -53,6 +56,15 @@ namespace CustomComponents {
             for (std::size_t i = 0; i < count; ++i) callback(entries[i]);
         }
 
+        static bool SetSpecialAbilityType(int id,int type) {
+            for(std::size_t i=0;i<count;++i) if(entries[i].id==id) {
+                if(type!=AbilityDescriptor::NoSpecialAbilityType)
+                    for(std::size_t j=0;j<count;++j) if(i!=j && entries[j].specialAbilityType==type)return false;
+                entries[i].specialAbilityType=type;return true;
+            }
+            return false;
+        }
         static std::size_t Count() { return count; }
     };
 }
+

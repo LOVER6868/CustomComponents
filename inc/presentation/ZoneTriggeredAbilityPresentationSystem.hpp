@@ -1,6 +1,18 @@
+#include "engine/Events.hpp"
+#include "presentation/StatQueueContext.hpp"
+#include "presentation/history/SwapTransactionProcessor.hpp"
+#include "presentation/InspectionStatPresentation.hpp"
+#include "presentation/CardReadiness.hpp"
+#include "presentation/HeroHealthPresentation.hpp"
+#include "core/HookRegistry.hpp"
+#include "core/MatchRecorderPresentationObserver.hpp"
+#include "core/WeakObjectSettings.hpp"
 #include "diagnostics/DiagnosticLogging.hpp"
 
 #pragma once
+#include <atomic>
+
+#include "core/Performance.hpp"
 
 #include <array>
 #include <cstdint>
@@ -17,6 +29,8 @@
 
 #include "core/CardViewLifecycleCoordinator.hpp"
 #include "core/SceneViewContext.hpp"
+#include "core/AnimationQueuePostUpdate.hpp"
+#include "presentation/detail/Pick3VisualQueueGate.hpp"
 #include "log.h"
 
 // Development traces are opt-in. Keep error reporting and the final
@@ -80,6 +94,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
     inline BNM::Field<Obj*> commandAnimationQueue;
     inline BNM::Field<Obj*> queueAnimations;
     inline BNM::Field<Obj*> queueFrontAnimations;
+    inline BNM::Method<bool> visualQueueCanYield;
     inline BNM::Field<bool> effectIsStarted;
     inline BNM::Field<bool> effectIsCancelled;
     inline std::uint64_t lifecycleQueueUpdates = 0;
@@ -191,6 +206,11 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
     inline LifecycleVoidFn originalCheckForCompletion = nullptr;
     inline LifecycleVoidFn originalQueueUpdate = nullptr;
     inline LifecycleBoolFn originalQueueIsEmpty = nullptr;
+    inline LifecycleBoolFn originalQueueCanYield = nullptr;
+    using QueueAnimationFn = void (*)(void*, Obj*, const void*);
+    inline QueueAnimationFn originalQueueAddAnimation = nullptr;
+    inline QueueAnimationFn originalQueueAddFrontAnimation = nullptr;
+    inline QueueAnimationFn originalQueueStartAnimation = nullptr;
     inline LifecycleBoolFn originalTriggeredCanYield = nullptr;
 
 
@@ -361,7 +381,9 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
         const auto n = ++coreTraceCount;
         if (n <= 300) CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/BRIDGETRACE: FACTORY ENTER seq=%llu factory=%p group=%d card=%d records=%p death=%d",
             static_cast<unsigned long long>(n), self, groupId, cardId, records, static_cast<int>(death));
+        CustomComponents::Core::ObserveReplayPresentation(death?"ability-factory-death":"ability-factory",self,records,groupId,cardId);
         Obj* result = originalCreateAbilityCore(self, groupId, cardId, records, death, method);
+        CustomComponents::Core::ObserveReplayPresentation("ability-factory-result",self,result,groupId,cardId);
         if (n <= 300) CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/BRIDGETRACE: FACTORY EXIT seq=%llu animation=%p group=%d card=%d",
             static_cast<unsigned long long>(n), result, groupId, cardId);
         return result;
@@ -809,7 +831,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
         Obj* mapped = nullptr;
         if (!TryResolveMappedCardView(mapper, entry.id, &mapped) ||
             reinterpret_cast<std::uintptr_t>(mapped) != entry.view ||
-            std::strcmp(TraceObjectType(mapped), "CardViewComponent") != 0 ||
+            !IsMappedCardView(mapped) ||
             cardViewEntityId[mapped].Get() != entry.id) return;
         Obj* entity = getEntityById[model](entry.id);
         if (!entity || !TraceFindComponent(entity, "Card") ||
@@ -818,59 +840,68 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
             TraceFindComponent(entity, "HandElement")) return;
         Obj* frame = cardViewFrame[mapped].Get();
         if (!frame) return;
-        auto gap = [](int target, int shown) -> int {
-            const std::int64_t delta = static_cast<std::int64_t>(target) - shown;
-            return delta >= -10000 && delta <= 10000 ? static_cast<int>(delta) : 0;
-        };
-        int attackDelta = 0, healthDelta = 0, costDelta = 0;
-        if (frameCurrentAttack.IsValid() && frameBuffAttack.IsValid() &&
-            componentCalculateAttack.IsValid()) {
-            Obj* attack = TraceFindComponent(entity, "Attack");
-            if (attack) {
-                attackDelta = gap(componentCalculateAttack[attack](),
-                                  frameCurrentAttack[frame].Get());
-                if (attackDelta) frameBuffAttack[frame](attackDelta);
-            }
-        }
-        if (frameMaxHealth.IsValid() && frameCurrentHealth.IsValid() &&
-            frameBuffHealth.IsValid() && healthMaxHealth.IsValid() &&
-            healthCurrentDamage.IsValid() && calculateModifiableValue.IsValid()) {
-            Obj* health = TraceFindComponent(entity, "Health");
-            if (health) {
-                Obj* value = healthMaxHealth[health].Get();
-                if (value) {
-                    const int maxHealth = calculateModifiableValue(value);
-                    const int damage = healthCurrentDamage[health].Get();
-                    const int shownMax = frameMaxHealth[frame].Get();
-                    const int shownHealth = frameCurrentHealth[frame].Get();
-                    // BuffHealth preserves damage; never convert a damaged
-                    // unit into a healed one due to a stale frame.
-                    if (maxHealth >= 0 && damage >= 0 && damage <= maxHealth &&
-                        shownHealth == shownMax - damage) {
-                        healthDelta = gap(maxHealth, shownMax);
-                        if (healthDelta) frameBuffHealth[frame](healthDelta);
-                    }
-                }
-            }
-        }
-        if (frameCurrentSunCost.IsValid() && frameModifySunCost.IsValid() &&
-            sunCostValue.IsValid() && calculateModifiableValue.IsValid()) {
-            Obj* cost = TraceFindComponent(entity, "SunCost");
-            if (cost) {
-                Obj* value = sunCostValue[cost].Get();
-                if (value) {
-                    int finalCost = calculateModifiableValue(value);
-                    if (finalCost < 0) finalCost = 0;
-                    costDelta = gap(finalCost, frameCurrentSunCost[frame].Get());
-                    if (costDelta) frameModifySunCost[frame](costDelta);
-                }
-            }
-        }
-        if (attackDelta || healthDelta || costDelta)
-            CC_DIAG("CustomComponents/ZoneTriggeredAbilityPresentation/IDLE-STAT: repaired id=%d view=%p attack=%d health=%d cost=%d (both clients; gameplay untouched)",
-                     entry.id, mapped, attackDelta, healthDelta, costDelta);
+        Presentation::CardStats::Apply(frame,Presentation::CardStats::Read(entity));
+        RefreshFrameTraits(frame,entity);
     }
 
+    inline void FlushIdleHandFrames(Obj* queue) {
+        if(!frameStatsDirty)return;
+        Presentation::StatQueue::ObserveQueue(queue);
+        if(!frameStatsDirty || !Presentation::StatQueue::Owns(queue)) return;
+        auto normal=queueAnimations;auto front=queueFrontAnimations;
+        if(!normal.IsValid() || !front.IsValid()) return;
+        auto* a=reinterpret_cast<BNM::Structures::Mono::List<Obj*>*>(normal[queue].Get());
+        auto* b=reinterpret_cast<BNM::Structures::Mono::List<Obj*>*>(front[queue].Get());
+        if(!a || !b || !Presentation::Stats::CanFlush(true,a->size,b->size,Presentation::StatQueue::CaughtUp(queue))) return;
+        Obj* mapper=Core::SceneViewContext::RootedMapper();
+        Obj* model=Presentation::StatQueue::owner.model->Get();
+        if(!mapper || !model) return;
+        frameStatsDirty.exchange(false);
+        const auto revision=Engine::SimulationChanges::Revision(model);
+        unsigned inspected=0,unchanged=0,refreshed=0;
+        for(auto& binding:frameViewBindings) {
+            if(binding.model!=model || !binding.view)continue;
+            // A global queue dirty flag may be raised by ordinary animations.
+            // Reject unchanged cards BEFORE any managed mapper lookup, entity
+            // search, component checks, or sprite/stat rendering calls.
+            if(!binding.explicitDirty && binding.lastRevision==revision){++unchanged;continue;}
+            Obj* mapped=nullptr;
+            if(!TryResolveMappedCardView(mapper,binding.id,&mapped) || mapped!=binding.view ||
+               !IsMappedCardView(mapped) ||
+               cardViewEntityId[mapped].Get()!=binding.id)continue;
+            Obj* entity=Engine::EntityAccess::Find(model,binding.id);
+            if(!entity || !Engine::EntityAccess::Component(entity,"Card") ||
+               Engine::EntityAccess::Component(entity,"DiscardPileElement"))continue;
+            // All *visible mapped* lane fighters, including the local client's
+            // representation of opponent cards, are eligible for reconciliation.
+            // Hand entries remain restricted to views the stock UI actually
+            // displayed: don't expose an opponent's hidden hand/deck cards.
+            const bool lane=Engine::EntityAccess::Component(entity,"LaneElement")!=nullptr;
+            const bool visibleHand=binding.shownInHand &&
+                Engine::EntityAccess::Component(entity,"HandElement")!=nullptr;
+            if(!lane && !visibleHand)continue;
+            Obj* frame=cardViewFrame[mapped].Get();
+            if(!frame)continue;
+            ++inspected;
+            // Gameplay effect hooks advance the revision. Ordinary animation
+            // enqueues do not justify recomputing managed stats for unchanged
+            // card views; a new binding or native hand show forces a refresh.
+            auto snapshot=Presentation::CardStats::Read(entity);
+            const int printed=frameCurrentAttack.IsValid()?Core::Metadata::Bind(frameCurrentAttack,frame).Get():-1;
+            Presentation::CardStats::Apply(frame,snapshot);
+            if(snapshot.attack && printed!=*snapshot.attack)
+                LOG_INFO("CustomComponents/Stats/RECONCILE: card=%d owner=%d printed=%d modelAttack=%d lane=%d",binding.id,Engine::BoardPlacement::Owner(entity),printed,*snapshot.attack,int(lane));
+            // The stock UI already owns most icon lifecycles. Only refresh
+            // abilities when an effect changed a visible mapped card; never
+            // do this in an unconditional every-frame scan.
+            RefreshFrameTraits(frame,entity);
+            binding.lastRevision=revision;binding.explicitDirty=false;++refreshed;
+        }
+        static unsigned logged=0;
+        if((refreshed || (unchanged && inspected>16)) && logged++<96)
+            LOG_INFO("CustomComponents/Stats/RECONCILE_BATCH: revision=%llu inspected=%u unchanged=%u refreshed=%u",
+                static_cast<unsigned long long>(revision),inspected,unchanged,refreshed);
+    }
     inline bool QueueContainsAnimation(Obj* queue, const PendingIdleLaneFrame& pending) {
         if (!queue || !pending.animation) return false;
         for (auto* source : {&queueAnimations, &queueFrontAnimations}) {
@@ -898,7 +929,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
                 hasReady = true;
                 break;
             }
-        if (!hasReady) return;
+        if (!hasReady || !Presentation::StatQueue::CaughtUp(queue)) return;
         // The stock IsEmpty implementation only checks the normal list in
         // this binary. Also require FrontAnimations to be empty so a queued
         // follow-up buff is not visually pre-applied or duplicated.
@@ -936,6 +967,9 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
     #include "presentation/detail/OffBoardEffectAudit.inl"
 
     inline bool Initialize() {
+        if(!Presentation::CardReadiness::Initialize() || !Presentation::HeroHealth::Initialize())return false;
+        if(!Presentation::CardStats::Metadata().Valid()) return false;
+        if(!Presentation::StatQueue::Initialize() || !Presentation::InspectionStats::Initialize() || !Presentation::SwapTransactions::Initialize()) return false;
         // Shared stock reveal structure. The Card/Hand/Target refs are the
         // ones owned by the reveal animation, not its later triggered effects.
         auto trickRevealBase = BNM::Class("PvZCards.Game", "RevealOneTimeEffectAnimation");
@@ -1063,7 +1097,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
             frameInitialAttack = cardFrameClass.GetField("InitialAttack");
             frameInitialHealth = cardFrameClass.GetField("InitialHealth");
             frameInitialSunCost = cardFrameClass.GetField("InitialSunCost");
-            frameBuffAttack = cardFrameClass.GetMethod("BuffAttack", 1).cast<void>();
+
         }
         if (attackComponentClass.IsValid())
             componentCalculateAttack = attackComponentClass.GetMethod("CalculateAttack", 0).cast<int>();
@@ -1081,8 +1115,8 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
             frameMaxHealth = cardFrameClass.GetField("MaxHealth");
             frameCurrentHealth = cardFrameClass.GetField("CurrentHealth");
             frameCurrentSunCost = cardFrameClass.GetField("CurrentSunCost");
-            frameBuffHealth = cardFrameClass.GetMethod("BuffHealth", 1).cast<void>();
-            frameModifySunCost = cardFrameClass.GetMethod("ModifySunCost", 1).cast<void>();
+
+
             frameSetSpecialAbilitySprites = cardFrameClass.GetMethod("SetSpecialAbilitySprites", 1).cast<void>();
         }
         stateClass = BNM::Class("PvZCards.Engine", "EntityState");
@@ -1096,8 +1130,8 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
                 stateAbilities.IsValid() && checkerAddSpecialAbilities.IsValid();
         }
         CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/GENERIC_SYNC: health=%d cost=%d traits=%d",
-            int(frameBuffHealth.IsValid() && calculateModifiableValue.IsValid()),
-            int(frameModifySunCost.IsValid() && calculateModifiableValue.IsValid()),
+            int(calculateModifiableValue.IsValid()),
+            int(calculateModifiableValue.IsValid()),
             int(traitSyncReady && frameSetSpecialAbilitySprites.IsValid()));
         traceAbilityGroupId = triggeredAbilityAnimation.GetField("AbilityGroupId");
         traceVisualSourceId = visualEffectEventAction.GetField("SourceId");
@@ -1208,8 +1242,13 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
         nullEffectAnimationCtor = nullEffectAnimationClass.GetMethod(".ctor", 0).cast<void>();
 
         auto checkForCompletion = timelineAnimation.GetMethod("CheckForCompletion", 0);
+        auto queueAddAnimation = animationQueue.GetMethod("AddAnimation", 1);
+        auto queueAddFrontAnimation = animationQueue.GetMethod("AddAnimationToFrontOfQueue", 1);
+        auto queueStartAnimation = animationQueue.GetMethod("StartAnimation", 1);
         auto queueUpdate = animationQueue.GetMethod("Update", 0);
         auto queueIsEmpty = animationQueue.GetMethod("IsEmpty", 0);
+        auto queueCanYield = animationQueue.GetMethod("CanYield", 0);
+        visualQueueCanYield = animationQueue.GetMethod("CanYield", 0).cast<bool>();
         auto triggeredCanYield = triggeredAbilityAnimation.GetMethod("CanYield", 0);
 
 
@@ -1267,15 +1306,15 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
             auto cardLoaded = cardViewClass.GetMethod("OnCardLoaded", 1);
             auto showInHand = cardViewClass.GetMethod("ShowInHand", 0);
             if (cardLoaded.IsValid())
-                BNM::BasicHook(cardLoaded, CardLoadedSyncHook, originalCardLoaded);
+                CustomComponents::Core::Hooks::Install(cardLoaded, CardLoadedSyncHook, originalCardLoaded);
             if (showInHand.IsValid())
-                BNM::BasicHook(showInHand, ShowInHandTraceHook, originalShowInHand);
+                CustomComponents::Core::Hooks::Install(showInHand, ShowInHandTraceHook, originalShowInHand);
             CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/VIEWTRACE: cardLoadedHook=%d showInHandHook=%d",
                      int(originalCardLoaded != nullptr), int(originalShowInHand != nullptr));
         }
         auto addViewObject = entityViewMapper.GetMethod("AddViewObject", 2);
         if (addViewObject.IsValid())
-            BNM::BasicHook(addViewObject, AddViewObjectTraceHook, originalAddViewObject);
+            CustomComponents::Core::Hooks::Install(addViewObject, AddViewObjectTraceHook, originalAddViewObject);
         CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/VIEWTRACE: addViewHook=%d expectedRVA=0x1F1A340",
                  int(originalAddViewObject != nullptr));
 
@@ -1284,22 +1323,22 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
         if (!traceAbilityGroupId.IsValid())
             LOG_ERR("CustomComponents/ZoneTriggeredAbilityPresentation/BRIDGETRACE: AbilityGroupId missing; group on-start logging unavailable");
         if (oneTimeProcess.IsValid() && oneTimeCardId.IsValid()) {
-            BNM::BasicHook(oneTimeProcess, OneTimeRecordTraceHook, originalOneTimeRecord);
+            CustomComponents::Core::Hooks::Install(oneTimeProcess, OneTimeRecordTraceHook, originalOneTimeRecord);
             CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/BRIDGETRACE: ONETIME hook=%d native=%p RVA=0x1FA7C04",
                 static_cast<int>(originalOneTimeRecord != nullptr), reinterpret_cast<void*>(oneTimeProcess.GetOffset()));
         } else LOG_ERR("CustomComponents/ZoneTriggeredAbilityPresentation/BRIDGETRACE: ONETIME metadata unavailable");
         if (processRecordGroup.IsValid()) {
-            BNM::BasicHook(processRecordGroup, TriggerRecordGroupTraceHook, originalTriggerRecordGroup);
+            CustomComponents::Core::Hooks::Install(processRecordGroup, TriggerRecordGroupTraceHook, originalTriggerRecordGroup);
             CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/BRIDGETRACE: GROUP hook=%d native=%p RVA=0x1FCD14C",
                 static_cast<int>(originalTriggerRecordGroup != nullptr), reinterpret_cast<void*>(processRecordGroup.GetOffset()));
         } else LOG_ERR("CustomComponents/ZoneTriggeredAbilityPresentation/BRIDGETRACE: GROUP metadata unavailable");
         if (createAbilityCore.IsValid()) {
-            BNM::BasicHook(createAbilityCore, CreateAbilityCoreTraceHook, originalCreateAbilityCore);
+            CustomComponents::Core::Hooks::Install(createAbilityCore, CreateAbilityCoreTraceHook, originalCreateAbilityCore);
             CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/BRIDGETRACE: FACTORY hook=%d native=%p RVA=0x1FCB638 (4 args; wrapper UNHOOKED)",
                 static_cast<int>(originalCreateAbilityCore != nullptr), reinterpret_cast<void*>(createAbilityCore.GetOffset()));
         } else LOG_ERR("CustomComponents/ZoneTriggeredAbilityPresentation/BRIDGETRACE: FACTORY metadata unavailable");
         if (addAbility.IsValid()) {
-            BNM::BasicHook(addAbility, AddAbilityRecordTraceHook, originalAddAbilityRecord);
+            CustomComponents::Core::Hooks::Install(addAbility, AddAbilityRecordTraceHook, originalAddAbilityRecord);
             CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/BRIDGETRACE: ADDABILITY hook=%d native=%p RVA=0x1FCD7E4",
                 static_cast<int>(originalAddAbilityRecord != nullptr), reinterpret_cast<void*>(addAbility.GetOffset()));
         } else LOG_ERR("CustomComponents/ZoneTriggeredAbilityPresentation/BRIDGETRACE: ADDABILITY metadata unavailable");
@@ -1337,7 +1376,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
             auto m = klass.IsValid() ? klass.GetMethod(name, 0) : BNM::MethodBase{};
             const bool verified = m.IsValid() && nativeIl2cppBase &&
                 static_cast<std::uintptr_t>(m.GetOffset()) == nativeIl2cppBase + rva;
-            if (verified) BNM::BasicHook(m, replacement, original);
+            if (verified) CustomComponents::Core::Hooks::Install(m, replacement, original);
             if constexpr (false) CC_DIAG("CustomComponents/TRICK-LIFECYCLE-DIAG: INSTALL method=%s expectedRVA=0x%llx verified=%d hooked=%d",
                 name, static_cast<unsigned long long>(rva), int(verified), int(original != nullptr));
         };
@@ -1368,7 +1407,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
             static_cast<unsigned long long>(kGenericGetViewObjectRva)
         );
 
-        ::BasicHook(
+        CustomComponents::Core::Hooks::InstallAddress(
             genericLookupAddress,
             GetViewObjectGenericHook,
             originalGetViewObjectGeneric
@@ -1381,7 +1420,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
             return false;
         }
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             handleCommandLoadComplete,
             HandleCommandLoadCompleteHook,
             originalHandleCommandLoadComplete
@@ -1392,7 +1431,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
             return false;
         }
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             getCardView,
             GetCardViewHook,
             originalGetCardView
@@ -1405,7 +1444,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
             return false;
         }
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             triggeredOnStarted,
             TriggeredAbilityOnStartedHook,
             originalTriggeredAbilityOnStarted
@@ -1418,7 +1457,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
             return false;
         }
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             isInLocalHand,
             IsInLocalHandHook,
             originalIsInLocalHand
@@ -1431,7 +1470,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
             return false;
         }
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             createRequiredAnimation,
             CreateRequiredAnimationHook,
             originalCreateRequiredAnimation
@@ -1442,7 +1481,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
             return false;
         }
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             createTargetReactionAnimation,
             CreateTargetReactionAnimationHook,
             originalCreateTargetReactionAnimation
@@ -1456,7 +1495,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
         // Failure to install diagnostics must not affect gameplay initialization.
         if (buffCommonTarget.IsValid() && traceVisualSourceId.IsValid() &&
             traceVisualTargetIds.IsValid() && traceVisualMapper.IsValid()) {
-            BNM::BasicHook(buffCommonTarget, BuffCommonTargetTraceHook, originalBuffCommonTarget);
+            CustomComponents::Core::Hooks::Install(buffCommonTarget, BuffCommonTargetTraceHook, originalBuffCommonTarget);
             CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/TARGETBOUNDARY: BUFF hook=%d native=%p expectedRVA=0x1EDC9B0",
                      int(originalBuffCommonTarget != nullptr), reinterpret_cast<void*>(buffCommonTarget.GetOffset()));
         } else CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/TARGETBOUNDARY: BUFF hook unavailable");
@@ -1478,14 +1517,14 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
         // Dump verified: DrawAllCardsEventAction override RVA 0x1EDDB30,
         // VisualEffectEventAction base implementation RVA 0x1EDB798.
         // Other concrete overrides will require registration separately.
-        BNM::BasicHook(drawSourceParticle, DrawSourceParticleHook, originalDrawSourceParticle);
+        CustomComponents::Core::Hooks::Install(drawSourceParticle, DrawSourceParticleHook, originalDrawSourceParticle);
         if (!originalDrawSourceParticle) {
             LOG_ERR("CustomComponents/ZoneTriggeredAbilityPresentation/SOURCEPARTICLE: draw override hook failed");
             return false;
         }
         CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/HOOKSAFETY: draw particle native=%p trampoline=%p",
             reinterpret_cast<void*>(drawSourceParticle.GetOffset()), reinterpret_cast<void*>(originalDrawSourceParticle));
-        BNM::BasicHook(baseSourceParticle, BaseSourceParticleHook, originalBaseSourceParticle);
+        CustomComponents::Core::Hooks::Install(baseSourceParticle, BaseSourceParticleHook, originalBaseSourceParticle);
         if (!originalBaseSourceParticle) {
             LOG_ERR("CustomComponents/ZoneTriggeredAbilityPresentation/SOURCEPARTICLE: base hook failed");
             return false;
@@ -1497,13 +1536,13 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
         // inherits this implementation. Preserve overrides from other classes.
         CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/PERSISTENT: resolved base=%p expectedRVA=0x1EDBEC8",
             reinterpret_cast<void*>(createPersistentVisuals.GetOffset()));
-        BNM::BasicHook(createPersistentVisuals, CreatePersistentVisualsHook, originalCreatePersistentVisuals);
+        CustomComponents::Core::Hooks::Install(createPersistentVisuals, CreatePersistentVisualsHook, originalCreatePersistentVisuals);
         if (!originalCreatePersistentVisuals) {
             LOG_ERR("CustomComponents/ZoneTriggeredAbilityPresentation/PERSISTENT: hook installation failed");
             return false;
         }
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             executeRemainingCommands,
             ExecuteRemainingCommandsHook,
             originalExecuteRemainingCommands
@@ -1516,7 +1555,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
             return false;
         }
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             addParticleEffectAnimation,
             AddParticleEffectAnimationHook,
             originalAddParticleEffectAnimation
@@ -1529,10 +1568,23 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
             return false;
         }
 
-        BNM::BasicHook(checkForCompletion, CheckForCompletionHook, originalCheckForCompletion);
-        BNM::BasicHook(queueUpdate, QueueUpdateHook, originalQueueUpdate);
-        BNM::BasicHook(queueIsEmpty, QueueIsEmptyHook, originalQueueIsEmpty);
-        BNM::BasicHook(triggeredCanYield, TriggeredCanYieldHook, originalTriggeredCanYield);
+        CustomComponents::Core::Hooks::Install(checkForCompletion, CheckForCompletionHook, originalCheckForCompletion);
+        if (queueAddAnimation.IsValid())
+            CustomComponents::Core::Hooks::Install(queueAddAnimation, QueueAddAnimationHook, originalQueueAddAnimation);
+        if (queueAddFrontAnimation.IsValid())
+            CustomComponents::Core::Hooks::Install(queueAddFrontAnimation, QueueAddFrontAnimationHook, originalQueueAddFrontAnimation);
+        if (queueStartAnimation.IsValid())
+            CustomComponents::Core::Hooks::Install(queueStartAnimation, QueueStartAnimationHook, originalQueueStartAnimation);
+        LOG_INFO("CustomComponents/Pick3/ANIMATION_LIFECYCLE: hooks add=%d front=%d start=%d",
+            originalQueueAddAnimation != nullptr, originalQueueAddFrontAnimation != nullptr,
+            originalQueueStartAnimation != nullptr);
+        CustomComponents::Core::Hooks::Install(queueUpdate, QueueUpdateHook, originalQueueUpdate);
+        CustomComponents::Core::Hooks::Install(queueIsEmpty, QueueIsEmptyHook, originalQueueIsEmpty);
+        // Optional passive observer: stock calls original; never initiate CanYield.
+        if (queueCanYield.IsValid())
+            CustomComponents::Core::Hooks::Install(queueCanYield, QueueCanYieldHook, originalQueueCanYield);
+        LOG_INFO("CustomComponents/Pick3/PASSIVE_VISUAL: canYieldHook=%d", originalQueueCanYield ? 1 : 0);
+        CustomComponents::Core::Hooks::Install(triggeredCanYield, TriggeredCanYieldHook, originalTriggeredCanYield);
         if (!originalCheckForCompletion || !originalQueueUpdate ||
             !originalQueueIsEmpty || !originalTriggeredCanYield) {
             LOG_ERR("CustomComponents/ZoneTriggeredAbilityPresentation/LIFECYCLE: hook installation failed");
@@ -1566,7 +1618,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
         if (laneRecordClass.IsValid())
             laneRecordGetCard = laneRecordClass.GetMethod("get_Card", 0).cast<Obj*>();
         if (laneCardIdData.IsValid()) laneCardDataEntityId = laneCardIdData.GetField("EntityId");
-        if (laneEffectRecord.IsValid()) laneRecordTargetId = laneEffectRecord.GetField("TargetId");
+        if (laneEffectRecord.IsValid()) laneRecordTargetId = laneEffectRecord.GetMethod("get_TargetId", 0).cast<int>();
 
         // GetOffset is the real native address in this BNM build. Refuse to
         // inline-hook unknown versions or unexpectedly resolved overloads.
@@ -1589,19 +1641,19 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
         auto laneBoardMethod = cardViewClass.IsValid()
             ? cardViewClass.GetMethod("HandlePlayedToBoard", 1) : BNM::MethodBase{};
         if (laneRvaMatches(laneCreateEventMethod, 0x1EDEF44))
-            BNM::BasicHook(laneCreateEventMethod, LaneCreateCardEventTraceHook, originalLaneCreateCardEvent);
+            CustomComponents::Core::Hooks::Install(laneCreateEventMethod, LaneCreateCardEventTraceHook, originalLaneCreateCardEvent);
         if (laneRvaMatches(lanePreloadMethod, 0x1EDCEEC))
-            BNM::BasicHook(lanePreloadMethod, LanePreloadTraceHook, originalLanePreload);
+            CustomComponents::Core::Hooks::Install(lanePreloadMethod, LanePreloadTraceHook, originalLanePreload);
         if (laneRvaMatches(laneStartMethod, 0x1F02028))
-            BNM::BasicHook(laneStartMethod, LaneCreateStartedTraceHook, originalLaneCreateStarted);
+            CustomComponents::Core::Hooks::Install(laneStartMethod, LaneCreateStartedTraceHook, originalLaneCreateStarted);
         if (laneRvaMatches(laneShowMethod, 0x1F02094))
-            BNM::BasicHook(laneShowMethod, LaneShowCardTraceHook, originalLaneShowCard);
+            CustomComponents::Core::Hooks::Install(laneShowMethod, LaneShowCardTraceHook, originalLaneShowCard);
         if (laneRvaMatches(laneCompletedMethod, 0x1F02470))
-            BNM::BasicHook(laneCompletedMethod, LaneCompletedTraceHook, originalLaneCompleted);
+            CustomComponents::Core::Hooks::Install(laneCompletedMethod, LaneCompletedTraceHook, originalLaneCompleted);
         if (laneRvaMatches(laneAddMethod, 0x1F81204))
-            BNM::BasicHook(laneAddMethod, LaneAddToLaneTraceHook, originalLaneAddToLane);
+            CustomComponents::Core::Hooks::Install(laneAddMethod, LaneAddToLaneTraceHook, originalLaneAddToLane);
         if (laneRvaMatches(laneBoardMethod, 0x1EF982C))
-            BNM::BasicHook(laneBoardMethod, LanePlayedToBoardTraceHook, originalLanePlayedToBoard);
+            CustomComponents::Core::Hooks::Install(laneBoardMethod, LanePlayedToBoardTraceHook, originalLanePlayedToBoard);
         CUSTOMCOMPONENTS_LANE_TRACE(
             "CustomComponents/ZoneTriggeredAbilityPresentation/LANEENTRY: hooks factory=%d preload=%d start=%d show=%d completed=%d addToLane=%d playedToBoard=%d (read-only; RVA verified)",
             int(originalLaneCreateCardEvent != nullptr), int(originalLanePreload != nullptr),
@@ -1626,3 +1678,9 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
 
 #undef CUSTOMCOMPONENTS_LANE_TRACE
 #undef CUSTOMCOMPONENTS_ZTAP_TRACE
+
+
+
+
+
+

@@ -1,3 +1,7 @@
+#include "engine/EffectRegistration.hpp"
+#include "engine/SubsetSelection.hpp"
+#include "core/HookRegistry.hpp"
+#include "integration/ReplayDrawObserver.hpp"
 #pragma once
 #include "diagnostics/DiagnosticLogging.hpp"
 
@@ -20,6 +24,7 @@
 #include "core/CustomComponentRegistry.hpp"
 #include "core/CustomFieldBridgeSystem.hpp"
 #include "log.h"
+#include "effects/detail/PhysicalDeckSelection.hpp"
 
 namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem {
 
@@ -40,10 +45,10 @@ namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem {
 
     inline BNM::Field<int> effectSource;
     inline BNM::Field<int> effectPlayer;
-    inline BNM::Field<int> effectGroup;
+    inline BNM::Field<int> effectGroup, effectDefinition;
 
     inline BNM::Field<int> customDrawAmount;
-    inline BNM::Field<bool> descriptorFailSafe;
+    inline BNM::Field<bool> descriptorFailSafe, descriptorEntityQuery;
 
     inline BNM::Field<MonoList<Obj*>*> modelEntities;
     inline BNM::Field<MonoList<Obj*>*> entityComponents;
@@ -123,14 +128,17 @@ namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem {
         int sourceId = -1;
         int playerId = -1;
         int effectGroupId = -1;
+        int effectEntityId = -1;
         int remaining = 0;
         bool pluckFailSafe = false;
+        bool entityQuery = false;
     };
 
     inline thread_local std::vector<PendingDraw> pendingDraws;
     // Stock runtime objects produced by our custom descriptor carry their
     // per-effect PluckFailSafe policy here until DrawCardAbilitySystem processes them.
     inline thread_local std::unordered_map<Obj*, bool> failSafeByAbilityEffect;
+    inline thread_local std::unordered_map<Obj*, bool> entityQueryByAbilityEffect;
 
 
 
@@ -236,7 +244,8 @@ namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem {
                 "PvZCards.Engine.Components",
                 "DrawCardFromSubsetEffectDescriptor",
                 {
-                    {"PluckFailSafe", CustomFieldBridgeSystem::FieldKind::Bool}
+                    {"PluckFailSafe", CustomFieldBridgeSystem::FieldKind::Bool},
+                    {"SubsetQueryUsesEntities", CustomFieldBridgeSystem::FieldKind::Bool}
                 },
                 false)) {
             LOG_ERR(
@@ -311,8 +320,10 @@ namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem {
         effectSource = effect.GetField("SourceId");
         effectPlayer = effect.GetField("PlayerId");
         effectGroup = effect.GetField("EffectGroupId");
+        effectDefinition = effect.GetField("EffectEntityId");
         customDrawAmount = stockRuntime.GetField("DrawAmount");
         descriptorFailSafe = customDescriptor.GetField("PluckFailSafe");
+        descriptorEntityQuery = customDescriptor.GetField("SubsetQueryUsesEntities");
 
         modelEntities = model.GetField("Entities");
         entityComponents = entity.GetField("Components");
@@ -343,27 +354,24 @@ namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem {
         // one argument. Selecting only by parameter count can hook
         // ProcessEffect(DrawCardAbilityEffect), which never sees our custom
         // DrawCardFromSubsetInDeckEffect. Select the subset overload explicitly.
-        auto processAbility = drawAbilitySystem.GetMethod(
-            "ProcessEffect",
-            {
-                BNM::CompileTimeClassBuilder(
-                    "PvZCards.Engine.Effects",
-                    "DrawCardFromSubsetAbilityEffect",
-                    "EngineLib.dll"
-                ).Build()
+        BNM::Method<void> processAbility;
+        auto abilityEffectType=BNM::Class("PvZCards.Engine.Effects","DrawCardFromSubsetAbilityEffect");
+        for(auto candidate:drawAbilitySystem.GetMethods())
+            if(auto* info=candidate.GetInfo();info&&std::string_view(info->name)=="ProcessEffect"&&info->parameters_count==1&&BNM::Class(info->parameters[0]).GetClass()==abilityEffectType.GetClass()){
+                processAbility=candidate.cast<void>();
+                break;
             }
-        );
         auto processSubset = subsetSystem.GetMethod("ProcessEffect", 1);
         auto processDraw = drawSystem.GetMethod("ProcessEffect", 1);
         auto pickRandomGuid = finder.GetMethod("PickRandomGuid", 1);
         auto registerHandlers = drawAbilitySystem.GetMethod("RegisterEffectHandlers", 1);
-        finderFindCard = finder.GetMethod("FindCard", 2);
+        finderFindCard = finder.GetMethod("FindCard", {std::string_view("subsetQuery"),std::string_view("effect")});
         drawCardsFromDeck = drawAbilitySystem.GetMethod("DrawCardsFromDeck", 3);
         effectCancel = effect.GetMethod("Cancel", 0);
 
         if (!effectSource.IsValid() || !effectPlayer.IsValid() ||
             !effectGroup.IsValid() || !customDrawAmount.IsValid() ||
-            !descriptorFailSafe.IsValid() || !modelEntities.IsValid() ||
+            !effectDefinition.IsValid() || !descriptorFailSafe.IsValid() || !descriptorEntityQuery.IsValid() || !modelEntities.IsValid() ||
             !entityComponents.IsValid() || !entityId.IsValid() ||
             !subsetSystemModel.IsValid() || !subsetSystemFinder.IsValid() ||
             !abilitySystemModel.IsValid() || !subsetHandId.IsValid() ||
@@ -401,47 +409,44 @@ namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem {
             return false;
         }
 
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             descriptorCopy,
             DescriptorCopyHook,
             originalDescriptorCopy
         );
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             descriptorPool,
             DescriptorPoolHook,
             originalDescriptorPool
         );
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             descriptorToEffect,
             DescriptorToEffectHook,
             originalDescriptorToEffect
         );
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             registerHandlers,
             RegisterHandlersHook,
             originalRegisterHandlers
         );
-        BNM::BasicHook(
-            registerForEffect,
-            RegisterForEffectHook,
-            originalRegisterForEffect
-        );
-        BNM::BasicHook(
+        Engine::EffectRegistration::Initialize();
+        originalRegisterForEffect=Engine::EffectRegistration::original;
+        CustomComponents::Core::Hooks::Install(
             processAbility,
             DrawSubsetAbilityHook,
             originalDrawSubsetAbility
         );
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             processSubset,
             ProcessSubsetHook,
             originalProcessSubset
         );
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             processDraw,
             ProcessDrawHook,
             originalProcessDraw
         );
-        BNM::BasicHook(
+        CustomComponents::Core::Hooks::Install(
             pickRandomGuid,
             PickRandomGuidHook,
             originalPickRandomGuid
@@ -469,3 +474,4 @@ namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem {
     }
 
 } // namespace CustomComponents::Systems::DrawCardFromSubsetInDeckSystem
+

@@ -1,4 +1,9 @@
+#include "history/RecordWriter.hpp"
 #pragma once
+#include "integration/ReplayEventBridge.hpp"
+#include "engine/CustomRecords.hpp"
+#include "core/SceneViewContext.hpp"
+
 #include "diagnostics/DiagnosticLogging.hpp"
 
 #include <BNM/BasicMonoStructures.hpp>
@@ -184,6 +189,24 @@ namespace CustomComponents::Systems::MoveCardInDeckSystem {
         Obj* entry = entries->items->m_Items[found];
         removeAt[static_cast<Obj*>(entries)](found);
         insert[static_cast<Obj*>(entries)](destination, entry);
+        if (reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity()) {
+            // No stock deck-reorder history record exists: this is our
+            // authoritative typed record of the verified list mutation.
+            Engine::CustomRecords::Record r{};
+            r.model=reinterpret_cast<std::uintptr_t>(model);
+            r.kind=Engine::CustomRecords::Kind::DeckReorder;
+            r.stage=Engine::CustomRecords::Stage::Committed;
+            r.from=r.to=Engine::CustomRecords::Origin::Deck;
+            r.entityId=targetId;r.fromZoneId=deckId;r.toZoneId=deckId;
+            r.amount=found;r.aux=destination;
+            r.visual=History::VisualPolicy::NoVisual;
+            r.payload=History::TransferPayload{r.entityId,r.fromZoneId,r.toZoneId,r.amount,r.aux};
+            History::Writer::Commit(r,model);
+            Integration::ReplayEventBridge::Publish("deck_card_reordered", {
+                {"entityId",targetId},{"deckId",deckId},{"fromIndex",found},
+                {"toIndex",destination},{"absoluteMode",int(absolute)},
+                {"requestedPosition",position},{"verifiedCall",1}});
+        }
         CC_DIAG("CustomComponents/MoveCardInDeck: entity=%d deck=%d %d->%d mode=%s position=%d",
             targetId, deckId, found, destination, absolute ? "Move" : "Add", position);
     }
