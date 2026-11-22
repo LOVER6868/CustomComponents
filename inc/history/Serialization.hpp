@@ -29,13 +29,23 @@ struct Object {
 inline std::string PayloadJson(const Payload& payload){return std::visit([](const auto& p)->std::string{
     using T=std::decay_t<decltype(p)>;
     if constexpr(std::is_same_v<T,std::monostate>)return "{}";
-    else if constexpr(std::is_same_v<T,SwapPayload>)return "{\"firstBefore\":"+Position(p.firstBefore)+",\"firstAfter\":"+Position(p.firstAfter)+",\"secondBefore\":"+Position(p.secondBefore)+",\"secondAfter\":"+Position(p.secondAfter)+",\"firstOwner\":"+std::to_string(p.firstOwner)+",\"secondOwner\":"+std::to_string(p.secondOwner)+",\"ignoreTerrain\":"+(p.ignoreTerrain?"true":"false")+",\"ignoreOccupancy\":"+(p.ignoreOccupancy?"true":"false")+"}";
+    else if constexpr(std::is_same_v<T,SwapPayload>){
+        if(!p.moves.empty()){
+            std::string out="{\"moves\":[";
+            for(const auto& move:p.moves){
+                if(out.back()!='[')out+=',';
+                out+="{\"before\":"+Position(move.before)+",\"after\":"+Position(move.after)+",\"owner\":"+std::to_string(move.owner)+"}";
+            }
+            return out+"]}";
+        }
+        return "{\"firstBefore\":"+Position(p.firstBefore)+",\"firstAfter\":"+Position(p.firstAfter)+",\"secondBefore\":"+Position(p.secondBefore)+",\"secondAfter\":"+Position(p.secondAfter)+",\"firstOwner\":"+std::to_string(p.firstOwner)+",\"secondOwner\":"+std::to_string(p.secondOwner)+",\"ignoreTerrain\":"+(p.ignoreTerrain?"true":"false")+",\"ignoreOccupancy\":"+(p.ignoreOccupancy?"true":"false")+"}";}
     else if constexpr(std::is_same_v<T,DiscardPayload>)return "{\"card\":"+std::to_string(p.card)+",\"owner\":"+std::to_string(p.owner)+",\"hand\":"+std::to_string(p.hand)+",\"pile\":"+std::to_string(p.pile)+",\"concealed\":"+(p.concealed?"true":"false")+"}";
     else if constexpr(std::is_same_v<T,CombatPayload>){Object o;o.Add("phase",p.phase);o.Add("first",p.first);o.Add("second",p.second);o.Add("firstLane",p.firstLane);o.Add("secondLane",p.secondLane);o.Add("laneMode",p.laneMode);o.Add("attackers",p.attackers);o.Add("defenders",p.defenders);o.Add("amounts",p.amounts);o.Add("effectTypes",p.effectTypes);return o.Finish();}
     else if constexpr(std::is_same_v<T,AbilityPayload>){Object o;o.Add("card",p.card);o.Add("ability",p.ability);o.Add("source",p.source);o.Add("duration",p.duration);o.Add("operation",p.operation);o.Add("triggered",p.triggered);o.Add("expired",p.expired);o.Add("encoding",p.encoding);o.Add("before",p.before);o.Add("after",p.after);return o.Finish();}
     else if constexpr(std::is_same_v<T,DeathPayload>){Object o;o.Add("card",p.card);o.Add("damageBefore",p.damageBefore);o.Add("damageAfter",p.damageAfter);o.Add("health",p.health);o.Add("markerRemoved",p.markerRemoved);return o.Finish();}
     else if constexpr(std::is_same_v<T,DamageRulePayload>){Object o;o.Add("rule",p.rule);o.Add("phase",p.phase);o.Add("originalTarget",p.originalTarget);o.Add("target",p.target);o.Add("before",p.before);o.Add("after",p.after);o.Add("cancelled",p.cancelled);return o.Finish();}
     else if constexpr(std::is_same_v<T,HealingPayload>){Object o;o.Add("card",p.card);o.Add("requested",p.requested);o.Add("restored",p.restored);o.Add("bonus",p.bonus);o.Add("queued",p.queued);return o.Finish();}
+    else if constexpr(std::is_same_v<T,TransformDonorPayload>){Object o;o.Add("donor",p.donor);o.Add("target",p.target);o.Add("lane",p.lane);return o.Finish();}
     else if constexpr(std::is_same_v<T,PresentationPayload>){Object o;o.Add("system",p.system);o.Add("phase",p.phase);o.Add("entities",p.entities);o.Add("firstAngle",p.firstAngle);o.Add("secondAngle",p.secondAngle);o.Add("seconds",p.seconds);return o.Finish();}
     else if constexpr(std::is_same_v<T,TransferPayload>){Object o;o.Add("card",p.card);o.Add("from",p.from);o.Add("to",p.to);o.Add("oldIndex",p.oldIndex);o.Add("newIndex",p.newIndex);o.Add("owner",p.owner);o.Add("guid",p.guid);o.Add("order",p.order);o.Add("created",p.created);o.Add("stockRecorded",p.stockRecorded);o.Add("faceDown",p.faceDown);o.Add("teamup",p.teamup);o.Add("aquatic",p.aquatic);return o.Finish();}
     else if constexpr(std::is_same_v<T,VariablePayload>)return "{\"card\":"+std::to_string(p.card)+",\"timed\":"+(p.timed?"true":"false")+",\"before\":"+Quote(p.before)+",\"after\":"+Quote(p.after)+"}";

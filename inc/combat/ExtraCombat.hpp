@@ -502,19 +502,22 @@ inline void GroupTargets(Obj* entity,Obj* context,Obj* result) {
     std::vector<int> removed;
     for(const auto& [first,indices]:groups){
         if(indices.size()<2)continue;
-        std::vector<int> targets;
-        for(int index:indices){const int target=Field(effects->items->m_Items[index],"SecondaryTargetId");if(target>=0)targets.push_back(target);}
-        std::sort(targets.begin(),targets.end(),[&](int a,int b){
-            const int laneA=Field(Engine::EntityAccess::Component(Engine::EntityAccess::Find(model,Lane(model,a)),"Lane"),"CombatOrderIndex");
-            const int laneB=Field(Engine::EntityAccess::Component(Engine::EntityAccess::Find(model,Lane(model,b)),"Lane"),"CombatOrderIndex");
-            return std::pair(laneA>=0?laneA:INT32_MAX,a)<std::pair(laneB>=0?laneB:INT32_MAX,b);
-        });
+        std::vector<std::pair<int,int>> targets;
+        targets.reserve(indices.size());
+        for(int index:indices){
+            const int target=Field(effects->items->m_Items[index],"SecondaryTargetId");
+            if(target<0)continue;
+            auto* lane=Engine::EntityAccess::Find(model,Lane(model,target));
+            const int order=Field(Engine::EntityAccess::Component(lane,"Lane"),"CombatOrderIndex");
+            targets.emplace_back(order>=0?order:INT32_MAX,target);
+        }
+        std::sort(targets.begin(),targets.end());
         targets.erase(std::unique(targets.begin(),targets.end()),targets.end());
         if(targets.empty())continue;
         if(reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity())
             LOG_INFO("CustomComponents/ExtraCombat/MULTI: first=%d secondaryCount=%zu",first,targets.size());
-        Obj* head=effects->items->m_Items[indices.front()];SetField(head,"SecondaryTargetId",targets.front());
-        std::string pending;for(std::size_t i=1;i<targets.size();++i){if(!pending.empty())pending+=',';pending+=std::to_string(targets[i]);}
+        Obj* head=effects->items->m_Items[indices.front()];SetField(head,"SecondaryTargetId",targets.front().second);
+        std::string pending;for(std::size_t i=1;i<targets.size();++i){if(!pending.empty())pending+=',';pending+=std::to_string(targets[i].second);}
         reinterpret_cast<CombatStepEffect*>(head)->SetRemaining(LaneEncounter(Engine::EntityAccess::Find(model,first)) || pending.empty()?nullptr:BNM::CreateMonoString(pending));
         removed.insert(removed.end(),indices.begin()+1,indices.end());
     }
@@ -565,7 +568,8 @@ inline bool Prepare(const Engine::EffectGuards::Context& ctx){
             return false;
         }
     }
-    if(stage==0){
+    switch(stage){
+    case 0: {
         // A single selected opponent means the source fighter attacks it.
         // Explicit two-fighter selections retain their authored order.
         if(!LiveFighter(model,Field(effect,"SecondaryTargetId")) &&
@@ -591,7 +595,9 @@ inline bool Prepare(const Engine::EffectGuards::Context& ctx){
             Presentation::CombatFacing::Queue(model,first,second,false,step->HistoryRecord());
             LOG_ERR("CustomComponents/ExtraCombat: failed to queue start");
         }
-    }else if(stage==1){
+        break;
+    }
+    case 1: {
         RecordEncounter(model,step,"before-combat");
         Dispatch(model,step,"CombatStartTrigger");
         Dispatch(model,step,"LaneCombatStartTrigger");
@@ -599,7 +605,9 @@ inline bool Prepare(const Engine::EffectGuards::Context& ctx){
             Presentation::CombatFacing::Queue(model,step->Read("First"),step->Read("Second"),false,step->HistoryRecord());
             LOG_ERR("CustomComponents/ExtraCombat: failed to queue first strike");
         }
-    }else if(stage==2){
+        break;
+    }
+    case 2: {
         // Before-combat effects have resolved. Retire their casualties through
         // the native discard pipeline before deciding who is still attacking.
         bool disposing=false;
@@ -658,25 +666,34 @@ inline bool Prepare(const Engine::EffectGuards::Context& ctx){
             LOG_ERR("CustomComponents/ExtraCombat: failed to queue combat-end");
         }
         else RecordEncounter(model,step,"attacks-queued",effects);
-    }else if(stage==3){
+        break;
+    }
+    case 3: {
         RecordEncounter(model,step,"attacks-resolved");
         if(!Stage(model,instances,step,4)){
             Presentation::CombatFacing::Queue(model,step->Read("First"),step->Read("Second"),false,step->HistoryRecord());
             RecordEncounter(model,step,"cancelled-enqueue");
             LOG_ERR("CustomComponents/ExtraCombat: failed to queue combat-end");
         }
-    }else if(stage==4){
+        break;
+    }
+    case 4: {
         Presentation::CombatFacing::Queue(model,step->Read("First"),step->Read("Second"),false,step->HistoryRecord());
         RecordEncounter(model,step,"after-combat");
         Dispatch(model,step,"LaneCombatEndTrigger");
         Dispatch(model,step,"CombatEndTrigger");
         if(!Stage(model,instances,step,5))LOG_ERR("CustomComponents/ExtraCombat: failed to queue extra-combat event");
-    }else if(stage==5){
+        break;
+    }
+    case 5: {
         const bool triggerQueued=Dispatch(model,step,"ExtraCombatTrigger");
         RecordEncounter(model,step,"complete");
         ContinueTargets(model,instances,step);
         LOG_INFO("CustomComponents/ExtraCombat: encounter complete first=%d second=%d extraCombatTrigger=%d moveTrigger=0",
             step->Read("First"),step->Read("Second"),int(triggerQueued));
+        break;
+    }
+    default: break;
     }
     // Let native effect processors flush queued trigger data and state checks
     // before the continuation. Suppressing the router delayed start abilities

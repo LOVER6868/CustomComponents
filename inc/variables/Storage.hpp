@@ -37,8 +37,11 @@ inline Component* State(Obj* card,bool create=false){
 }
 inline void (*onVariableOwnerWritten)(Obj*,Obj*)=nullptr;
 inline std::shared_ptr<const Table> Stored(Obj* card){
-    auto* state=State(card);if(!state)return std::make_shared<const Table>();auto cached=tables.Get(state);
-    if(cached.table && ((state->Data && cached.payload && cached.payload->Get()==reinterpret_cast<Obj*>(state->Data)) || (!state->Data && !cached.payload)))return cached.table;
+    static const auto empty=std::make_shared<const Table>();
+    auto* state=State(card);
+    if(!state || !state->Data)return empty;
+    auto cached=tables.Get(state);
+    if(cached.table && cached.payload && cached.payload->Get()==reinterpret_cast<Obj*>(state->Data))return cached.table;
     auto decoded=Decode(Text(state->Data));if(!decoded)return {};
     auto table=std::make_shared<const Table>(std::move(*decoded));tables.Set(state,{state->Data?std::make_shared<Core::ManagedRuntime::Root>(reinterpret_cast<Obj*>(state->Data),true):nullptr,table});return table;
 }
@@ -50,15 +53,15 @@ inline void RecordWrite(Obj* model,Obj* card,bool timed,std::string before,const
 inline bool Write(Obj* model,Obj* card,const Table& table){
     auto encoded=Encode(table);if(encoded.empty())return false;auto* state=State(card,true);if(!state)return false;
     if(onVariableOwnerWritten)onVariableOwnerWritten(model,card);
-    if(Text(state->Data)==encoded)return true;
-    const auto before=Text(state->Data);
+    auto before=Text(state->Data);
+    if(before==encoded)return true;
     Reference(state,&state->Data,BNM::CreateMonoString(encoded));tables.Set(state,{},false);Engine::SimulationChanges::Changed(model);
-    RecordWrite(model,card,false,before,encoded);return true;
+    RecordWrite(model,card,false,std::move(before),encoded);return true;
 }
 struct CachedTimed {std::shared_ptr<Core::ManagedRuntime::Root> payload;std::shared_ptr<const TimedTable> rows;};
 inline Core::WeakObjectSettings<CachedTimed> timedTables;
 inline std::optional<TimedTable> Timed(Obj* card){
-    auto* state=State(card);if(!state)return TimedTable{};
+    auto* state=State(card);if(!state || !state->TimedData)return TimedTable{};
     auto cached=timedTables.Get(state);
     if(cached.rows && ((state->TimedData && cached.payload && cached.payload->Get()==reinterpret_cast<Obj*>(state->TimedData)) || (!state->TimedData && !cached.payload)))return *cached.rows;
     auto decoded=DecodeTimed(Text(state->TimedData));if(!decoded)return {};
@@ -69,10 +72,10 @@ inline std::optional<TimedTable> Timed(Obj* card){
 inline bool WriteTimed(Obj* model,Obj* card,const TimedTable& table){
     auto encoded=EncodeTimed(table);if(encoded.empty())return false;auto* state=State(card,true);if(!state)return false;
     if(onVariableOwnerWritten)onVariableOwnerWritten(model,card);
-    if(Text(state->TimedData)==encoded)return true;
-    const auto before=Text(state->TimedData);
+    auto before=Text(state->TimedData);
+    if(before==encoded)return true;
     Reference(state,&state->TimedData,BNM::CreateMonoString(encoded));Engine::SimulationChanges::Changed(model);
-    RecordWrite(model,card,true,before,encoded);return true;
+    RecordWrite(model,card,true,std::move(before),encoded);return true;
 }
 inline bool ExpireTimed(Obj* model,int duration){
     auto api=Engine::EntityAccess::Api();auto* entities=model && api.entities.IsValid()?api.entities[model].Get():nullptr;

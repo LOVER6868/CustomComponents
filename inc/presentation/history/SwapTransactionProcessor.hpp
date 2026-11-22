@@ -1,6 +1,7 @@
 #pragma once
 // One record, one frontend-owned group. No stock CardMoveRecord substitution.
 #include <BNM/UnityStructures.hpp>
+#include <functional>
 #include "presentation/history/RecordedAnimation.hpp"
 #include "presentation/history/NativeAnimation.hpp"
 #include "engine/EntityAccess.hpp"
@@ -8,7 +9,7 @@ namespace CustomComponents::Presentation::SwapTransactions {
 
 using Obj=BNM::IL2CPP::Il2CppObject;
 struct SwapMove {int card,oldLane,oldOrder,newLane,order;};
-struct SwapRefresh {std::uint64_t model;SwapMove first,second;};
+struct SwapRefresh {std::uint64_t model;std::vector<SwapMove> moves;};
 inline BNM::Method<Obj*> getViewObject,createGroup,createReposition;
 inline BNM::Method<void> removeFromLane,addToLane,addGroupAnimation;
 inline BNM::Method<bool> laneContains;
@@ -19,9 +20,10 @@ inline BNM::Method<BNM::Structures::Unity::Vector3> lanePosition;
 inline std::map<std::uint64_t,std::shared_ptr<Core::ManagedRuntime::Root>> visuals;
 inline bool ApplySwapView(Obj* mapper,const SwapRefresh& swap,std::shared_ptr<Core::ManagedRuntime::Root>& visual) {
     if(!mapper || !getViewObject.IsValid() || !removeFromLane.IsValid() || !addToLane.IsValid() || !laneContains.IsValid())return false;
-    Obj* cards[2]{};Obj* oldLanes[2]{};Obj* newLanes[2]{};
-    const SwapMove moves[2]={swap.first,swap.second};
-    for(int i=0;i<2;++i){
+    const auto& moves=swap.moves;
+    if(moves.size()<2)return false;
+    std::vector<Obj*> cards(moves.size()),oldLanes(moves.size()),newLanes(moves.size());
+    for(std::size_t i=0;i<moves.size();++i){
         auto error=BNM::TryInvoke([&]{
             cards[i]=getViewObject[mapper](moves[i].card);
             oldLanes[i]=getViewObject[mapper](moves[i].oldLane);
@@ -33,30 +35,25 @@ inline bool ApplySwapView(Obj* mapper,const SwapRefresh& swap,std::shared_ptr<Co
             return false;
         }
     }
-    bool removedFirst=false,removedSecond=false,addedFirst=false,addedSecond=false;
+    std::vector<bool> removed(moves.size()),added(moves.size());
+    std::vector<std::size_t> order(moves.size());
+    for(std::size_t i=0;i<order.size();++i)order[i]=i;
     auto error=BNM::TryInvoke([&]{
         // Stock move animations may already have attached either view to its
         // destination. Remove both possible memberships before adding once;
         // AddToLane inserts unconditionally and otherwise duplicates the view.
-        for(int i=0;i<2;++i){
+        for(std::size_t i=0;i<moves.size();++i){
             if(laneContains[oldLanes[i]](cards[i]))removeFromLane[oldLanes[i]](cards[i]);
             if(newLanes[i]!=oldLanes[i] && laneContains[newLanes[i]](cards[i]))removeFromLane[newLanes[i]](cards[i]);
+            removed[i]=true;
         }
-        removedFirst=true;removedSecond=true;
-        // Restore increasing slot order when both destinations share a lane.
-        const bool sameLane=moves[0].newLane==moves[1].newLane;
-        if(sameLane && moves[0].order>moves[1].order){
-            addToLane[newLanes[1]](cards[1],moves[1].order);addedSecond=true;
-            addToLane[newLanes[0]](cards[0],moves[0].order);addedFirst=true;
-        }else{
-            addToLane[newLanes[0]](cards[0],moves[0].order);addedFirst=true;
-            addToLane[newLanes[1]](cards[1],moves[1].order);addedSecond=true;
-        }
+        std::stable_sort(order.begin(),order.end(),[&](auto a,auto b){return moves[a].order<moves[b].order;});
+        for(auto i:order){addToLane[newLanes[i]](cards[i],moves[i].order);added[i]=true;}
     });
-    const bool success=!error.IsValid() && removedFirst && removedSecond && addedFirst && addedSecond;
+    const bool success=!error.IsValid();
     if(success){
         std::vector<Obj*> lanes;
-        for(Obj* lane:{oldLanes[0],oldLanes[1],newLanes[0],newLanes[1]})
+        for(const auto& group:{std::cref(oldLanes),std::cref(newLanes)})for(Obj* lane:group.get())
             if(std::find(lanes.begin(),lanes.end(),lane)==lanes.end())lanes.push_back(lane);
         Obj* factory=laneFactory[newLanes[0]].Get();
         Obj* queue=laneQueue[newLanes[0]].Get();
@@ -68,8 +65,8 @@ inline bool ApplySwapView(Obj* mapper,const SwapRefresh& swap,std::shared_ptr<Co
                 // Native grouping uses the anchor card's owner. The flat
                 // lane pool also contains the opponent and environments.
                 std::vector<Obj*> visited;
-                for(int anchor:{moves[0].card,moves[1].card}){
-                auto* views=Core::Metadata::Bind(laneGroup,lane)(anchor);
+                for(const auto& move:moves){
+                auto* views=Core::Metadata::Bind(laneGroup,lane)(move.card);
                 if(!views || !views->items || views->size<0 || views->size>int(views->items->capacity))continue;
                 for(int i=0;i<views->size;++i){
                     Obj* view=views->items->m_Items[i];if(!view || std::find(visited.begin(),visited.end(),view)!=visited.end())continue;
@@ -93,15 +90,13 @@ inline bool ApplySwapView(Obj* mapper,const SwapRefresh& swap,std::shared_ptr<Co
     }
     if(!success){
         BNM::TryInvoke([&]{
-            if(addedFirst)removeFromLane[newLanes[0]](cards[0]);
-            if(addedSecond)removeFromLane[newLanes[1]](cards[1]);
-            if(removedFirst)addToLane[oldLanes[0]](cards[0],moves[0].oldOrder);
-            if(removedSecond)addToLane[oldLanes[1]](cards[1],moves[1].oldOrder);
+            for(auto i:order)if(added[i])removeFromLane[newLanes[i]](cards[i]);
+            std::stable_sort(order.begin(),order.end(),[&](auto a,auto b){return moves[a].oldOrder<moves[b].oldOrder;});
+            for(auto i:order)if(removed[i])addToLane[oldLanes[i]](cards[i],moves[i].oldOrder);
         });
     }
-    LOG_INFO("CustomComponents/FrontendRefresh: phase=swap-view-applied model=%llu first=%d removed=%d added=%d second=%d removed=%d added=%d success=%d",
-        static_cast<unsigned long long>(swap.model),moves[0].card,int(removedFirst),int(addedFirst),
-        moves[1].card,int(removedSecond),int(addedSecond),int(success));
+    LOG_INFO("CustomComponents/FrontendRefresh: phase=swap-view-applied model=%llu cards=%zu success=%d",
+        static_cast<unsigned long long>(swap.model),moves.size(),int(success));
     return success && visual && visual->Get();
 }
 
@@ -109,9 +104,14 @@ inline HistoryAnimations::Progress Step(const History::Record& record,bool start
     using Progress=HistoryAnimations::Progress;
     auto payload=std::get_if<History::SwapPayload>(&record.payload);if(!payload)return Progress::Failed;
     if(start){
-        SwapRefresh swap{record.modelKey,
-            {payload->firstBefore.card,payload->firstBefore.lane,payload->firstBefore.order,payload->firstAfter.lane,payload->firstAfter.order},
-            {payload->secondBefore.card,payload->secondBefore.lane,payload->secondBefore.order,payload->secondAfter.lane,payload->secondAfter.order}};
+        SwapRefresh swap{record.modelKey,{}};
+        const auto add=[&](const auto& before,const auto& after){
+            swap.moves.push_back({before.card,before.lane,before.order,after.lane,after.order});
+        };
+        if(payload->moves.empty()){
+            add(payload->firstBefore,payload->firstAfter);
+            add(payload->secondBefore,payload->secondAfter);
+        }else for(const auto& move:payload->moves)add(move.before,move.after);
         if(!ApplySwapView(Core::SceneViewContext::RootedMapper(),swap,visuals[record.serial]))return Progress::Failed;
     }
     auto it=visuals.find(record.serial);if(it==visuals.end() || !it->second->Get())return Progress::Failed;

@@ -48,7 +48,7 @@ inline bool ActivePlayerTurn(Obj* model,Obj* card){
 }
 inline std::shared_ptr<const Definition> DefinitionFor(Obj* card){return definitions.Get(Engine::EntityAccess::Component(card,"Level"));}
 inline int Available(Obj* model,int player) {
-    Obj* owner=Engine::EntityAccess::Find(model,player);Obj* counter=Engine::EntityAccess::Component(owner,"SunCounter");auto get=BNM::Class("PvZCards.Core.Systems.Utilities","SunCountCalculator").GetMethod("GetAvailableSun",1).cast<int>();
+    Obj* owner=Engine::EntityAccess::Find(model,player);Obj* counter=Engine::EntityAccess::Component(owner,"SunCounter");static auto get=BNM::Class("PvZCards.Core.Systems.Utilities","SunCountCalculator").GetMethod("GetAvailableSun",1).cast<int>();
     return counter && sunCalculator && sunCalculator->Get() && get.IsValid()?get[sunCalculator->Get()](counter):-1;
 }
 inline int BaseCost(Obj* card) {
@@ -56,12 +56,16 @@ inline int BaseCost(Obj* card) {
     if(Engine::EntityAccess::Component(card,"FreeSunCost") || (selected && selected->InHandSelection && selected->WasFree))return 0;
     Obj* value=Stats::Value(card,"SunCost","SunCostValue");return value?std::max(0,Stats::WithoutLevel(value)):-1;
 }
-inline Quote QuoteFor(Obj* model,Obj* card,int entry) {
-    auto definition=DefinitionFor(card);if(!definition || entry<0 || entry>=int(definition->entries.size()))return {};
-    auto quote=Calculate(definition->entries[entry],BaseCost(card),Available(model,Engine::BoardPlacement::Owner(card)));
+inline Quote QuoteFor(Obj* model,Obj* card,int entry,const Definition& definition) {
+    if(entry<0 || entry>=int(definition.entries.size()))return {};
+    auto quote=Calculate(definition.entries[entry],BaseCost(card),Available(model,Engine::BoardPlacement::Owner(card)));
     const auto delta=std::int64_t(quote.total)-Stats::WithoutLevel(Stats::Value(card,"SunCost","SunCostValue"));if(delta<std::numeric_limits<int>::min() || delta>std::numeric_limits<int>::max())quote.valid=false;
     for(auto item:{std::tuple{"Attack","AttackValue",quote.attack},std::tuple{"Health","MaxHealth",quote.health}})if(Obj* value=Stats::Value(card,std::get<0>(item),std::get<1>(item))){auto total=std::int64_t(Stats::WithoutLevel(value))+std::get<2>(item);if(total<std::numeric_limits<int>::min() || total>std::numeric_limits<int>::max())quote.valid=false;}
     return quote;
+}
+inline Quote QuoteFor(Obj* model,Obj* card,int entry) {
+    const auto definition=DefinitionFor(card);
+    return definition?QuoteFor(model,card,entry,*definition):Quote{};
 }
 inline Obj* HandCard(Obj* model,int id){
     Obj* visible=Engine::EntityAccess::Find(model,id);Obj* projection=Engine::FrontendServices::Projection();

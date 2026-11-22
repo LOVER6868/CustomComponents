@@ -551,9 +551,19 @@ namespace CustomComponents::Systems::CustomFieldBridgeSystem {
         if(pending.empty())return;
         auto targetField=entityComponents;
         auto* components=target && targetField.IsValid()?targetField[target].Get():nullptr;
-        if(components && components->items && components->size>=0 && components->size<=int(components->items->capacity))
-            for(int i=0;i<components->size;++i)if(auto* component=components->items->m_Items[i])
-                for(auto& item:pending)if(!item.target && item.schema->klass==component->klass)item.target=component;
+        if(components && components->items && components->size>=0 && components->size<=int(components->items->capacity)){
+            auto unmatched=pending.size();
+            for(int i=0;i<components->size&&unmatched>0;++i){
+                auto* component=components->items->m_Items[i];
+                if(!component||!schemaIndices.contains(component->klass))continue;
+                const auto entry=std::find_if(pending.begin(),pending.end(),[&](const auto& item){
+                    return !item.target&&item.schema->klass==component->klass;
+                });
+                if(entry==pending.end())continue;
+                entry->target=component;
+                --unmatched;
+            }
+        }
         // Stock has now created/copied the destination Components list.
         // Repair ONLY exact registered custom component types.
         for (auto& entry : pending) {

@@ -11,6 +11,7 @@ The short guides in `docs/` explain how to use the module. These pages are for t
 | Healing by damage taken, overhealing and swapping | [Healing and swapping](healing-and-swap.md) |
 | Lane targeting, damage abilities and cost durations | [Lane and damage](lane-and-damage.md) |
 | Deck, discard, creation and return effects | [Zone effects](zone-effects.md) |
+| Transform an in-play fighter using a second fighter | [Transform into an existing fighter](transform-existing.md) |
 | Trick play restrictions | [Play requirements](play-requirements.md) |
 | UI, heralds and card frames | [Presentation](presentation.md) |
 | Runtime settings | [Configuration](configuration.md) |

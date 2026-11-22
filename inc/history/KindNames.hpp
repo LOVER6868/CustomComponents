@@ -23,6 +23,7 @@ inline const char* KindName(Kind kind){
     case Kind::DamageRule:return "DamageRule";
     case Kind::HealingRule:return "HealingRule";
     case Kind::PresentationEvent:return "PresentationEvent";
+    case Kind::TransformDonorConsumed:return "TransformDonorConsumed";
     }
     return "Unknown";
 }

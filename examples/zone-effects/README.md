@@ -1,5 +1,7 @@
 # Zones and physical cards
 
+For creation with heralds, see [Create a Zombie as a 1/1](create-zombie-as-one-one.json) and [Create a random Zombie fighter as a 1/1](create-zombie-subset-as-one-one.json).
+
 Most of these move existing cards in and out of the deck, discard pile or board. The subset-creation recipes instead make new cards from definitions. See [zone effect reference](../../docs/reference/zone-effects.md).
 
 ## Start with these

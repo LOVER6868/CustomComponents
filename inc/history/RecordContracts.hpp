@@ -3,6 +3,10 @@
 namespace CustomComponents::History {
 inline bool ValidPayload(const Record& record){
     switch(record.kind){
+    case Kind::TransformDonorConsumed:{
+        auto* p=std::get_if<TransformDonorPayload>(&record.payload);
+        return p && p->donor>=0 && p->target>=0 && p->lane>=0 && p->donor!=p->target;
+    }
     case Kind::SwapTransaction:return std::holds_alternative<SwapPayload>(record.payload);
     case Kind::ZoneTransfer:{
         auto* p=std::get_if<TransferPayload>(&record.payload);

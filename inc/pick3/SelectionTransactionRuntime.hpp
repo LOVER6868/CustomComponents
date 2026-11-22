@@ -105,8 +105,11 @@ inline void AttachAutomaticEffects(Obj* model,int effect,int source,int target,i
     if(!choice->model) return;
     std::lock_guard<std::mutex> guard(automaticLock);
     if(automaticRoots.size()+list->size>Transaction::capacity) return;
-    for(const auto& root:automaticRoots) for(int i=0;i<list->size;++i)
-        if(GC::getGCHandle(root.handle)==list->items->m_Items[i]) return; // nested creator observers see the same list
+    for(const auto& root:automaticRoots){
+        Obj* existing=GC::getGCHandle(root.handle);
+        if(std::find(list->items->m_Items,list->items->m_Items+list->size,existing)
+           !=list->items->m_Items+list->size)return; // nested creator observers see the same list
+    }
     for(int i=0;i<list->size;++i) {
         auto h=GC::newGCHandle(list->items->m_Items[i],false);
         if(h) automaticRoots.push_back({h,choice,Key(choice->model,list->items->m_Items[i])});

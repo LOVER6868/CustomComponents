@@ -14,11 +14,18 @@ Use stock `GrantAbilityEffectDescriptor` with `GrantableAbilityType` set to a re
 | `Multishot` | 24 | Use the game's multishot attack marker |
 | `AttacksOnlyInAdjacentLanes` | 25 | Use the game's adjacent-lane marker |
 | `SelfTeleport` | 26 | Permit extra phases for that specific card |
-| `OverhealToHealth` | Custom registered ability | Turn excess healing into a stock health buff |
+| `OverhealToHealth` | 27 | Turn excess healing into a stock health buff |
+| `ExtraDrawPerTurn` | 35 | Increase the receiving player's turn-start draw count |
 
 Armor also uses the game’s normal special-ability icon. Charge keeps its value in inherited counters; active counter values add together. Thrash sends excess resolved fighter damage to the hero opposing the damage source, including when the damage source hits itself. No overflow means no extra damage.
 
 Common durations are `Permanent`, `EndOfTurn`, and `NextFighter`. Numeric grants can use `ModifyOperation: "Add"` or `"Set"`; marker abilities ignore the number. Use `RemoveGrantAbilityEffectDescriptor` with `Mode: "All"` to remove even innate state, or `Mode: "SourceAndDuration"` to remove only one source's grant. Ordinary duration expiry still works. The stock descriptor’s removal path is also used when continuous effects expire; explicit removals create the same kind of runtime removal effect. Generated runtime-effect shapes are for inspection, not card authoring. See [removal examples](../../examples/abilities/removal/README.md).
+
+## ExtraDrawPerTurn
+
+Target a player with a normal grant. A positive `AbilityValue` adds that many cards to the stock turn-start draw while the grant is active. A permanent grant applies on later turns. Opening hands, mulligans, ability draws and superpower draws use their existing rules.
+
+[Player grant example](../../examples/abilities/grant-extra-draw-per-turn.json)
 
 ## RandomKeyword
 

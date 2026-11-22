@@ -74,7 +74,7 @@ struct QueryScope {
         // The one-argument database finder discards the caller's live context.
         // Use its contextual overload for picked GUIDs and source variables.
         auto type=BNM::Class(database?"PvZCards.Core.Utilities":"PvZCards.Engine",database?"CardDatabase":"EntityFinder");
-        auto find=type.GetMethod("FindEntities",2).cast<Engine::EntityAccess::List*>();
+        auto find=type.GetMethod("FindEntities",{"query","context"}).cast<Engine::EntityAccess::List*>();
         Obj* owner=database?Engine::BoardPlacement::Database():Finder(NativeContextModel(context));if(!owner || !find.IsValid())return {};list=find[owner](query,context);
         Core::ManagedRuntime::Root result(reinterpret_cast<Obj*>(list));if(!Engine::EntityAccess::Valid(list) || list->size>20000)return {};return {list->items->m_Items,list->items->m_Items+list->size};
     }

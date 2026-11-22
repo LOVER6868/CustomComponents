@@ -1,6 +1,7 @@
 #include "diagnostics/DiagnosticLogging.hpp"
 #include "engine/SubsetSelection.hpp"
 #include "effects/SubsetPlacementPolicy.hpp"
+#include "effects/CreationHerald.hpp"
 #include "core/HookRegistry.hpp"
 #pragma once
 // Stock creation adapter: observe the chosen GUID, verify the returned card,
@@ -217,7 +218,10 @@ static void PlaceSourceHook(void* self, Obj* card, Obj* effect, const void* meth
     static auto modelField=BNM::Class("PvZCards.Core.Utilities","EntityUtils").GetField("<Model>k__BackingField").cast<Obj*>();
     auto uf=utilityField;auto mf=modelField;Obj* utility=self && uf.IsValid()?uf[static_cast<Obj*>(self)].Get():nullptr;
     Obj* model=utility && mf.IsValid()?mf[utility].Get():nullptr;
-    if(model && Engine::EntityAccess::Find(model,Id(card))==card)BindProducedCard(card,effect,model);
+    if(model && Engine::EntityAccess::Find(model,Id(card))==card){
+        BindProducedCard(card,effect,model);
+        Effects::CreationHerald::Apply(model,card,effect);
+    }
     if (ShouldLog()) CC_SELECTION_DIAG("CustomComponents/Pick3/CREATION_TRACE: boundary=PLACE_SOURCE effect=%p entity=%p entityId=%d note=placed-creation-source", effect, card, Id(card));
 }
 static void TransformCardHook(void* self, Obj* card, int guid, int effectEntityId, const void* method) {

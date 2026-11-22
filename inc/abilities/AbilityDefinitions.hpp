@@ -11,6 +11,7 @@
 #include "abilities/OverhealToHealth.hpp"
 #include "abilities/CombatModifiers.hpp"
 #include "abilities/LaneAttacks.hpp"
+#include "abilities/ExtraDrawPerTurn.hpp"
 #include "abilities/Charge.hpp"
 #include "abilities/Thrash.hpp"
 #include "core/AbilityRegistry.hpp"
@@ -44,7 +45,7 @@ namespace CustomComponents::AbilityDefinitions {
     }
 
     inline bool Initialize() {
-        if(!Abilities::LaneAttacks::Initialize())return false;
+        if(!Abilities::LaneAttacks::Initialize() || !Abilities::ExtraDrawPerTurn::Initialize())return false;
         auto entity = BNM::Class("PvZCards.Engine", "Entity");
         auto charge = BNM::Class("PvZCards.Engine.Components", "Charge");
         auto thrash = BNM::Class("PvZCards.Engine.Components", "Thrash");

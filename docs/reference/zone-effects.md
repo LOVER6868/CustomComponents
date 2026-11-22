@@ -14,6 +14,12 @@ The main distinction is whether an effect moves a card that already exists or cr
 
 `DrawCardFromSubsetInDeckEffectDescriptor` tutors an existing deck card using a subset query. `SubsetQueryUsesEntities` selects live-card predicates; `PluckFailSafe: false` fizzles without a match, while true permits the stock fallback. `HeraldEntities` refers to the delivered card, and its `ids` use effect-entity indices within the same descriptor. `CreateCardInDeckFromSubsetEffectDescriptor` instead samples a *definition* and inserts new copies. `CreateCardFromSubsetEffectDescriptor` can apply Team-Up/Aquatic options or choose front/back placement, subject to the stock system's legal-lane checks.
 
+### Creation heralds
+
+Both `CreateCardEffectDescriptor` and `CreateCardFromSubsetEffectDescriptor` can run herald effects against the new card. Place `HeraldEntities` on the creating effect entity. Put the herald rows in the same `EffectEntitiesDescriptor` and list their zero-based row indices in `ids`. A herald can set Attack and Health individually with two `SetStatEffectDescriptor` components.
+
+[Fixed creation example](../../examples/zone-effects/create-zombie-as-one-one.json) · [Subset creation example](../../examples/zone-effects/create-zombie-subset-as-one-one.json).
+
 Use database queries when sampling definitions, and physical zone queries when choosing exact deck/discard members. If you need a picked physical card later, store its entity ID rather than assuming any copy of its GUID is equivalent.
 
 [Zone-effect examples](../../examples/zone-effects/README.md) · [Drawing examples](../../examples/draw-effects/README.md) · [Deck-order examples](../../examples/deck-order/README.md)

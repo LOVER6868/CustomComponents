@@ -8,6 +8,7 @@ A card can have an innate component, or another effect can grant that ability fo
 - [Charge innate](charge-innate.json)
 - [Thrash grant](grant-thrash.json)
 - [Random keyword grant](grant-random-keyword.json)
+- [Grant the Plant player one extra draw each turn](grant-extra-draw-per-turn.json)
 - [Withering in hand](withering-hand-innate.json)
 - [Spend-all Level](level-spend-all-x.json)
 

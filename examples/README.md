@@ -10,13 +10,13 @@ When an example includes an effect entity, keep its nested `components` array in
 | --- | --- |
 | [abilities](abilities/README.md) | Innate abilities, grants, removal and Level choices |
 | [variables](variables/README.md) | Counters, arrays, expressions and multipliers |
-| [new-card-features](new-card-features/README.md) | Full heal, overheal and position swapping |
+| [new-card-features](new-card-features/README.md) | Healing, lane shuffles and fighter transformation |
 | [card-features](card-features/README.md) | Base stats, comparisons, tags and subtypes |
 | [pick-from-three](pick-from-three/README.md) | Card and definition selection, additional targets |
 | [queries](queries/README.md) | Deck/discard, placement, Level and identity checks |
 | [play-requirements](play-requirements/README.md) | Trick requirements and Level gates |
 | [zone-effects](zone-effects/README.md) | Discard, return, create and play-from-deck |
-| [draw-effects](draw-effects/README.md) | Tutor cards from a deck subset |
+| [draw-effects](draw-effects/README.md) | Deck tutors and draw modifiers |
 | [deck-order](deck-order/README.md) | Move cards to deck positions |
 | [triggers](triggers/README.md) | Named, discard, return and picked-card events |
 | [templates](templates/README.md) | Larger setups and variants |

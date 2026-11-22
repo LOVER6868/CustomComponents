@@ -97,23 +97,28 @@ inline int FirstLegalFallback(Obj* model,Obj* effectEntity,const std::vector<int
     if(!model || !effectEntity || !options.pluckFailSafe || laneIds.empty())return -1;
     using Key=std::tuple<Core::ModelRegistry::Token,std::uint64_t,int,int,int,int>;
     static thread_local std::map<Key,bool> cache;
-    auto contextType=BNM::Class("PvZCards.Engine","EntityQueryContext");
-    auto getSource=contextType.GetMethod("get_SourceId",0).cast<int>();
-    auto getTarget=contextType.GetMethod("get_TargetId",0).cast<int>();
+    static const auto fallbackContextType=BNM::Class("PvZCards.Engine","EntityQueryContext");
+    static auto getSource=fallbackContextType.GetMethod("get_SourceId",0).cast<int>();
+    static auto getTarget=fallbackContextType.GetMethod("get_TargetId",0).cast<int>();
     Key key{Core::ModelRegistry::Identify(model,true),Engine::SimulationChanges::Revision(model),
         Engine::Match::Id(effectEntity),-1,context && getSource.IsValid()?getSource[context]():-1,
         context && getTarget.IsValid()?getTarget[context]():-1};
     std::vector<std::pair<Key,Obj*>> pending;
+    pending.reserve(laneIds.size());
+    int cachedLegalLane=-1;
     for(int laneId:laneIds){
         if(laneId<0)continue;
         auto laneKey=key;std::get<3>(laneKey)=laneId;
         if(auto found=cache.find(laneKey);found!=cache.end()){
-            if(found->second)return laneId;
+            if(found->second){
+                cachedLegalLane=laneId;
+                break;
+            }
             continue;
         }
         if(auto* lane=Engine::EntityAccess::Find(model,laneId))pending.emplace_back(laneKey,lane);
     }
-    if(pending.empty())return -1;
+    if(pending.empty())return cachedLegalLane;
     Obj* instances=Engine::Match::Instances(effectEntity);
     auto copy=Core::ManagedQuery::CopyMethod();
     Obj* query=options.subsetQuery && copy.IsValid()?copy(options.subsetQuery,instances):BuildFallbackQuery(effectEntity,instances);
@@ -122,7 +127,7 @@ inline int FirstLegalFallback(Obj* model,Obj* effectEntity,const std::vector<int
     auto ownedContext=context?std::shared_ptr<Core::ManagedRuntime::Root>{}:Engine::BoardPlacement::Context(model,effectEntity);
     if(!context && ownedContext)context=ownedContext->Get();
     auto database=Engine::BoardPlacement::Database(effectEntity);
-    auto find=BNM::Class("PvZCards.Core.Utilities","CardDatabase").GetMethod("FindEntities",2).cast<Obj*>();
+    static auto find=BNM::Class("PvZCards.Core.Utilities","CardDatabase").GetMethod("FindEntities",2).cast<Obj*>();
     Obj* found=nullptr;int legalLane=-1;
     if(context && database && find.IsValid()){
         const auto started=std::chrono::steady_clock::now();
@@ -149,7 +154,7 @@ inline int FirstLegalFallback(Obj* model,Obj* effectEntity,const std::vector<int
     }
     auto giveBack=Core::ManagedQuery::ReturnMethod();
     if(giveBack.IsValid())giveBack(query,instances);
-    return legalLane;
+    return legalLane>=0?legalLane:cachedLegalLane;
 }
 inline bool HasLegalFallback(Obj* model,Obj* effectEntity,int laneId,Obj* context=nullptr){
     return FirstLegalFallback(model,effectEntity,{laneId},context)>=0;

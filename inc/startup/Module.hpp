@@ -1,12 +1,8 @@
 #pragma once
+
 #include <bloom/bloom.h>
 #include "../CustomComponents.hpp"
-#include "queries/IgnoreCheatTagQuery.hpp"
-#include "queries/SuperpowerDeckQueries.hpp"
-#include "zones/PreDiscardSystem.hpp"
-#include "zones/CreateSuperpowerSubset.hpp"
-#include "abilities/TriggeredAbilityGrants.hpp"
-#include "presentation/SuperpowerDeckPresentation.hpp"
+
 namespace CustomComponents::Startup {
     // ----------------------------------------------------------------------------
     // Module startup
@@ -325,6 +321,7 @@ namespace CustomComponents::Startup {
         if(!CustomComponents::Abilities::OverhealToHealth::InitializeSystem()){LOG_ERR("CustomComponents: OverhealToHealth hook initialization failed");return;}
         if(!CustomComponents::Abilities::CombatModifiers::InitializeHooks(BLOOM_CONFIG_BOOL("NonCombatTruestrike","UseTruestrikeIcons",false))){LOG_ERR("CustomComponents: damage/buff modifier hook initialization failed");return;}
         if(!CustomComponents::CostModifierLifetime::Initialize()){LOG_ERR("CustomComponents: cost modifier lifetime hook initialization failed");return;}
+        if(!CustomComponents::Effects::TransformExisting::Initialize()) LOG_ERR("CustomComponents: TransformExisting initialization failed");
         if(!CustomComponents::Effects::SwapPosition::Initialize()){LOG_ERR("CustomComponents: SwapPosition effect initialization failed");return;}
         CustomComponents::Presentation::CombatFacing::enabled=BLOOM_CONFIG_BOOL("CombatPresentation","RotateFighters",true);
         if(!CustomComponents::Presentation::CombatFacing::Initialize())LOG_ERR("CustomComponents: combat-facing presentation initialization failed");

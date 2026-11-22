@@ -5,6 +5,7 @@
 #include "presentation/CardReadiness.hpp"
 #include "presentation/HeroHealthPresentation.hpp"
 #include "core/HookRegistry.hpp"
+#include "core/MatchRecorderPresentationObserver.hpp"
 #include "core/WeakObjectSettings.hpp"
 #include "diagnostics/DiagnosticLogging.hpp"
 
@@ -380,7 +381,9 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
         const auto n = ++coreTraceCount;
         if (n <= 300) CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/BRIDGETRACE: FACTORY ENTER seq=%llu factory=%p group=%d card=%d records=%p death=%d",
             static_cast<unsigned long long>(n), self, groupId, cardId, records, static_cast<int>(death));
+        CustomComponents::Core::ObserveReplayPresentation(death?"ability-factory-death":"ability-factory",self,records,groupId,cardId);
         Obj* result = originalCreateAbilityCore(self, groupId, cardId, records, death, method);
+        CustomComponents::Core::ObserveReplayPresentation("ability-factory-result",self,result,groupId,cardId);
         if (n <= 300) CUSTOMCOMPONENTS_ZTAP_TRACE("CustomComponents/ZoneTriggeredAbilityPresentation/BRIDGETRACE: FACTORY EXIT seq=%llu animation=%p group=%d card=%d",
             static_cast<unsigned long long>(n), result, groupId, cardId);
         return result;
@@ -918,8 +921,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
     }
 
     inline void FlushCompletedIdleLaneFrames(Obj* queue) {
-        if (!queue || !queueAnimations.IsValid() || !queueFrontAnimations.IsValid() ||
-            !Presentation::StatQueue::CaughtUp(queue)) return;
+        if (!queue || !queueAnimations.IsValid() || !queueFrontAnimations.IsValid()) return;
         bool hasReady = false;
         for (const auto& entry : pendingIdleLaneFrames)
             if (entry.model && entry.completed &&
@@ -927,7 +929,7 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
                 hasReady = true;
                 break;
             }
-        if (!hasReady) return;
+        if (!hasReady || !Presentation::StatQueue::CaughtUp(queue)) return;
         // The stock IsEmpty implementation only checks the normal list in
         // this binary. Also require FrontAnimations to be empty so a queued
         // follow-up buff is not visually pre-applied or duplicated.

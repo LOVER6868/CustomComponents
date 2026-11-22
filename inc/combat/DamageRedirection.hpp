@@ -121,7 +121,19 @@ static bool InFront(Obj* query,Obj* candidate,Obj* context,const void* method){
     for(int i=0;i<ids->size;++i){
         Obj* lane=Engine::EntityAccess::Component(Engine::EntityAccess::Find(model,ids->items->m_Items[i]),"Lane");
         auto* cards=lane?Core::Metadata::Bind(fighters,lane)(owner):nullptr;
-        if(Engine::EntityAccess::Valid(cards) && cards->size && cards->items->m_Items[0]==target){
+        if(!Engine::EntityAccess::Valid(cards))continue;
+        const int victim=Core::Metadata::Bind(effectTarget,incoming).Get();
+        int firstEligible=-1;
+        for(int j=0;j<cards->size;++j){
+            const int id=cards->items->m_Items[j];
+            if(id==victim)continue;
+            auto* fighter=Engine::EntityAccess::Find(model,id);
+            if(!fighter||!Engine::EntityAccess::Component(fighter,"Health")||
+               Engine::EntityAccess::Component(fighter,"MarkedForDeath"))continue;
+            firstEligible=id;
+            break;
+        }
+        if(firstEligible==target){
             ++frontAccepted;
             if(diagnosticBudget.fetch_add(1)<128)
                 LOG_INFO("CustomComponents/DamageRedirect/FRONT_ACCEPT: target=%d originalVictim=%d contextSelf=%d lane=%d owner=%d",

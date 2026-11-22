@@ -20,3 +20,11 @@ policy. These are swap options, not global changes to movement rules.
 
 Ignoring occupancy can intentionally create board arrangements that ordinary play
 would reject. The transaction records both options alongside both placements.
+
+## Random lane shuffle
+
+`SwapRandomlyEffectDescriptor` uses the resolved primary targets. Use an `All` primary filter for the fighters you want to shuffle. Each selected face-up fighter must land in a different lane on its own side of the board.
+
+Terrain and team-up rules apply to the whole final arrangement. If there are fewer than two fighters or no complete legal assignment, no fighters move. A successful shuffle uses one transaction for live animation and replay.
+
+[Shuffle example](../examples/new-card-features/swap-randomly.json).

@@ -12,9 +12,11 @@
 #include "core/FrontendTickDispatcher.hpp"
 #include "core/SceneViewContext.hpp"
 #include "engine/MatchAccess.hpp"
+#include "engine/HandPlayability.hpp"
 #include <BNM/BasicMonoStructures.hpp>
 #include <BNM/Class.hpp>
 #include <BNM/Field.hpp>
+#include <BNM/Exceptions.hpp>
 #include <cstdint>
 #include <cmath>
 #include <string>
@@ -112,10 +114,38 @@ inline void OnSettled(Obj* model){
     // is coalesced to the owning frontend's next tick.
     if(reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity())historyDirty=true;
 }
+inline void CaptureHandPlayabilityImpl(Obj* command){
+    namespace Hand=Engine::HandPlayability;
+    if(!MatchRecorder::IsRecording()||Hand::dirty)return;
+    auto* game=Engine::FrontendServices::Game();
+    static auto model=BNM::Class("PvZCards.Game","HighlightPlayableCardsCommand")
+        .GetField("<GameModel>k__BackingField").cast<Obj*>();
+    static auto playerId=BNM::Class("PvZCards.Core.Utilities","GameModel").GetField("LocalPlayerId").cast<int>();
+    if(!command||!game||!model.IsValid()||model[command].Get()!=game||!playerId.IsValid())return;
+    const int input=Hand::InputState();
+    if(input<0)return;
+    std::vector<int> playable;
+    if(Hand::DisplayAllowed(input)){
+        auto* cache=Hand::Cache();
+        using IdList=BNM::Structures::Mono::List<int>;
+        static auto cards=BNM::Class("PvZCards.Game","PlayCache").GetField("PlayableCards").cast<IdList*>();
+        auto* list=cache&&cards.IsValid()?cards[cache].Get():nullptr;
+        if(!list||list->size<0||list->size>128)return;
+        if(list->size>0){
+            if(!list->items||list->size>list->GetCapacity())return;
+            playable.assign(list->GetData(),list->GetData()+list->size);
+        }
+    }
+    MatchRecorder::RecordHandPlayability(playerId[game].Get(),playable);
+}
+inline void CaptureHandPlayability(Obj* command){
+    BNM::TryInvoke([&]{CaptureHandPlayabilityImpl(command);});
+}
 inline bool Register(){
     return ReplayVisualProvider::Register() && MatchRecorder::RegisterExtension("CustomComponents",&Capture)
         && Engine::SimulationChanges::settled.Add(&OnSettled)
-        && Core::FrontendTickDispatcher::additionalPresentationTicks.Add(FlushHistory);
+        && Core::FrontendTickDispatcher::additionalPresentationTicks.Add(FlushHistory)
+        && Engine::HandPlayability::afterHighlight.Add(CaptureHandPlayability);
 }
 }
 

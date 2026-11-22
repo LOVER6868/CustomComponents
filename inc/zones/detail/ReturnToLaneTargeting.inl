@@ -62,13 +62,25 @@ inline std::optional<FighterStage> GetStage(Obj* finder,Obj* model){
     if(it==stageByFinder.end() || !model || it->second.token!=Core::ModelRegistry::Identify(model,false))return {};
     return it->second;
 }
+inline bool UsesFighterPair(Obj* effect){
+    return FindComponent(effect,"CombatEffectDescriptor") ||
+        FindComponent(effect,"TransformCardIntoExistingCardEffectDescriptor");
+}
+inline bool AllowsTransformFallback(Obj* effect){
+    static auto flag=BNM::Class("PvZCards.Engine.Components","TransformCardIntoExistingCardEffectDescriptor")
+        .GetField("PluckFailSafe").cast<bool>();
+    static auto query=BNM::Class("PvZCards.Engine.Components","TransformIntoCardFromSubsetEffectDescriptor")
+        .GetField("SubsetQuery").cast<Obj*>();
+    auto* descriptor=FindComponent(effect,"TransformCardIntoExistingCardEffectDescriptor");
+    return descriptor && flag.IsValid() && query.IsValid() && flag[descriptor].Get() && query[descriptor].Get();
+}
 struct SwapScope {
     Obj* previous=activeSwapModel;
     Obj* previousEffect=activeSwapEffect;
     Obj* previousCombat=activeCombatModel;
     explicit SwapScope(Obj* effect,Obj* context) {
         const bool swap=FindComponent(effect,"SwapPositionEffectDescriptor")!=nullptr;
-        const bool combat=FindComponent(effect,"CombatEffectDescriptor")!=nullptr;
+        const bool combat=UsesFighterPair(effect);
         Obj* model=context && queryModel.IsValid()?queryModel[context].Get():nullptr;
         activeSwapModel=swap?model:nullptr;activeSwapEffect=swap?effect:nullptr;
         activeCombatModel=combat?model:nullptr;
@@ -325,7 +337,7 @@ static Obj* Primary(Obj* finder,Obj* effect,Obj* context,const void* method) {
     }
     // The primary and secondary filters need not describe the same set.
     // Check each primary against its own possible partner, not primary count.
-    if(isCombat || isSwap){
+    if((isCombat || isSwap) && !AllowsTransformFallback(effect)){
         Obj* secondQuery=FighterFilterQuery(effect,true);
         Obj* association=FindComponent(effect,"EffectEntity");
         const int actor=association && ownerSource.IsValid()?ownerSource[association].Get():-1;
@@ -393,7 +405,7 @@ static Obj* SecondaryPair(Obj* finder,int first,Obj* secondaryTargets,Obj* valid
     }
     Obj* effect=FindEntity(model,stage->effectId);
     if(!effect || (stage->swap && !FindComponent(effect,"SwapPositionEffectDescriptor")) ||
-       (stage->combat && !FindComponent(effect,"CombatEffectDescriptor"))){
+       (stage->combat && !UsesFighterPair(effect))){
         Stage(finder,model,effect,false,false);return originalSecondaryPair(finder,first,secondaryTargets,validator,method);
     }
     Obj* selected=FindEntity(model,first);
@@ -442,7 +454,7 @@ static Obj* FighterUiTargets(void* rawFinder,void* rawBlocking,const void*){
     Obj* effect=model?FindEntity(model,effectId):nullptr;
     if(!effect)return nullptr;
     const bool swap=FindComponent(effect,"SwapPositionEffectDescriptor")!=nullptr;
-    const bool combat=FindComponent(effect,"CombatEffectDescriptor")!=nullptr;
+    const bool combat=UsesFighterPair(effect);
     if(!swap && !combat){Stage(finder,model,effect,false,false);return nullptr;}
     if(phase==0){
         const int source=blockerSource[blocking].Get();
@@ -451,7 +463,7 @@ static Obj* FighterUiTargets(void* rawFinder,void* rawBlocking,const void*){
         if(!context.context||!query)return nullptr;
         auto ids=EnumerateFighters(model,query,context.context,swap);
         auto* second=FighterFilterQuery(effect,true);
-        std::erase_if(ids,[&](int first){
+        if(!AllowsTransformFallback(effect))std::erase_if(ids,[&](int first){
             if(!second)return swap||!Engine::FighterPair::Legal(model,source,first);
             Variables::QueryScope pair({model,source,first,effectId,nullptr,nullptr});
             return !pair.context||EnumerateFighters(model,second,pair.context,swap,first,effect).empty();
@@ -566,7 +578,7 @@ static bool FighterShouldChooseSecondary(void* self,int first,void* rawFilter,vo
         Obj* effect=entities->items->m_Items[i];
         if(!effect)continue;
         const bool swap=FindComponent(effect,"SwapPositionEffectDescriptor")!=nullptr;
-        const bool combat=FindComponent(effect,"CombatEffectDescriptor")!=nullptr;
+        const bool combat=UsesFighterPair(effect);
         if(!swap && !combat)continue;
         if(FindComponent(effect,"SecondaryTargetFilter")!=filter)continue;
         if(!EligibleFighter(model,selected,swap))continue;

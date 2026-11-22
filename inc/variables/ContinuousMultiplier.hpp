@@ -55,12 +55,38 @@ static void Check(Obj* system, Obj* entity, Obj* context, const void* method) {
     }
     originalCheck(system, entity, context, method);
 }
+inline BNM::Class modifyCost;
+inline BNM::Field<int> costDelta;
+inline bool PrepareCost(const Engine::EffectGuards::Context& incoming) {
+    Obj* effect=incoming.effect;
+    if(!effect || !BNM::IsA(effect,modifyCost))return true;
+    Obj* model=Core::ModelRegistry::Get(Engine::RouterContext::RouterModel(incoming.router));
+    const int id=Field(effect,"EffectEntityId");
+    Obj* ability=Find(model,id);
+    if(!ability || !Engine::EntityAccess::Component(ability,"Continuous") ||
+       !Engine::EntityAccess::Component(ability,"VariableMultiplier"))return true;
+
+    const int target=Field(effect,"TargetId");
+    const int source=ResolveSource(model,Source(ability),id,target);
+    const auto factor=BindingFactor({model,source,target,id,effect},ability);
+    const auto amount=std::int64_t(costDelta[effect].Get())*factor.value_or(0);
+    // A zero modifier can still produce a stock cost animation. Skip it so
+    // an empty query leaves both the hand and stock history untouched.
+    CC_DIAG("CustomComponents/ContinuousMultiplier/COST: effect=%d target=%d factor=%d delta=%lld",
+        id,target,factor.value_or(0),static_cast<long long>(amount));
+    if(!amount || amount<INT32_MIN || amount>INT32_MAX)return false;
+    costDelta[effect].Set(static_cast<int>(amount));
+    return true;
+}
 inline bool Initialize() {
     const auto type = BNM::Class("PvZCards.Engine.Components", "ContinuousMultiplierState");
     const auto system = BNM::Class("PvZCards.Core.Systems", "ContinuousEffectSystem");
     remover = system.GetField("<EffectRemover>k__BackingField").cast<Obj*>();
     removeActive = BNM::Class("PvZCards.Core.Systems.Utilities", "ContinuousEffectRemover").GetMethod("RemoveActiveEffects", 1).cast<void>();
+    modifyCost=BNM::Class("PvZCards.Engine.Effects","ModifySunCostEffect");
+    costDelta=modifyCost.GetField("SunCostDelta").cast<int>();
     return type.IsValid() && remover.IsValid() && removeActive.IsValid() &&
+        modifyCost.IsValid() && costDelta.IsValid() && Engine::EffectGuards::RegisterPreparation(PrepareCost) &&
         CustomComponentRegistry::Register({"ContinuousMultiplierState", "PvZCards.Engine.Components", "EngineLib.dll",
             "MarkerComponent", "PvZCards.Engine.Components", "EngineLib.dll"}) &&
         Core::ComponentLifecycle::Patch(type, BNM::Class("PvZCards.Engine.Components", "MarkerComponent")) &&

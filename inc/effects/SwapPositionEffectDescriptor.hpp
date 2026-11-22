@@ -23,6 +23,10 @@
 #include "variables/Resolver.hpp"
 #include "log.h"
 #include <cstdint>
+#include <charconv>
+#include <numeric>
+#include "engine/EffectCreationEvents.hpp"
+#include "core/ManagedReference.hpp"
 
 namespace CustomComponents::Effects::SwapPosition {
 using Obj=BNM::IL2CPP::Il2CppObject;
@@ -251,6 +255,7 @@ inline bool Prepare(const Engine::EffectGuards::Context& c){
         static_cast<void*>(c.effect),static_cast<void*>(model),Variables::Field(c.effect,"TargetId"),Variables::Field(c.effect,"SecondaryTargetId"));
     return false; // Custom effect is not a native single-card MoveCardToLanesEffect.
 }
+#include "effects/SwapRandomly.inl"
 inline bool Initialize(){
     auto descriptor=BNM::Class("PvZCards.Engine.Components","SwapPositionEffectDescriptor");
     auto runtime=BNM::Class("PvZCards.Engine.Effects","SwapPositionEffect");
@@ -268,6 +273,6 @@ inline bool Initialize(){
             BNM::Class("PvZCards.Engine.Components","EffectDescriptor"),"ToEffect",2) &&
         Engine::AbilityConversion::Add(Convert) &&
         Engine::FrontendStateRefresh::Initialize() &&
-        Engine::EffectGuards::RegisterPreparation(Prepare,-27);
+        Engine::EffectGuards::RegisterPreparation(Prepare,-27) && Random::Initialize();
 }
 }

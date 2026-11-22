@@ -25,7 +25,7 @@ struct Animation {
 inline std::unordered_map<int,Animation> animations;
 // Called at the owning queue's retirement boundary. A false result retains
 // the hand view until the native tween reports completion.
-inline bool BeforeRetire(Obj* queue,Obj* mapper,int id,Obj* hand=nullptr,bool owned=false){
+inline bool BeforeRetire(Obj* queue,Obj* mapper,int id,Obj* hand=nullptr,bool owned=false,Obj* ownedView=nullptr){
     const auto current=Core::SceneViewContext::ModelIdentity();
     if(scene!=current){animations.clear();scene=current;}
     static auto tween=BNM::Class("PvZCards.Game","TweenCardEffectAnimation");
@@ -33,6 +33,7 @@ inline bool BeforeRetire(Obj* queue,Obj* mapper,int id,Obj* hand=nullptr,bool ow
     bool popupFinished=false;
     static auto mapped=BNM::Class("PvZCards.Game","EntityViewMapper").GetMethod("GetViewObject",{std::string_view("entityId")}).cast<Obj*>();
     Obj* currentView=mapper && mapped.IsValid()?Core::Metadata::Bind(mapped,mapper)(id):nullptr;
+    if(!currentView)currentView=ownedView;
     if(auto found=animations.find(id);found!=animations.end()){
         const auto& state=found->second;
         if(state.model!=current || (currentView && state.view!=reinterpret_cast<std::uintptr_t>(currentView))){
@@ -82,7 +83,8 @@ inline bool BeforeRetire(Obj* queue,Obj* mapper,int id,Obj* hand=nullptr,bool ow
        !create.IsValid() || !card.IsValid() || !target.IsValid() || !scale.IsValid() || !duration.IsValid() || !yield.IsValid() || !add.IsValid())return true;
     Obj* view=nullptr;
     auto lookup=BNM::TryInvoke([&]{view=Core::Metadata::Bind(get,mapper)(id);});
-    if(lookup.IsValid() || !view)return true;
+    if(!view)view=ownedView;
+    if((lookup.IsValid() && !ownedView) || !view)return true;
     Obj* factory=Engine::FrontendServices::Provide(BNM::Class("PvZCards.Game","EffectAnimationFactory"),Engine::FrontendServices::Game());
     if(!factory)return true;
     Obj* animation=Core::Metadata::Bind(create,factory)();
@@ -130,7 +132,13 @@ inline bool BeforeRetire(Obj* queue,Obj* mapper,int id,Obj* hand=nullptr,bool ow
         reinterpret_cast<std::uintptr_t>(hand),current,popup?Phase::Lift:Phase::Shrink,
         startPosition,destination,startScale,targetScale};
     Diagnostics::HistoryTrace::Animation(popup?"DISCARD_LIFT_ENQUEUE":"DISCARD_SHRINK_ENQUEUE",queue,animation,"TweenCardEffectAnimation",id);
-    if(owned)NativeAnimation::Call(animation,"Start");else Core::Metadata::Bind(add,queue)(animation);
+    if(owned){
+        if(!NativeAnimation::Call(animation,"Start")){
+            animations.erase(id);
+            LOG_WARN("CustomComponents/Discard/RECORD_TWEEN_START_FAILED: card=%d",id);
+            return true;
+        }
+    }else Core::Metadata::Bind(add,queue)(animation);
     LOG_INFO("CustomComponents/Discard/%s: card=%d view=%p hand=%p viewId=%d nativeCompletion=1 from=(%.3f,%.3f,%.3f) to=(%.3f,%.3f,%.3f) scale=(%.3f,%.3f,%.3f)->(%.3f,%.3f,%.3f)",
         popup?"LIFT_BEGIN":"SHRINK_BEGIN",id,view,hand,viewId,
         startPosition.x,startPosition.y,startPosition.z,destination.x,destination.y,destination.z,

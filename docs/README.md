@@ -1,16 +1,12 @@
 # Documentation
 
-See [Replay release candidate](REPLAY_RELEASE.md) for the discard boundary,
-end-of-turn Withering, singleton swap and before-combat casualty changes.
+Start with [Getting started](GETTING_STARTED.md), the [feature list](FEATURES.md), or the [card examples](../examples/README.md).
 
-See [Custom history records](history/RECORDS_V2.md) for recorder integration and
-[swap options](SWAP.md) for destination-rule overrides.
+[Custom history records](history/RECORDS_V2.md) covers recorder integration. The [replay release notes](REPLAY_RELEASE.md) summarize earlier changes to discard, Withering, swap and combat.
 
 For release testing and a single combined log capture, use [Release validation](RELEASE_VALIDATION.md).
 
 For contributors, read [Making a component](MAKING_COMPONENTS.md). Coding agents should also read the [agent workflow](agents/COMPONENT_WORKFLOW.md).
-
-If you're new to the module, read [Getting started](GETTING_STARTED.md). Otherwise, the [feature list](FEATURES.md) is the quickest way to find a component and its example.
 
 The longer guides cover systems that affect several parts of card authoring: [Level](LEVEL.md), [variables](VARIABLES.md), and [PickFromThree](PICKFROMTHREE.md).
 

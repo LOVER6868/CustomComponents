@@ -204,22 +204,33 @@ namespace CustomComponents::Systems::DiscardFromHandPresentationSystem {
         if(hand && getHandId.IsValid() && getHandId[hand]()==handId){activeOpponentHand=hand;return hand;}
         return nullptr;
     }
+    inline void CancelDiscard(const History::Record& record);
     inline Presentation::HistoryAnimations::Progress StepDiscard(const History::Record& record,bool start){
         using Progress=Presentation::HistoryAnimations::Progress;
-        if(start)Queue(record.fromZoneId,record.entityId,record.model,record.serial);
+        if(start){
+            Queue(record.fromZoneId,record.entityId,record.model,record.serial);
+            CC_DIAG("CustomComponents/DiscardFromHand/RECORD_START: serial=%llu card=%d hand=%d anchor=%d",
+                static_cast<unsigned long long>(record.serial),record.entityId,record.fromZoneId,record.stockHistoryAnchor);
+        }
         Obj* mapper=CurrentSceneMapper();Obj* hand=HandFor(record.fromZoneId);
         Obj* queue=Engine::FrontendServices::Provide(BNM::Class("PvZCards.Game","EffectAnimationQueue"),Engine::FrontendServices::Game());
         if(!mapper || !hand || !queue)return Progress::Failed;
         auto& visual=recordVisuals[record.serial];
         if(start){
             Obj* view=getMappedView.IsValid()?getMappedView[mapper](record.entityId):nullptr;
-            if(!view){History::Transition(record.serial,History::Delivery::SkippedNoVisual,History::Reason::MissingView);return Progress::Complete;}
+            if(!view && originalFind)view=originalFind(hand,record.entityId,nullptr);
+            if(!view){
+                CancelDiscard(record);
+                History::Transition(record.serial,History::Delivery::SkippedNoVisual,History::Reason::MissingView);
+                return Progress::Complete;
+            }
             visual.view=std::make_shared<Core::ManagedRuntime::Root>(view);
         }
         if(!visual.retiring){
             Obj* current=getMappedView[mapper](record.entityId);
+            if(!current && originalFind)current=originalFind(hand,record.entityId,nullptr);
             if(!visual.view || current!=visual.view->Get()){History::Fail(record.serial,History::Reason::ViewReplaced);return Progress::Failed;}
-            if(!Presentation::DiscardCardAnimation::BeforeRetire(queue,mapper,record.entityId,hand,true))return Progress::Running;
+            if(!Presentation::DiscardCardAnimation::BeforeRetire(queue,mapper,record.entityId,hand,true,current))return Progress::Running;
             Ticket ticket{};bool found=false;
             {std::lock_guard<std::mutex> guard(ticketMutex);
                 for(auto t:waitingForPresentation)if(t.recordSerial==record.serial){ticket=t;found=true;break;}
@@ -399,7 +410,7 @@ namespace CustomComponents::Systems::DiscardFromHandPresentationSystem {
             if(!cardView && t.recordSerial && recordVisuals.contains(t.recordSerial) && mappedBefore &&
                reinterpret_cast<std::uintptr_t>(mappedBefore)==t.viewIdentity)cardView=mappedBefore;
             if(t.modelToken!=reinterpret_cast<std::uintptr_t>(model) ||
-               (t.viewIdentity && reinterpret_cast<std::uintptr_t>(mappedBefore)!=t.viewIdentity)){
+               (t.viewIdentity && reinterpret_cast<std::uintptr_t>(mappedBefore?mappedBefore:cardView)!=t.viewIdentity)){
                 LOG_WARN("CustomComponents/DiscardFromHand/RETIRE_IDENTITY_MISMATCH: ticket=%llu card=%d model=%p expectedModel=%p view=%p expectedView=%p",
                     t.serial,t.cardId,model,reinterpret_cast<void*>(t.modelToken),mappedBefore,
                     reinterpret_cast<void*>(t.viewIdentity));

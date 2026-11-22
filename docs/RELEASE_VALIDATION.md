@@ -1,5 +1,12 @@
 # Release validation
 
+## New effect smoke tests
+
+- Grant an extra draw to one player. Confirm the opening mulligan is unchanged and that the extra draw starts at the next stock turn-start draw. Remove the grant and verify the count returns to normal.
+- Create a fixed Zombie and a random Zombie as 1/1 fighters. Check that both stat effects hit the new card once.
+- Shuffle two and three face-up fighters. Verify every selected fighter changes lanes, including after seeking in replay. Try an impossible water or team-up arrangement and confirm none of the selected fighters moves.
+- Transform with `MakeACopy` on and off. Check donor presence, the survivor's lane and replay state, the no-donor subset fallback, and the optional play trigger. Verify that transforming emits no move trigger and consuming emits no death or discard trigger.
+
 The module contains shared fixes and bounded traces for damage blocking, swap presentation, variable snapshots, deck fallback, and AI choices. Combat is always available. Device text-file switches are unsupported.
 
 Run `sprig.ps1 lint CustomComponents`, build, then capture a complete match. A passing build verifies C++ and metadata, not animation timing or game decisions.

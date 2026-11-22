@@ -170,16 +170,13 @@
             if (!markedHand || actualSource != static_cast<int>(DiscardedSystem::Source::Hand)) {
                 LOG_ERR("CustomComponents/DiscardFromHand/DISCARDED: HAND SOURCE MARK FAILED card=%d; suppress trigger", cardId);
                 // Zone transfer already succeeded. Do not attempt to reverse it.
-                DiscardFromHandPresentationSystem::Queue(before.handId,cardId,reinterpret_cast<std::uintptr_t>(model));
-                return;
+                // Presentation still needs the committed zone transfer record.
             }
 
             // The custom record below owns presentation of this committed transfer.
             CC_DIAG("CustomComponents/DiscardFromHand: MODEL SUCCESS card=%d owner=%d hand=%d pile=%d; recording frontend transfer",
                 cardId, before.ownerId, before.handId, before.pileId);
-            // A hand discard is part of turn-end effect processing. Do
-            // not remove its hand view until the presentation queue is idle.
-            // The frontend also releases ordinary discard tickets after stock presentation.
+
             // Native custom record is the authoritative hand->pile mutation
             // evidence. Its frontend processor, not the simulation hook, queues
             // the card-bound discard animation once stock history reaches it.
@@ -211,7 +208,8 @@
                 } else LOG_INFO("CustomComponents/Records/HAND_DISCARD: committed serial=%llu card=%d historyAnchor=%d",(unsigned long long)serial,cardId,r.stockHistoryAnchor);
             }
 
-            CustomTriggerSystem::FireDiscardOutsidePlay(effect);
+            if(markedHand && actualSource==static_cast<int>(DiscardedSystem::Source::Hand))
+                CustomTriggerSystem::FireDiscardOutsidePlay(effect);
             return;
         }
 

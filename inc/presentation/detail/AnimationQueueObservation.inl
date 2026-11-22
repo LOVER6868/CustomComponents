@@ -82,6 +82,7 @@
     // These are stock-initiated calls only. Never invoke animation methods from
     // the picker, and never hold gameplay progression in a diagnostic hook.
     static void QueueAddAnimationHook(void* self, Obj* animation, const void* method) {
+        CustomComponents::Core::ObserveReplayPresentation("queue-add",self,animation);
         Diagnostics::HistoryTrace::Animation("ENQUEUE",self,animation,animation && animation->klass?animation->klass->name:nullptr);
         if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualQueueGate::ObserveEnqueue(self, animation, false);
         if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualBarrierTracker::Enqueue(self, animation);
@@ -90,6 +91,7 @@
         frameStatsDirty = true;
     }
     static void QueueAddFrontAnimationHook(void* self, Obj* animation, const void* method) {
+        CustomComponents::Core::ObserveReplayPresentation("queue-front",self,animation);
         Diagnostics::HistoryTrace::Animation("ENQUEUE_FRONT",self,animation,animation && animation->klass?animation->klass->name:nullptr);
         if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualQueueGate::ObserveEnqueue(self, animation, true);
         if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualBarrierTracker::Enqueue(self, animation);
@@ -98,6 +100,7 @@
         frameStatsDirty = true;
     }
     static void QueueStartAnimationHook(void* self, Obj* animation, const void* method) {
+        CustomComponents::Core::ObserveReplayPresentation("queue-start",self,animation);
         Diagnostics::HistoryTrace::Animation("START",self,animation,animation && animation->klass?animation->klass->name:nullptr);
         if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualQueueGate::ObserveStart(self, animation);
         if constexpr(Diagnostics::kSelectionTrace) ::CustomComponents::Presentation::Pick3VisualBarrierTracker::Start(self, animation);

@@ -17,6 +17,10 @@ This is a map of the card-authoring features, not a list of internal runtime com
 | Heal by each recipient's missing health | `HealEffectDescriptor` + `VariableMultiplier` | [Healing](reference/healing-and-swap.md) |
 | Convert excess healing to health buffs | Grantable `OverhealToHealth` | [Healing](reference/healing-and-swap.md) |
 | Exchange two fighters' board positions | `SwapPositionEffectDescriptor` | [Swapping](reference/healing-and-swap.md) |
+| Shuffle selected fighters across different lanes | `SwapRandomlyEffectDescriptor` | [Random lane shuffle](SWAP.md#random-lane-shuffle) |
+| Transform, copy or consume an in-play donor | `TransformCardIntoExistingCardEffectDescriptor` | [Transform](reference/transform-existing.md) |
+| Increase player turn-start draws | Grantable `ExtraDrawPerTurn` | [Ability grants](reference/abilities.md#extradrawperturn) |
+| Change stats on creation | `HeraldEntities` with a creation descriptor | [Creation heralds](reference/zone-effects.md#creation-heralds) |
 | Fire or listen for custom events | Custom trigger components | [Abilities and triggers](reference/abilities.md) |
 | Use a card-local extra play window | `SelfTeleport` | [Abilities](reference/abilities.md#selfteleport) |
 | Change card frames, heralds and stat icons | Presentation extensions | [Presentation](reference/presentation.md) |
