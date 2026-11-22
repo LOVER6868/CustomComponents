@@ -256,14 +256,15 @@ inline bool Prepare(const Engine::EffectGuards::Context& context){
         if(!table)++missingStore;if(!value)++missingValue;
         if(table && value){if(auto n=value->Integer()){auto total=std::int64_t(*n)*Multiplier(c,context.effect);if(total<INT32_MIN || total>INT32_MAX)value={};else value->items[0]=int(total);}if(value){
                 auto duration=Text(spec->Duration,"Permanent"),operation=Text(spec->Operation,"Set");
-                if(duration=="Permanent"){
+                const int durationId=Engine::EffectDurations::Parse(duration);
+                if(durationId==Engine::EffectDurations::Permanent){
                     auto next=*table;if(Assign(next,Text(spec->Variable),*value,operation) && Write(model,owner,next)){applied=true;if(onVariableAssigned)onVariableAssigned(model,owner,Text(spec->Variable));}
-                }else if(duration=="EndOfTurn" || duration=="NextFighter"){
+                }else if(Engine::EffectDurations::Timed(durationId)){
                     // Timed mutations are reversible overlays; no reset effect is necessary.
                     // Non-numeric timed operations are rejected rather than corrupting saved values.
                     auto amount=value->Integer();auto entries=Timed(owner);
                     if(amount && entries && entries->size()<256 && (operation=="Set" || operation=="Add" || operation=="Subtract")){
-                        entries->push_back({Text(spec->Variable),operation,duration=="EndOfTurn"?1:2,*amount});
+                        entries->push_back({Text(spec->Variable),operation,durationId,*amount});
                         if(WriteTimed(model,owner,*entries)){applied=true;if(onVariableAssigned)onVariableAssigned(model,owner,Text(spec->Variable));}
                         else ++failedWrite;
                     } else ++missingTimed;

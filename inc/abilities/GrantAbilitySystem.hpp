@@ -1,4 +1,4 @@
-#include "engine/AbilityDurationEvents.hpp"
+#include "engine/EffectDurations.hpp"
 #include "effects/RemoveGrantAbilityEffectDescriptor.hpp"
 #include "abilities/WitheringSystem.hpp"
 #include "core/HookRegistry.hpp"
@@ -39,7 +39,7 @@ namespace CustomComponents::GrantAbility {
         auto* model = grantModel[self].Get();
         auto* target = model ? entityById[model](targetId[effect].Get()) : nullptr;
         const int duration = grantDuration[effect].Get();
-        if (duration < 0 || duration > 2) {
+        if (!Engine::EffectDurations::Known(duration)) {
             LOG_ERR("CustomComponents/GrantAbility: unsupported duration %d", duration); return;
         }
         const auto historyBefore=Abilities::GrantHistory::Capture(static_cast<BNM::IL2CPP::Il2CppObject*>(target),*adapter);
@@ -221,11 +221,9 @@ namespace CustomComponents::GrantAbility {
             [&] { if(effect && removeDuration[effect].Get()==Effects::AbilityRemoval::Complete)RemoveCompletely(self,effect);else Abilities::RandomKeyword::Remove(self,effect,[&]{RemoveHookImpl(self,effect,method);}); });
     }
 
-    inline void Expire(void* finder, void* remover, int duration) {
+    inline void ExpireModel(void* model,void* remover,int duration) {
         Core::Performance::Scope timing(Core::Performance::Area::AbilityExpiry);
-        if (!finder) return;
-        auto modelField=finderModel;
-        auto* model = modelField[finder].Get();
+        if(!model || !remover)return;
         auto api=Engine::EntityAccess::Api();
         auto* list = model ? api.entities[model].Get() : nullptr;
         if (!Engine::EntityAccess::Valid(list)) return;
@@ -240,6 +238,57 @@ namespace CustomComponents::GrantAbility {
                 RemoveCustomAbility(remover, entity, adapter, duration, 0, true);
             });
         }
+    }
+
+    inline void Expire(void* finder,void* remover,int duration){
+        auto modelField=finderModel;
+        ExpireModel(finder?modelField[finder].Get():nullptr,remover,duration);
+    }
+    // Stock abilities and custom abilities share the same EffectDuration enum,
+    // but the stock systems only scan EndOfTurn and NextFighter. At new boundaries
+    // use the real stock remover for built-in GrantableAbility components, which
+    // also creates the normal AbilityRemovedRecord for replay/presentation.
+    inline void ExpireStock(Engine::EffectDurations::Obj* model,void* remover,int duration){
+        if(!model || !remover)return;
+        static auto resolve=BNM::Class("PvZCards.Core.Utilities","GrantableAbilityTypeUtils")
+            .GetMethod("GetComponentType",1).cast<BNM::MonoType*>();
+        static auto tryRemove=BNM::Class("PvZCards.Core.Systems","GrantableAbilityRemover")
+            .GetMethod("TryRemoveAbility",2).cast<void>();
+        if(!resolve.IsValid() || !tryRemove.IsValid())return;
+        auto api=Engine::EntityAccess::Api();
+        auto* entities=api.entities.IsValid()?api.entities[model].Get():nullptr;
+        if(!Engine::EntityAccess::Valid(entities))return;
+        auto removeDuration=GrantableAbilityRuntime::removeAllCountersForDuration;
+        for(int i=0,n=entities->size;i<n;++i){
+            auto* entity=entities->items->m_Items[i];if(!entity)continue;
+            for(int ability=1;ability<=18;++ability){
+                auto* type=resolve[static_cast<void*>(nullptr)](ability);
+                if(!type)continue;
+                auto* component=Engine::Match::Component(entity,type,false);
+                if(!component || !GrantableAbilityRuntime::HasDuration(component,duration))continue;
+                removeDuration[component](duration);
+                tryRemove[remover](entity,component);
+            }
+        }
+    }
+    inline void ExpireAdditional(Engine::EffectDurations::Obj* model,int duration){
+        if(duration<=2 || !Engine::EffectDurations::Known(duration))return;
+        auto api=Engine::EntityAccess::Api();
+        auto* list=model && api.entities.IsValid()?api.entities[model].Get():nullptr;
+        if(!Engine::EntityAccess::Valid(list))return;
+        Engine::EffectDurations::Obj* instances=nullptr;
+        for(int i=0;i<list->size && !instances;++i)
+            instances=Engine::Match::Instances(list->items->m_Items[i]);
+        auto root=Engine::Match::Service(instances,
+            BNM::Class("PvZCards.Core.Systems","GrantableAbilityRemover"));
+        if(!root || !root->Get()){
+            LOG_ERR("CustomComponents/Duration: missing GrantableAbilityRemover duration=%d",duration);return;
+        }
+        ExpireModel(model,root->Get(),duration);
+        ExpireStock(model,root->Get(),duration);
+        Abilities::RandomKeyword::Expire(model,duration);
+        if(!Core::Performance::aiDepth)
+            Systems::ZoneTriggeredAbilityPresentationSystem::frameStatsDirty=true;
     }
 
     static void TurnEndHook(void* self, void* effect, const void* method) {
@@ -260,14 +309,14 @@ namespace CustomComponents::GrantAbility {
         if(!Core::Performance::aiDepth)Systems::ZoneTriggeredAbilityPresentationSystem::frameStatsDirty=true;
         Expire(turnFinder[self].Get(), turnRemover[self].Get(), 1);
         Abilities::RandomKeyword::Expire(static_cast<Abilities::RandomKeyword::Obj*>(model),1);
-        Engine::AbilityDurationEvents::expire.Notify(model,1);
+        Engine::EffectDurations::Emit(model,1);
     }
     static void NextFighterHook(void* self, const void* method) {
         originalNextFighter(self, method); Systems::ZoneTriggeredAbilityPresentationSystem::frameStatsDirty=true; Expire(nextFinder[self].Get(), nextRemover[self].Get(), 2);
         auto* finder=nextFinder[self].Get();
         auto* model=static_cast<BNM::IL2CPP::Il2CppObject*>(finder?finderModel[finder].Get():nullptr);
         Abilities::RandomKeyword::Expire(model,2);
-        Engine::AbilityDurationEvents::expire.Notify(model,2);
+        Engine::EffectDurations::Emit(model,2);
     }
 
     inline bool Initialize() {
@@ -400,6 +449,8 @@ namespace CustomComponents::GrantAbility {
             LOG_ERR("CustomComponents/GrantAbility: NextFighterAbilityRemovalSystem::AttemptEffectRemoval hook failed");
             return false;
         }
+
+        if(!Engine::AbilityDurationEvents::expire.Add(ExpireAdditional))return false;
 
         CC_DIAG(
             "CustomComponents/GrantAbility: registry-driven Grant + Remove + "

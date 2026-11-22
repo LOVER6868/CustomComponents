@@ -21,6 +21,7 @@
 // Engine access and gameplay integration
 #include "engine/AiPerformance.hpp"
 #include "engine/EntityAccess.hpp"
+#include "engine/EffectDurations.hpp"
 #include "engine/SubsetSelection.hpp"
 
 // Diagnostics (loaded before ability systems that use tracing)

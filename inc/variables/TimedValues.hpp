@@ -1,11 +1,12 @@
 #pragma once
 #include "variables/Values.hpp"
+#include "engine/EffectDurations.hpp"
 namespace CustomComponents::Variables {
 // Expiring operations are stored separately from permanent variable values.
-// Duration 0 = Permanent, 1 = EndOfTurn, 2 = NextFighter.
+// Shared EffectDurations registry supplies all temporary lifetimes.
 struct TimedOperation {std::string name;std::string operation;int duration=0;int amount=0;bool operator==(const TimedOperation&)const=default;};
 using TimedTable=std::vector<TimedOperation>;
-inline bool ValidTimed(const TimedOperation& v){return Name(v.name) && (v.operation=="Set" || v.operation=="Add" || v.operation=="Subtract") && (v.duration==1 || v.duration==2);}
+inline bool ValidTimed(const TimedOperation& v){return Name(v.name) && (v.operation=="Set" || v.operation=="Add" || v.operation=="Subtract") && Engine::EffectDurations::Timed(v.duration);}
 inline std::string EncodeTimed(const TimedTable& rows){
     if(rows.size()>256)return {};std::string out="T1;";
     for(auto& row:rows){if(!ValidTimed(row))return {};out+=row.name+":"+row.operation+":"+std::to_string(row.duration)+":"+std::to_string(row.amount)+";";}

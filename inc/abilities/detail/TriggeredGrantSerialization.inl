@@ -6,10 +6,8 @@ inline void Properties(Obj* object,Obj* properties){
     if(!duration && !operation)return;
     Options value;value.enabled=true;
     const auto d=Text(duration),op=Text(operation);
-    if(!duration || d=="Permanent" || d=="0")value.duration=0;
-    else if(d=="EndOfTurn" || d=="UntilEndOfTurn" || d=="1")value.duration=1;
-    else if(d=="NextFighter" || d=="UntilNextFighter" || d=="2")value.duration=2;
-    else {LOG_ERR("CustomComponents/TriggeredGrant: unsupported Duration=%s",d.c_str());value.enabled=false;}
+    value.duration=duration?Engine::EffectDurations::Parse(d):0;
+    if(value.duration<0){LOG_ERR("CustomComponents/TriggeredGrant: unsupported Duration=%s",d.c_str());value.enabled=false;}
     if(!operation)value.operation=0;
     else if(op=="Set" || op=="1")value.operation=1;
     else if(op=="Add" || op=="2")value.operation=2;

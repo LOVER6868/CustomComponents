@@ -62,10 +62,11 @@ inline void Apply(Obj* model,Obj* instances,Obj* effect,std::string_view event,u
         if(counter->EventQuery){auto matches=BNM::Class(counter->EventQuery).GetMethod("Matches",2).cast<bool>();
             if(!target || !matches.IsValid() || !Core::Metadata::Bind(matches,counter->EventQuery)(target,context))continue;}
         bool success=false;const auto name=Text(counter->Variable);const auto duration=Text(counter->Duration,"EndOfTurn");
-        if(duration=="Permanent"){
+        const int durationId=Engine::EffectDurations::Parse(duration);
+        if(durationId==Engine::EffectDurations::Permanent){
             auto values=Stored(owner);if(values){Table updated=*values;if(Assign(updated,name,Value{Kind::Int,{counter->Amount}},"Add"))success=Write(model,owner,updated);}
-        }else if(duration=="EndOfTurn" || duration=="NextFighter"){
-            auto values=Timed(owner);if(values && values->size()<256){values->push_back({name,"Add",duration=="EndOfTurn"?1:2,counter->Amount});success=WriteTimed(model,owner,*values);}
+        }else if(Engine::EffectDurations::Timed(durationId)){
+            auto values=Timed(owner);if(values && values->size()<256){values->push_back({name,"Add",durationId,counter->Amount});success=WriteTimed(model,owner,*values);}
         }
         if(success){std::lock_guard<std::mutex> guard(commitLock);committed[key]=serial;
             static std::atomic<unsigned> samples{0};if(samples.fetch_add(1)<160)LOG_INFO("CustomComponents/Variables/EVENT_COUNTER: event=%s serial=%llu owner=%d variable=%s amount=%d",std::string(event).c_str(),serial,Engine::Match::Id(owner),name.c_str(),counter->Amount);}

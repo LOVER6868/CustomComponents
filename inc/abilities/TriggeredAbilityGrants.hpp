@@ -8,6 +8,7 @@
 #include "core/CustomComponentRegistry.hpp"
 #include "core/NativeConstruction.hpp"
 #include "engine/AbilityDurationEvents.hpp"
+#include "engine/EffectDurations.hpp"
 #include "engine/EffectContinuations.hpp"
 #include "engine/ZoneChanges.hpp"
 #include "engine/SimulationChanges.hpp"

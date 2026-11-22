@@ -299,6 +299,9 @@ namespace CustomComponents::Startup {
             }
             LOG_INFO("CustomComponents/Pick3/ENUM: registered PickFromThree=3 UniqueGuidTargets=4 CardDatabase=5; RandomTargets legacy alias=3");
         }
+        if (!CustomComponents::Engine::EffectDurations::RegisterEnums()) {
+            LOG_ERR("CustomComponents: shared effect-duration registration failed");return;
+        }
         if (!CustomComponents::EnumSerializationSupport::Initialize()) {
             LOG_ERR("CustomComponents: shared enum deserialization initialization failed");
             return;
@@ -321,6 +324,9 @@ namespace CustomComponents::Startup {
         if(!CustomComponents::Abilities::OverhealToHealth::InitializeSystem()){LOG_ERR("CustomComponents: OverhealToHealth hook initialization failed");return;}
         if(!CustomComponents::Abilities::CombatModifiers::InitializeHooks(BLOOM_CONFIG_BOOL("NonCombatTruestrike","UseTruestrikeIcons",false))){LOG_ERR("CustomComponents: damage/buff modifier hook initialization failed");return;}
         if(!CustomComponents::CostModifierLifetime::Initialize()){LOG_ERR("CustomComponents: cost modifier lifetime hook initialization failed");return;}
+        if(!CustomComponents::Engine::EffectDurations::Initialize()){
+            LOG_ERR("CustomComponents: central duration phase hook initialization failed");return;
+        }
         if(!CustomComponents::Effects::TransformExisting::Initialize()) LOG_ERR("CustomComponents: TransformExisting initialization failed");
         if(!CustomComponents::Effects::SwapPosition::Initialize()){LOG_ERR("CustomComponents: SwapPosition effect initialization failed");return;}
         CustomComponents::Presentation::CombatFacing::enabled=BLOOM_CONFIG_BOOL("CombatPresentation","RotateFighters",true);

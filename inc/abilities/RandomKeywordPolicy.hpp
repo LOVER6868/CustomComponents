@@ -3,6 +3,7 @@
 #include <string>
 #include <charconv>
 #include <optional>
+#include "engine/EffectDurations.hpp"
 namespace CustomComponents::Abilities::KeywordPolicy {
 struct Option {int mask,type,value;const char* component;};
 inline constexpr Option options[]={{1,19,1,"Armor"},{2,17,0,"Untrickable"},{4,4,0,"Truestrike"},{8,5,0,"Strikethrough"},{16,2,0,"Deadly"},{32,3,0,"Frenzy"}};
@@ -15,7 +16,7 @@ inline std::vector<Given> Decode(const std::string& text) {
         const char* cursor=text.data()+start;const char* limit=text.data()+end;Given entry{};bool valid=true;
         int* fields[]={&entry.source,&entry.type,&entry.duration};
         for(int i=0;i<3;++i) {auto parsed=std::from_chars(cursor,limit,*fields[i]);if(parsed.ec!=std::errc{} || parsed.ptr==cursor){valid=false;break;}cursor=parsed.ptr;if(i<2){if(cursor==limit || *cursor++!=':'){valid=false;break;}}}
-        if(valid && cursor==limit && entry.source>=0 && Known(entry.type) && entry.duration>=0 && entry.duration<=2)result.push_back(entry);
+        if(valid && cursor==limit && entry.source>=0 && Known(entry.type) && Engine::EffectDurations::Known(entry.duration))result.push_back(entry);
         start=end+1;
     }
     return result;

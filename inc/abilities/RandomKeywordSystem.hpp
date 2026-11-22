@@ -1,4 +1,5 @@
 #include "abilities/RandomKeywordPolicy.hpp"
+#include "engine/EffectDurations.hpp"
 #pragma once
 #include "history/DomainRecords.hpp"
 #include <cstdio>
@@ -54,7 +55,7 @@ template<class Run> void Grant(void* system,void* effectPointer,Run run) {
     if(!system || !grantModel.IsValid() || !effectTarget.IsValid() || !effectSource.IsValid() || !grantDuration.IsValid() || !grantValueGet.IsValid() || !grantValueSet.IsValid())return;
     Obj* target=Engine::EntityAccess::Find(grantModel[system].Get(),effectTarget[effect].Get());if(!target)return;
     int value=grantValueGet[effect](),pool=value,source=effectSource[effect].Get(),duration=grantDuration[effect].Get();
-    if(source<0 || duration<0 || duration>2)return;
+    if(source<0 || !Engine::EffectDurations::Known(duration))return;
     if(pool==0) pool=Engine::EntityAccess::Component(target,"Zombies")?63:15;
     if(pool<0)return;
     auto open=KeywordPolicy::Eligible(pool,[&](const auto& option){return Has(target,option);});
