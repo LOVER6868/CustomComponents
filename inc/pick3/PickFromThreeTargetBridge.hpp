@@ -501,6 +501,9 @@ inline std::vector<RuntimeManualOverride> runtimeOverrides;
 struct DatabaseQueryOverride {
     int effectId, groupId;
     std::uint32_t filterRoot, queryRoot;
+    // Retain the pooled lane query through the asynchronous selection phase.
+    // Erasure returns it after RestoreDatabaseOverride restores the filter.
+    std::shared_ptr<Core::ManagedRuntime::Root> proxy;
 };
 inline std::vector<DatabaseQueryOverride> databaseQueryOverrides;
 inline int LogicalSelectionMode(Obj* filter) {
@@ -577,7 +580,7 @@ inline Obj* OriginalDatabaseQuery(Obj* filter, int effectId, int groupId) {
     }
     return filter && targetFilterQuery.IsValid() ? targetFilterQuery[filter].Get() : nullptr;
 }
-inline bool RedirectDatabaseTargetQuery(Obj* filter, int effectId, int groupId) {
+inline bool RedirectDatabaseTargetQuery(Obj* filter, int effectId, int groupId, Obj* model) {
     if (!filter || !targetFilterQuery.IsValid() ||
         !additionalTargetQuery.IsValid() || !additionalTargetType.IsValid() ||
         !onlyApplyToAdditionalTargets.IsValid() ||
@@ -595,7 +598,7 @@ inline bool RedirectDatabaseTargetQuery(Obj* filter, int effectId, int groupId) 
     // lane query is evaluated by BeginAdditional after the player picks a card.
     std::shared_ptr<Core::ManagedRuntime::Root> deferredProxy;
     if(AdditionalSelection::DefersPickedLane(filter)) {
-        deferredProxy=AdditionalSelection::LaneProxy();
+        deferredProxy=AdditionalSelection::LaneProxy(model);
         if(!deferredProxy)return false;
         recipientQuery=deferredProxy->Get();
     }
@@ -609,7 +612,7 @@ inline bool RedirectDatabaseTargetQuery(Obj* filter, int effectId, int groupId) 
         if (queryRoot) release(queryRoot);
         return false;
     }
-    databaseQueryOverrides.push_back({effectId, groupId, filterRoot, queryRoot});
+    databaseQueryOverrides.push_back({effectId, groupId, filterRoot, queryRoot, deferredProxy});
     targetFilterQuery[filter].Set(recipientQuery);
     CC_DIAG("CustomComponents/Pick3/DB5: QUERY_REDIRECT effect=%d group=%d (database eligibility preserved; stock recipient proxy)",
              effectId, groupId);
@@ -885,7 +888,7 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
             if (filter && BNM::IsA(filter,primaryFilterClass) &&
                 selectionType[filter].Get()==EnumModes::kPickFromThreeCardDatabase &&
                 numberOfTargets.IsValid() && numberOfTargets[filter].Get()==1 &&
-                RedirectDatabaseTargetQuery(filter,effectId,groupId)) {
+                RedirectDatabaseTargetQuery(filter,effectId,groupId,model)) {
                 // The game's finder understands stock Manual (=1). The
                 // enum override lives only across this synchronous finder
                 // call; the redirected Query remains rooted for receive.
@@ -1011,7 +1014,7 @@ static Obj* FindValidHook(void* self, void* blocking, const void* method) {
     Engine::PlacementQueryContext::Scope placementQuery({model,effectEntity,nullptr,-1,placementPrimary,jsonMode!=SelectionMode::CardDatabase});
     Obj* databaseQuery = nullptr;
     if (jsonMode == SelectionMode::CardDatabase) {
-        if (!RedirectDatabaseTargetQuery(filter, effectId, groupId)) {
+        if (!RedirectDatabaseTargetQuery(filter, effectId, groupId, model)) {
             LOG_ERR("CustomComponents/Pick3/DB5: RECIPIENT_QUERY_UNAVAILABLE effect=%d (requires AdditionalTargetType=Query, OnlyApplyEffectsOnAdditionalTargets=true)", effectId);
             return originalFindValid(self, blocking, method);
         }

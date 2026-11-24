@@ -29,15 +29,18 @@ using Key=EventSnapshots::Key;
 using KeyHash=EventSnapshots::KeyHash;
 using Snapshot=EventSnapshots::Snapshot;
 using Ptr=EventSnapshots::Ptr;
-inline Ptr ForInstances(Ptr snapshot,Obj* instances){
-    if(!snapshot || !instances)return snapshot;
-    auto type=BNM::Class("PvZCards.Engine","EntityModel");
-    Obj* model=type.IsValid()?Engine::Match::Provide(instances,type.GetMonoType()):nullptr;
-    if(!model)return snapshot;
+inline Ptr ForModel(Ptr snapshot,Obj* model){
+    if(!snapshot || !model)return snapshot;
     auto token=Core::ModelRegistry::Identify(model,true);
+    if(!token)return snapshot;
     if(token==snapshot->model)return snapshot;
     auto copy=std::make_shared<Snapshot>(*snapshot);copy->model=token;
     return copy;
+}
+inline Ptr ForInstances(Ptr snapshot,Obj* instances){
+    if(!snapshot || !instances)return snapshot;
+    static const auto type=BNM::Class("PvZCards.Engine","EntityModel");
+    return ForModel(snapshot,type.IsValid()?Engine::Match::Provide(instances,type.GetMonoType()):nullptr);
 }
 inline std::mutex lock;
 inline std::unordered_map<const void*,Ptr> byTrigger,byEffect;
@@ -186,7 +189,12 @@ static void EffectDeepCopy(void* self,Obj* source,Obj* instances,const void* met
     originalEffectDeepCopy(self,source,instances,method);
     Engine::EffectLifecycleEvents::copied.Notify(source,static_cast<Obj*>(self));
     Ptr snapshot;{std::lock_guard<std::mutex> guard(lock);snapshot=Lookup(byEffect,source);}
-    snapshot=ForInstances(snapshot,instances);
+    // Native derived copies tail-call the base implementation with unused
+    // arguments elided. Its InstanceManager register can hold unrelated data.
+    // Keep the captured values and let the resolver bind its actual model.
+    const auto& context=Engine::EffectGuards::current;
+    if(context.router)
+        snapshot=ForModel(snapshot,Core::ModelRegistry::Get(Engine::RouterContext::RouterModel(context.router)));
     std::lock_guard<std::mutex> guard(lock);
     if(snapshot)byEffect[self]=snapshot;
     else byEffect.erase(self);

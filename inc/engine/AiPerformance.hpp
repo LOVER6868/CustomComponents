@@ -10,6 +10,11 @@
 namespace CustomComponents::Engine::AiPerformance {
 using Obj = BNM::IL2CPP::Il2CppObject;
 inline void (*originalUpdate)(Obj*, const void*) = nullptr;
+inline void (*originalEndTurn)(Obj*,Obj*,const void*)=nullptr;
+inline void EndTurn(Obj* service,Obj* play,const void* method){
+    Core::Performance::Scope timing(Core::Performance::Area::TurnPass,"local-end-turn");
+    originalEndTurn(service,play,method);
+}
 inline void (*originalSelectTarget)(Obj*,const void*)=nullptr;
 inline void (*originalSimulateUpdate)(Obj*,const void*)=nullptr;
 inline void (*originalCopyGameState)(Obj*,Obj*,const void*)=nullptr;
@@ -63,6 +68,8 @@ inline bool Initialize() {
     const bool simulation=Core::Hooks::Install(BNM::Class("PvZCards.Core.AI.AiActions","AiSimulateActionExecutor").GetMethod("OnUpdate",0),SimulateUpdate,originalSimulateUpdate);
     const bool copy=Core::Hooks::Install(BNM::Class("PvZCards.Core.Utilities","GameStateCopier").GetMethod("CopyGameStateTo",1),CopyGameState,originalCopyGameState);
     LOG_INFO("CustomComponents/AI/PROFILE_INIT: scorer=%d target=%d simulate=%d copy=%d",int(scorer),int(target),int(simulation),int(copy));
-    return scorer && target && simulation && copy;
+    const bool endTurn=Core::Hooks::Install(BNM::Class("PvZCards.Core.Services","LocalEndTurnService")
+        .GetMethod("Process",1),EndTurn,originalEndTurn);
+    return scorer && target && simulation && copy && endTurn;
 }
 }

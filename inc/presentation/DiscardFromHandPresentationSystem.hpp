@@ -227,6 +227,7 @@ namespace CustomComponents::Systems::DiscardFromHandPresentationSystem {
             visual.view=std::make_shared<Core::ManagedRuntime::Root>(view);
         }
         if(!visual.retiring){
+            if(Core::CardTimelineStartCoordinator::Read(record.entityId).running) return Progress::Running;
             Obj* current=getMappedView[mapper](record.entityId);
             if(!current && originalFind)current=originalFind(hand,record.entityId,nullptr);
             if(!visual.view || current!=visual.view->Get()){History::Fail(record.serial,History::Reason::ViewReplaced);return Progress::Failed;}
@@ -632,7 +633,7 @@ namespace CustomComponents::Systems::DiscardFromHandPresentationSystem {
         const bool queueObserverOk = CustomComponents::Core::AnimationQueuePostUpdate::Register(
             &AfterQueueUpdate);
         const bool recordProcessorOk = Presentation::HistoryAnimations::Initialize() &&
-            Presentation::HistoryAnimations::Register(History::Kind::DiscardOutsidePlay,StepDiscard,CancelDiscard);
+            Presentation::HistoryAnimations::Register(History::Kind::DiscardOutsidePlay,StepDiscard,CancelDiscard,true);
         const bool ok = originalFind && originalReposition && originalDragOut &&
                         tickOk && originalLocalHandAwake && queueObserverOk && recordProcessorOk;
         const bool lifecycleOk = CustomComponents::Core::CardViewLifecycleCoordinator::Initialize();

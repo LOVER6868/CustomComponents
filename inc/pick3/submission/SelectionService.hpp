@@ -172,7 +172,7 @@ static void LocalSelectProcess(Obj* self,Obj* play,const void* method) {
                 const bool recipientAllowed=!AdditionalSelection::Interactive(AdditionalSelection::Get(filter).mode) ||
                     (validGuid && AdditionalSelection::Authorize(model,effect,group,recipient,recipient,Engine::BoardPlacement::Definition(chosenGuid,queryEffect)));
                 if (recipientEntity && shapeValid && validGuid && recipientAllowed &&
-                    TargetBridge::RedirectDatabaseTargetQuery(filter,effect,group)) {
+                    TargetBridge::RedirectDatabaseTargetQuery(filter,effect,group,model)) {
                     // Only normalize during the exact synchronous stock
                     // Process() call, preserving the custom enum afterward.
                     // The service still validates the recipient normally.

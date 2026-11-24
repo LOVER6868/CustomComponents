@@ -36,7 +36,7 @@ struct LaneReturnOperation {
            !discardRemoveCard.IsValid() || !discardAddCard.IsValid() || !laneElementIds.IsValid() ||
            !historyAppendRecord.IsValid() || !historyRecords.IsValid() || !historyInstances.IsValid() ||
            !cardIdDataCreateFromEntity.IsValid() || !effectRecordSetDefaultIds.IsValid() || !effectRecordSetTargetId.IsValid()) return false;
-        if(!environment && (!lanePlayCard.IsValid() || (options.creation.position!=Effects::SubsetPlacement::Position::Stock && !lanePlayCardWithPlacement.IsValid()) || !createLaneRecordSetCard.IsValid() ||
+        if(!environment && (!lanePlayCard.IsValid() || ((options.creation.teamup || options.creation.position!=Effects::SubsetPlacement::Position::Stock) && !lanePlayCardWithPlacement.IsValid()) || !createLaneRecordSetCard.IsValid() ||
            !createLaneRecordSetOrder.IsValid() || !createLaneRecordSetFaceDown.IsValid())) return false;
         if(environment && (!laneEnvironmentId.IsValid() || !environmentPlacerClass.IsValid() ||
            !environmentPlacerCtor.IsValid() || !environmentPlaceCard.IsValid() || !createEnvironmentRecordSetCard.IsValid())) return false;
@@ -109,11 +109,11 @@ struct LaneReturnOperation {
         }
         const bool placed=Try([&]{
             if(environment)environmentPlaceCard[environmentPlacer](cardId,laneId);
-            else if(options.creation.position!=Effects::SubsetPlacement::Position::Stock) {
+            else if((options.creation.teamup || options.creation.position!=Effects::SubsetPlacement::Position::Stock)) {
                 // Respect authored front/back placement for physical discard revives too.
                 // The source remains the exact discarded card; no duplicate is created.
                 Effects::SubsetCreationExtensions::Placement placement{cardId,laneId,source.playerId,
-                    Effects::SubsetPlacement::Order(options.creation.position,-1)};
+                    Effects::SubsetPlacement::CreationOrder(options.creation,false,-1)};
                 lanePlayCardWithPlacement[modifier](placement);
             } else lanePlayCard[modifier](cardId,laneId,source.playerId);
         });
@@ -270,4 +270,3 @@ static void MoveLaneProcessEffectHook(void* self,Obj* effect,const void* method)
         LOG_ERR("CustomComponents/ReturnToLane: failed card=%d lane=%d phase=%d committed=%d recovered=%d",cardId,laneId,int(result.phase),int(result.committed),int(result.recovered));
     }
 }
-

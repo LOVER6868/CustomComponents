@@ -37,7 +37,12 @@ inline Obj* Find(Obj* model,int id) {
     struct Index {const void* model=nullptr;const void* list=nullptr;const void* items=nullptr;int version=-1,count=-1;std::unordered_map<int,int> slots;};
     static thread_local Index index;
     auto rebuild=[&]{
-        index={model,list,list->items,list->version,list->size,{}};
+        index.model=model;
+        index.list=list;
+        index.items=list->items;
+        index.version=list->version;
+        index.count=list->size;
+        index.slots.clear();
         index.slots.reserve(list->size);
         for(int i=0;i<list->size;++i)if(Obj* entity=list->items->m_Items[i])index.slots.emplace(Core::Metadata::Bind(api.id,entity).Get(),i);
     };

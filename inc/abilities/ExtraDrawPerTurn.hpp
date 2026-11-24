@@ -30,13 +30,15 @@ inline void* Get(void* entity,bool create){
     return Engine::Match::Component(player,type.GetMonoType(),create);
 }
 inline int(*originalCount)(Obj*,Obj*,const void*)=nullptr;
-inline BNM::Field<Obj*> drawInstances;
 inline BNM::MonoType* entityModelType=nullptr;
 inline int Count(Obj* system,Obj* hand,const void* method){
     const int stock=originalCount(system,hand,method);
     const int owner=Engine::BoardPlacement::Owner(hand);
     if(owner<0)return stock;
-    auto* model=Engine::Match::Provide(drawInstances[system].Get(),entityModelType);
+    // Stock DrawHand leaves the unused receiver register unspecified at this
+    // call site. Resolve ownership through the hand's own live or AI model.
+    auto* model=Engine::Match::Provide(Engine::Match::Instances(hand),entityModelType);
+    if(!model)return stock;
     auto* player=Engine::EntityAccess::Find(model,owner);
     const int extra=GrantableAbilityRuntime::SumValues(Get(player,false));
     return static_cast<int>(std::clamp<std::int64_t>(std::int64_t(stock)+std::max(0,extra),0,
@@ -44,9 +46,9 @@ inline int Count(Obj* system,Obj* hand,const void* method){
 }
 inline bool Initialize(){
     const auto system=BNM::Class("PvZCards.Core.Systems","DrawCardsEachTurnSystem");
-    drawInstances=system.GetField("<Instances>k__BackingField").cast<Obj*>();
+
     entityModelType=BNM::Class("PvZCards.Engine","EntityModel").GetMonoType();
-    return drawInstances.IsValid() && entityModelType &&
+    return entityModelType &&
         CustomComponentRegistry::Register({"ExtraDrawPerTurn","PvZCards.Engine.Components","EngineLib.dll",
             "GrantableAbility","PvZCards.Engine.Components","EngineLib.dll"}) &&
         AbilityRegistry::Register({Id,"ExtraDrawPerTurn",AbilityStorage::Grantable,Get,nullptr}) &&

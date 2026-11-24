@@ -25,7 +25,7 @@ inline bool CheckDeckLanePair(Obj* model,int card,int lane,int player,Obj* effec
             Zones::DeckLaneCreation::HasLegalFallback(model,effectEntity,lane);
     }
     if(source.playerId!=player)return false;
-    // No creation-grant scope: the physical card must already own its traits.
+    // Test with prospective grants. The transfer applies them only after removing the source card.
     Engine::PlacementQueryContext::Scope scope({model,effectEntity});
     return Engine::BoardPlacement::Fits(model,source.card,FindEntity(model,lane),nullptr);
 }

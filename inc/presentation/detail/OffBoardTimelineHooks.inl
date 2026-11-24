@@ -56,8 +56,25 @@
             liveMapper && viewMapperViewMap.IsValid() && !hasMappedView;
         // Preserve existing bridge handling (including stale discard->hand),
         // but never suppress a legitimate currently mapped presentation.
+        // A live lane fighter can temporarily have no mapping after a
+        // transform replaces its view. Run the command container through
+        // the stock no-avatar path and keep its target commands intact.
+        const bool missingMappedSource = liveMapper && viewMapperViewMap.IsValid() &&
+            diagnosticModel && diagnosticCard >= 0 && !hasMappedView;
+        Obj* sourceEntity = missingMappedSource && !missingOffBoardView
+            ? Engine::EntityAccess::Find(diagnosticModel, diagnosticCard) : nullptr;
+        const bool missingLaneView = sourceEntity &&
+            Engine::EntityAccess::Component(sourceEntity, "LaneElement") &&
+            Engine::CardTypes::Fighter(sourceEntity);
+        if (missingLaneView && !explicitlyOffBoard) {
+            presentationSourceId = diagnosticCard;
+            zoneCardId = diagnosticCard;
+            if (Core::Performance::enabled)
+                LOG_INFO("CustomComponents/TransformPresentation/MISSING_SOURCE: card=%d group=%d",
+                    diagnosticCard, traceAbilityGroupId.IsValid() ? traceAbilityGroupId[animation].Get() : -1);
+        }
         const bool shouldUseNullTimeline =
-            (explicitlyOffBoard && !hasMappedView) || missingOffBoardView;
+            (explicitlyOffBoard && !hasMappedView) || missingOffBoardView || missingLaneView;
         if (missingOffBoardView && !explicitlyOffBoard) {
             presentationSourceId = diagnosticCard;
             zoneCardId = diagnosticCard;

@@ -10,7 +10,7 @@
 #include "diagnostics/HistoryTrace.hpp"
 namespace CustomComponents::Presentation::StatQueue {
 using Obj=BNM::IL2CPP::Il2CppObject;
-struct Owner {std::shared_ptr<Core::ManagedRuntime::Root> queue,mapper,model,history,historyModel;};
+struct Owner {std::shared_ptr<Core::ManagedRuntime::Root> queue,mapper,model,history,historyModel,processor;};
 inline Owner owner;
 inline thread_local Obj* processingHistory=nullptr;
 inline void Capture(Obj* processor,const char* typeName,const char* modelName,const char* mapperName) {
@@ -30,7 +30,7 @@ inline void Capture(Obj* processor,const char* typeName,const char* modelName,co
     if(owner.queue && owner.queue->Get()==q && owner.mapper->Get()==v && owner.model->Get()==m &&
        owner.history && owner.history->Get()==history && owner.historyModel && owner.historyModel->Get()==progress) return;
     owner={std::make_shared<Core::ManagedRuntime::Root>(q,true),std::make_shared<Core::ManagedRuntime::Root>(v,true),std::make_shared<Core::ManagedRuntime::Root>(m,true),
-        std::make_shared<Core::ManagedRuntime::Root>(history,true),std::make_shared<Core::ManagedRuntime::Root>(progress,true)};
+        std::make_shared<Core::ManagedRuntime::Root>(history,true),std::make_shared<Core::ManagedRuntime::Root>(progress,true),{}};
 }
 inline bool Owns(Obj* queue) {
     return owner.queue && owner.mapper && owner.model && owner.queue->Get()==queue &&
@@ -56,9 +56,24 @@ inline void ObserveQueue(Obj* queue,bool refreshHistory=false){
     Obj* history=Core::Metadata::Bind(historyField,processor).Get();
     Obj* progress=Core::Metadata::Bind(progressField,processor).Get();
     if(!model || !history || !progress)return;
-    if(Owns(queue) && owner.history && owner.history->Get()==history && owner.historyModel && owner.historyModel->Get()==progress)return;
-    owner={std::make_shared<Core::ManagedRuntime::Root>(queue,true),std::make_shared<Core::ManagedRuntime::Root>(mapper,true),std::make_shared<Core::ManagedRuntime::Root>(model,true),std::make_shared<Core::ManagedRuntime::Root>(history,true),std::make_shared<Core::ManagedRuntime::Root>(progress,true)};
+    if(Owns(queue) && owner.history && owner.history->Get()==history && owner.historyModel && owner.historyModel->Get()==progress){
+        if(!owner.processor || owner.processor->Get()!=processor)
+            owner.processor=std::make_shared<Core::ManagedRuntime::Root>(processor,true);
+        return;
+    }
+    owner={std::make_shared<Core::ManagedRuntime::Root>(queue,true),std::make_shared<Core::ManagedRuntime::Root>(mapper,true),std::make_shared<Core::ManagedRuntime::Root>(model,true),std::make_shared<Core::ManagedRuntime::Root>(history,true),std::make_shared<Core::ManagedRuntime::Root>(progress,true),{}};
+    owner.processor=std::make_shared<Core::ManagedRuntime::Root>(processor,true);
     LOG_INFO("CustomComponents/StatQueue/OWNER: queue=%p mapper=%p model=%p history=%p",queue,mapper,model,history);
+}
+inline bool HasCurrentHistory(Obj* processor){
+    if(!processor || !owner.processor || owner.processor->Get()!=processor ||
+       !owner.queue || !Owns(owner.queue->Get()) || !owner.history || !owner.historyModel)return false;
+    static const auto type=BNM::Class("PvZCards.Game","HistoryProcessor");
+    static const auto history=type.GetField("<History>k__BackingField").cast<Obj*>();
+    static const auto progress=type.GetField("<Model>k__BackingField").cast<Obj*>();
+    return history.IsValid() && progress.IsValid() &&
+        Core::Metadata::Bind(history,processor).Get()==owner.history->Get() &&
+        Core::Metadata::Bind(progress,processor).Get()==owner.historyModel->Get();
 }
 inline bool CaughtUp(Obj* queue) {
     if(!Owns(queue) || !owner.history || !owner.historyModel) return false;
@@ -126,9 +141,10 @@ static void History(Obj* self,const void* method) {
     Obj* previous=processingHistory;processingHistory=self;
     struct Restore {Obj* value;~Restore(){processingHistory=value;}} restore{previous};
     TraceBoundary(self,"BATCH_BEGIN");
-    {
-        Obj* q=Engine::FrontendServices::Provide(BNM::Class("PvZCards.Game","EffectAnimationQueue"),Engine::FrontendServices::Game());
-        ObserveQueue(q,true);
+    if(!HasCurrentHistory(self)){
+        static const auto queueType=BNM::Class("PvZCards.Game","EffectAnimationQueue");
+        Obj* queue=Engine::FrontendServices::Provide(queueType,Engine::FrontendServices::Game());
+        ObserveQueue(queue,true);
     }
     originalHistory(self,method);
     TraceBoundary(self,"BATCH_END");
