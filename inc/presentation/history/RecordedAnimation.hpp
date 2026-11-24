@@ -14,8 +14,8 @@ using Obj=BNM::IL2CPP::Il2CppObject;
 enum class Progress {Running,Complete,Failed};
 using Step=Progress(*)(const History::Record&,bool);
 using Cancel=void(*)(const History::Record&);
-struct Driver {History::Kind kind;Step step;Cancel cancel;};
-struct Job {History::Record record;std::shared_ptr<Core::ManagedRuntime::Root> animation;Driver driver;bool done=false;};
+struct Driver {History::Kind kind;Step step;Cancel cancel;bool tickAtRecord;};
+struct Job {History::Record record;std::shared_ptr<Core::ManagedRuntime::Root> animation;Driver driver;bool done=false;bool started=false;};
 inline std::map<std::uint64_t,Job> jobs; // frontend thread only
 inline std::vector<Driver> drivers;
 inline void Advance(std::uint64_t id,bool start){
@@ -25,7 +25,7 @@ inline void Advance(std::uint64_t id,bool start){
         if(job.driver.cancel)BNM::TryInvoke([&]{job.driver.cancel(job.record);});
         History::Cancel(id,History::Reason::SceneEnded);job.done=true;return;
     }
-    if(start)History::MarkStarted(id);
+    if(start){job.started=true;History::MarkStarted(id);}
     Progress progress=Progress::Failed;
     auto error=BNM::TryInvoke([&]{progress=job.driver.step(job.record,start);});
     if(error.IsValid() || progress==Progress::Failed){
@@ -59,6 +59,10 @@ inline bool Enqueue(const History::Record& record){
     if(jobs.contains(record.serial))return true;
     auto driver=std::find_if(drivers.begin(),drivers.end(),[&](auto d){return d.kind==record.kind;});
     if(driver==drivers.end())return false;
+    if(driver->tickAtRecord){
+        jobs.emplace(record.serial,Job{record,{},*driver});
+        return true;
+    }
     Obj* queue=Engine::FrontendServices::Provide(BNM::Class("PvZCards.Game","EffectAnimationQueue"),Engine::FrontendServices::Game());
     static auto add=BNM::Class("PvZCards.Game","EffectAnimationQueue").GetMethod("AddAnimation",1).cast<void>();
     auto type=BNM::Class("PvZCards.Game","CustomHistoryAnimation");
@@ -71,15 +75,22 @@ inline bool Enqueue(const History::Record& record){
     if(error.IsValid()){jobs.erase(record.serial);History::Fail(record.serial,History::Reason::EnqueueFailed);return true;}
     return true;
 }
-inline bool Register(History::Kind kind,Step step,Cancel cancel){
+inline bool Register(History::Kind kind,Step step,Cancel cancel,bool tickAtRecord=false){
     if(!step)return false;
-    for(auto d:drivers)if(d.kind==kind)return d.step==step && d.cancel==cancel;
-    drivers.push_back({kind,step,cancel});return History::Register(kind,Enqueue);
+    for(auto d:drivers)if(d.kind==kind)return d.step==step && d.cancel==cancel && d.tickAtRecord==tickAtRecord;
+    drivers.push_back({kind,step,cancel,tickAtRecord});return History::Register(kind,Enqueue);
 }
 inline void Sweep(){
     const auto scene=Core::SceneViewContext::ModelIdentity();
     History::ActivateScene(scene,reinterpret_cast<std::uintptr_t>(Core::SceneViewContext::RootedMapper()));
     for(auto& [id,job]:jobs)if(!job.done && (job.record.model!=scene || History::IsTerminal(id)))CancelJob(id);
+    // Record-anchored hand visuals own their tween and need no place in the
+    // native queue. Advance in serial order while the stock cursor is fenced.
+    for(auto& [id,job]:jobs){
+        if(job.done || !job.driver.tickAtRecord)continue;
+        Advance(id,!job.started);
+        break;
+    }
     std::erase_if(jobs,[](auto& item){return item.second.done;});
     History::PumpObservers();
 }

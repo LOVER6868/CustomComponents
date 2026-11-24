@@ -28,11 +28,13 @@ inline int Player(Obj* model,Obj* card,Obj* context) {
     return player;
 }
 inline void(*augment)(Obj*,BoardPlacementPolicy::Card&)=nullptr;
-inline bool Fits(Obj* model,Obj* card,Obj* laneEntity,Obj* context) {
+inline bool Fits(Obj* model,Obj* card,Obj* laneEntity,Obj* context,bool grantTeamup=false,bool grantAquatic=false) {
     if(!model || !card || !laneEntity)return false;
     Obj* lane=EntityAccess::Component(laneEntity,"Lane");if(!lane)return false;
     BoardPlacementPolicy::Card traits{CardTypes::Fighter(card),EntityAccess::Component(card,"Environment")!=nullptr,EntityAccess::Component(card,"Plants")!=nullptr,Active(card,"Teamup"),Active(card,"Aquatic")};
     if(augment)augment(PlacementQueryContext::active.effect,traits);
+    traits.teamup |= grantTeamup;
+    traits.aquatic |= grantAquatic;
     const int player=Player(model,card,context);if(player<0)return false;
     static auto count=BNM::Class("PvZCards.Engine.Components","Lane").GetMethod("GetNumFightersForPlayer",1).cast<int>();
     static auto fighters=BNM::Class("PvZCards.Engine.Components","Lane").GetMethod("GetFightersForPlayer",1).cast<BNM::Structures::Mono::List<int>*>();
@@ -46,11 +48,23 @@ inline bool Matches(Obj* query,Obj* candidate,Obj* context) {
     auto method=BNM::Class(query).GetMethod("Matches",2).cast<bool>();return method.IsValid() && method[query](candidate,context);
 }
 inline std::shared_ptr<Core::ManagedRuntime::Root> Context(Obj* model,Obj* effect,int target=-1) {
-    auto type=BNM::Class("PvZCards.Engine","EntityQueryContext");auto root=std::make_shared<Core::ManagedRuntime::Root>(type.CreateNewObjectParameters());
-    Obj* context=root->Get();if(!context)return {};
-    auto modelField=type.GetField("<Model>k__BackingField").cast<Obj*>();auto self=type.GetField("SelfId").cast<int>();
-    auto targetSet=type.GetMethod("set_TargetId",1).cast<void>();auto sourceSet=type.GetMethod("set_SourceId",1).cast<void>();auto effectSet=type.GetMethod("set_EffectEntityId",1).cast<void>();
-    Obj* link=EntityAccess::Component(effect,"EffectEntity");auto source=BNM::Class("PvZCards.Engine.Components","EffectEntity").GetField("SourceId").cast<int>();
+    static const auto type=BNM::Class("PvZCards.Engine","EntityQueryContext");
+    auto root=Core::ManagedPool::AcquireScoped(Core::ManagedPool::ModelInstances(model),type);
+    if(!root && type.IsValid())root=std::make_shared<Core::ManagedRuntime::Root>(type.CreateNewObjectParameters());
+    Obj* context=root?root->Get():nullptr;if(!context)return {};
+    static const auto modelMetadata=type.GetField("<Model>k__BackingField").cast<Obj*>();
+    static const auto selfMetadata=type.GetField("SelfId").cast<int>();
+    auto modelField=modelMetadata;
+    auto self=selfMetadata;
+    static const auto targetMetadata=type.GetMethod("set_TargetId",1).cast<void>();
+    static const auto sourceMetadata=type.GetMethod("set_SourceId",1).cast<void>();
+    static const auto effectMetadata=type.GetMethod("set_EffectEntityId",1).cast<void>();
+    auto targetSet=targetMetadata;
+    auto sourceSet=sourceMetadata;
+    auto effectSet=effectMetadata;
+    static const auto sourceIdMetadata=BNM::Class("PvZCards.Engine.Components","EffectEntity").GetField("SourceId").cast<int>();
+    auto source=sourceIdMetadata;
+    Obj* link=EntityAccess::Component(effect,"EffectEntity");
     if(!modelField.IsValid() || !self.IsValid() || !targetSet.IsValid() || !sourceSet.IsValid() || !effectSet.IsValid())return {};
     const int id=link && source.IsValid()?source[link].Get():-1;
     modelField[context].Set(model);self[context].Set(id);sourceSet[context](id);effectSet[context](Match::Id(effect));targetSet[context](target);return root;

@@ -6,9 +6,9 @@
 #include <string>
 #include "log.h"
 namespace CustomComponents::Core::Performance {
-enum class Area {EntityCopy,StockEntityCopy,StockQueue,FrameReconciliation,EffectRouter,StockEffectRouter,SubsetFinder,CreationBinding,TargetFinder,AbilityExpiry,KeywordExpiry,AiCandidateStep,AiModelCopy,AiQuery,AiCustomHook,LevelHighlight,LevelQuote,VariableSnapshot,TriggerPreparation,NativeTrigger,EffectPreparation,Maintenance,AiScorerPoll,VariableQuery,Count};
+enum class Area {EntityCopy,StockEntityCopy,StockQueue,FrameReconciliation,EffectRouter,StockEffectRouter,SubsetFinder,CreationBinding,TargetFinder,AbilityExpiry,KeywordExpiry,AiCandidateStep,AiModelCopy,AiQuery,AiCustomHook,LevelHighlight,LevelQuote,VariableSnapshot,TriggerPreparation,NativeTrigger,EffectPreparation,Maintenance,AiScorerPoll,VariableQuery,PlaySubmission,FighterPlacement,FighterExpiry,NativeBuffExpiry,TurnPass,Count};
 inline bool enabled=false;
-inline const char* names[]={"entity-copy-total","entity-copy-stock","animation-queue-stock","frame-reconciliation","effect-router-total","effect-router-stock","subset-finder","creation-binding","target-finder","ability-expiry","keyword-expiry","ai-candidate-step","ai-model-copy","ai-query","ai-custom-hook","level-highlight","level-quote","variable-snapshot","trigger-variable-preparation","native-trigger-dispatch","effect-preparation","system-maintenance","ai-scorer-poll","variable-query"};
+inline const char* names[]={"entity-copy-total","entity-copy-stock","animation-queue-stock","frame-reconciliation","effect-router-total","effect-router-stock","subset-finder","creation-binding","target-finder","ability-expiry","keyword-expiry","ai-candidate-step","ai-model-copy","ai-query","ai-custom-hook","level-highlight","level-quote","variable-snapshot","trigger-variable-preparation","native-trigger-dispatch","effect-preparation","system-maintenance","ai-scorer-poll","variable-query","play-submission","fighter-placement","fighter-expiry","native-buff-expiry","turn-pass"};
 struct Sample {unsigned calls=0;double sum=0,maximum=0,selfSum=0,selfMaximum=0;std::string maximumLabel;int maximumEffect=-1,maximumTarget=-1;};
 inline std::array<Sample,static_cast<unsigned>(Area::Count)> samples;
 inline std::mutex mutex;
@@ -42,9 +42,16 @@ struct Scope {
     }
 };
 inline void Report() {
-    if(!enabled)return;const auto now=std::chrono::steady_clock::now();std::lock_guard<std::mutex> lock(mutex);
-    if(now-lastReport<std::chrono::seconds(3))return;lastReport=now;
-    slowReports=0;
-    for(unsigned i=0;i<samples.size();++i){auto& s=samples[i];if(s.calls)LOG_INFO("CustomComponents/Performance: area=%s calls=%u totalMs=%.3f maxMs=%.3f avgMs=%.3f selfTotalMs=%.3f selfMaxMs=%.3f worst=%s effect=%d target=%d",names[i],s.calls,s.sum,s.maximum,s.sum/s.calls,s.selfSum,s.selfMaximum,s.maximumLabel.c_str(),s.maximumEffect,s.maximumTarget);s={};}
+    if (!enabled) return;
+    const auto now = std::chrono::steady_clock::now();
+    decltype(samples) report;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (now - lastReport < std::chrono::seconds(3)) return;
+        lastReport = now;
+        slowReports = 0;
+        samples.swap(report);
+    }
+    for(unsigned i=0;i<report.size();++i){const auto& s=report[i];if(s.calls)LOG_INFO("CustomComponents/Performance: area=%s calls=%u totalMs=%.3f maxMs=%.3f avgMs=%.3f selfTotalMs=%.3f selfMaxMs=%.3f worst=%s effect=%d target=%d",names[i],s.calls,s.sum,s.maximum,s.sum/s.calls,s.selfSum,s.selfMaximum,s.maximumLabel.c_str(),s.maximumEffect,s.maximumTarget);}
 }
 }

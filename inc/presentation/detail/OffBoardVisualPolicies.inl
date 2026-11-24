@@ -179,6 +179,26 @@
 
     // The concrete buff method is 0x1EDC9B0; the observed lookup
     // 0x1EDCA34 is inside it. This hook is read-only and passes through.
+    inline bool (*originalRedirectDamageTarget)(Obj*,int,Obj*,const void*) = nullptr;
+    static bool RedirectDamageTarget(Obj* self, int redirector, Obj* record, const void* method) {
+        if (originalRedirectDamageTarget(self, redirector, record, method)) return true;
+        static const auto damageType = BNM::Class("PvZCards.Engine.Records","DamageRecord");
+        static auto amount = damageType.GetMethod("get_DamageAmount",0).cast<int>();
+        static auto target = BNM::Class("PvZCards.Engine.Records","EffectRecord").GetMethod("get_TargetId",0).cast<int>();
+        if (!record || !BNM::IsA(record,damageType) || !amount.IsValid() || !target.IsValid() ||
+            amount[record]() <= 0) return false;
+        auto* mapper = Core::SceneViewContext::RootedMapper();
+        Obj* model = mapper && viewMapperEntityModel.IsValid() ? viewMapperEntityModel[mapper].Get() : nullptr;
+        if (!model || !Engine::EntityAccess::Component(Engine::EntityAccess::Find(model,redirector),"Environment"))
+            return false;
+        const int recipient = target[record]();
+        if (!Engine::CardTypes::Fighter(Engine::EntityAccess::Find(model,recipient))) return false;
+        if (Core::Performance::enabled)
+            LOG_INFO("CustomComponents/DamageRedirect/RECORD_IMPACT: source=%d recipient=%d damage=%d",
+                redirector,recipient,amount[record]());
+        return true;
+    }
+
     static Obj* BuffCommonTargetTraceHook(void* self, const void* method) {
         const auto n = ++buffBoundaryTraceCount;
         if (n <= 300) {

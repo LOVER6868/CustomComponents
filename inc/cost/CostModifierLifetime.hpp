@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <optional>
 #include <BNM/Class.hpp>
 #include <BNM/ClassesManagement.hpp>
 #include <BNM/Defaults.hpp>
@@ -42,7 +44,7 @@ inline Obj* Model(Obj* system,const char* systemName,const char* field){
     return system && f.IsValid()?f[system].Get():nullptr;
 }
 inline Obj* Target(Obj* model,Obj* effect){
-    auto field=BNM::Class("PvZCards.Engine","Effect").GetField("TargetId").cast<int>();
+    static const auto target=BNM::Class("PvZCards.Engine","Effect").GetField("TargetId").cast<int>();auto field=target;
     return model && effect && field.IsValid()?Engine::EntityAccess::Find(model,field[effect].Get()):nullptr;
 }
 inline void Clear(Obj* card,int duration){
@@ -80,16 +82,16 @@ inline void ClearOnAllCards(Obj* model,int duration){
         if(Engine::EntityAccess::Component(card,"Card"))Clear(card,duration);
     }
 }
-inline bool HasModifier(Obj* card,const char* componentName,const char* property,int duration){
+inline bool HasModifier(Obj* card,const char* componentName,BNM::Field<Obj*> amountField,int duration){
     Obj* component=Engine::EntityAccess::Component(card,componentName);
     if(!component)return false;
-    auto amountField=BNM::Class("PvZCards.Engine.Components",componentName).GetField(property).cast<Obj*>();
+
     Obj* amount=amountField.IsValid()?amountField[component].Get():nullptr;
     if(!amount)return false;
-    auto mods=BNM::Class("PvZCards.Engine.Components.Data","ModifiableInt").GetField("Modifiers").cast<ObjList*>();
+    static const auto modsField=BNM::Class("PvZCards.Engine.Components.Data","ModifiableInt").GetField("Modifiers").cast<ObjList*>();auto mods=modsField;
     ObjList* list=mods.IsValid()?mods[amount].Get():nullptr;
     if(!Engine::EntityAccess::Valid(list))return false;
-    auto durationField=BNM::Class("PvZCards.Engine.Components.Data","IntModifier").GetField("Duration").cast<int>();
+    static const auto durationMetadata=BNM::Class("PvZCards.Engine.Components.Data","IntModifier").GetField("Duration").cast<int>();auto durationField=durationMetadata;
     if(!durationField.IsValid())return false;
     for(int i=0;i<list->size;++i){
         Obj* mod=list->items->m_Items[i];
@@ -104,43 +106,49 @@ inline void ExpireNativeBuffs(Obj* model,int duration){
     auto api=Engine::EntityAccess::Api();
     ObjList* entities=api.entities.IsValid()?api.entities[model].Get():nullptr;
     if(!Engine::EntityAccess::Valid(entities))return;
-    auto klass=BNM::Class("PvZCards.Engine.Utilities","CustomDurationMatcher");
-    if(!klass.IsValid()){
-        LOG_ERR("CustomComponents/Duration: modifier matcher class unavailable");return;
-    }
-    auto constructor=klass.GetMethod(".ctor",0).cast<void>();
-    auto field=klass.GetField("Duration").cast<int>();
-    if(!constructor.IsValid() || !field.IsValid()){
-        LOG_ERR("CustomComponents/Duration: modifier matcher members unavailable");return;
-    }
-    auto object=std::make_shared<Core::ManagedRuntime::Root>(
-        static_cast<Obj*>(klass.CreateNewInstance()));
-    if(!object->Get()){
-        LOG_ERR("CustomComponents/Duration: modifier matcher allocation failed");return;
-    }
-    constructor[object->Get()]();field[object->Get()].Set(duration);
-    Obj* instances=nullptr;
-    for(int i=0;i<entities->size && !instances;++i)
-        instances=Engine::Match::Instances(entities->items->m_Items[i]);
-    if(!instances)return;
-    const char* types[]={"AttackBuffRemover","HealthBuffRemover","SunCostBuffRemover"};
-    std::shared_ptr<Core::ManagedRuntime::Root> services[3];
-    BNM::Method<void> remove[3];
-    for(int i=0;i<3;++i){
-        const auto type=BNM::Class("PvZCards.Core.Systems",types[i]);
-        services[i]=Engine::Match::Service(instances,type);
-        remove[i]=type.GetMethod("RemoveBuffsAndRecordInHistory",2).cast<void>();
-        if(!services[i] || !services[i]->Get() || !remove[i].IsValid()){
-            LOG_ERR("CustomComponents/Duration: %s unavailable",types[i]);return;
-        }
-    }
-    for(int i=0,n=entities->size;i<n;++i){
+    Core::Performance::Scope timing(Core::Performance::Area::NativeBuffExpiry,"phase-expiry");
+    static constexpr const char* components[]={"Attack","Health","SunCost"};
+    static constexpr const char* amounts[]={"AttackValue","MaxHealth","SunCostValue"};
+    static constexpr const char* services[]={"AttackBuffRemover","HealthBuffRemover","SunCostBuffRemover"};
+    static const auto amountFields=[]{
+        std::array<BNM::Field<Obj*>,3> result;
+        for(std::size_t i=0;i<result.size();++i)
+            result[i]=BNM::Class("PvZCards.Engine.Components",components[i]).GetField(amounts[i]).cast<Obj*>();
+        return result;
+    }();
+    std::array<std::shared_ptr<Core::ManagedRuntime::Root>,3> removers{};
+    std::array<BNM::Method<void>,3> methods{};
+    std::optional<Core::ManagedRuntime::Root> matcher;
+    for(int i=0,count=entities->size;i<count;++i){
         Obj* card=entities->items->m_Items[i];
-        if(!card || !Engine::EntityAccess::Component(card,"Card"))continue;
-        const char* components[]={"Attack","Health","SunCost"};
-        const char* amounts[]={"AttackValue","MaxHealth","SunCostValue"};
-        for(int j=0;j<3;++j)if(HasModifier(card,components[j],amounts[j],duration))
-            remove[j][services[j]->Get()](card,object->Get());
+        if(!Engine::EntityAccess::Component(card,"Card"))continue;
+        for(std::size_t stat=0;stat<removers.size();++stat){
+            if(!HasModifier(card,components[stat],amountFields[stat],duration))continue;
+
+            // Most plays have no expiring modifier. Resolve services and
+            // create the native matcher only when there is work to do.
+            if(!matcher){
+                static const auto type=BNM::Class("PvZCards.Engine.Utilities","CustomDurationMatcher");
+                static const auto ctorMetadata=type.GetMethod(".ctor",0).cast<void>();
+                static const auto durationMetadata=type.GetField("Duration").cast<int>();
+                auto ctor=ctorMetadata;
+                auto durationField=durationMetadata;
+                if(!type.IsValid() || !ctor.IsValid() || !durationField.IsValid())return;
+                matcher.emplace(type.CreateNewInstance());
+                if(!matcher->Get())return;
+                ctor[matcher->Get()]();
+                durationField[matcher->Get()].Set(duration);
+            }
+            if(!removers[stat]){
+                const auto type=BNM::Class("PvZCards.Core.Systems",services[stat]);
+                removers[stat]=Engine::Match::Service(Engine::Match::Instances(card),type);
+                methods[stat]=type.GetMethod("RemoveBuffsAndRecordInHistory",2).cast<void>();
+                if(!removers[stat] || !removers[stat]->Get() || !methods[stat].IsValid()){
+                    LOG_ERR("CustomComponents/Duration: %s unavailable",services[stat]);return;
+                }
+            }
+            methods[stat][removers[stat]->Get()](card,matcher->Get());
+        }
     }
 }
 inline void OnExpiryBoundary(Obj* model,int duration){
@@ -182,14 +190,22 @@ inline void OnTurnEnd(Obj* self,Obj* effect,const void* method){
 }
 inline void(*originalPlayFighter)(Obj*,Obj*,const void*)=nullptr;
 inline void OnPlayFighter(Obj* self,Obj* effect,const void* method){
-    Core::Performance::Scope timing(Core::Performance::Area::Maintenance,"fighter-play-handler");
+    Core::Performance::Scope timing(Core::Performance::Area::FighterPlacement,"fighter-handler");
     Obj* model=Model(self,"PlayFighterToLanesSystem","<Model>k__BackingField");
     Obj* card=Target(model,effect);
     const bool alreadyOnBoard=card && Queries::LaneTopology::LaneEntity(model,card);
-    originalPlayFighter(self,effect,method);
+    {
+        Core::Performance::Scope stock(Core::Performance::Area::FighterPlacement,"stock-place-fighter");
+        originalPlayFighter(self,effect,method);
+    }
     // NextFighter expires only after a NEW fighter entered play.
     if(card && !alreadyOnBoard && Queries::LaneTopology::LaneEntity(model,card))
-        {ClearOnAllCards(model,2);ExpireNativeBuffs(model,2);Variables::ExpireTimed(model,2);}
+    {
+        Core::Performance::Scope expiry(Core::Performance::Area::FighterExpiry,"next-fighter-expiry");
+        ClearOnAllCards(model,2);
+        ExpireNativeBuffs(model,2);
+        Variables::ExpireTimed(model,2);
+    }
 }
 inline bool Initialize(){
     using namespace CustomComponents::Core;

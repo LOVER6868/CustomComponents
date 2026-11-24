@@ -183,6 +183,7 @@
     // just whether the resolver's saved queue is empty. Rate limited per return.
     inline void TraceProcessing(DiagnosticBoundary boundary, Obj* observed,
                                 int hasNext = -1) {
+        if constexpr (!Diagnostics::kSelectionTrace) return;
         if (!ready || !hasPendingReturn.load(std::memory_order_acquire)) return;
         static constexpr const char* names[] = {
             "PROCESS-ENTER", "PROCESS-EXIT", "COMPLETE-ENTER",

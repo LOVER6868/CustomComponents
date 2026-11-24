@@ -10,6 +10,7 @@
 #include "diagnostics/DiagnosticLogging.hpp"
 
 #pragma once
+#include "engine/CardTypes.hpp"
 #include <atomic>
 
 #include "core/Performance.hpp"
@@ -1382,6 +1383,9 @@ namespace CustomComponents::Systems::ZoneTriggeredAbilityPresentationSystem {
         };
         installTrickHook(trickRevealLocal, "OnStarted", 0x1F8A480,
             LocalRevealStartCapture, originalLocalRevealStart);
+        if (!Core::Hooks::Install(BNM::Class("PvZCards.Game","RedirectAbilityStartRecordProcessor")
+                .GetMethod("IsSelfTargetingDamageRecord",2), RedirectDamageTarget, originalRedirectDamageTarget))
+            LOG_ERR("CustomComponents/DamageRedirect: recipient record presentation hook unavailable");
         installTrickHook(trickRevealLocal, "HandleComplete", 0x1F8A97C,
             LocalRevealCompleteTrace, originalLocalRevealComplete);
         installTrickHook(trickRevealOpponent, "OnStarted", 0x1F9C324,

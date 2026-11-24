@@ -1,5 +1,6 @@
 #pragma once
 #include "pick3/AdditionalSelectionSettings.hpp"
+#include "core/ManagedPool.hpp"
 namespace CustomComponents::Pick3::AdditionalSelection {
 using QueryList=BNM::Structures::Mono::List<Obj*>;
 inline bool PickedLaneDependency(Obj* query,bool insideCard=false,unsigned depth=0) {
@@ -28,11 +29,12 @@ inline bool DefersPickedLane(Obj* filter) {
     auto field=BNM::Class("PvZCards.Engine.Components","TargetEntityFilter").GetField("AdditionalTargetQuery").cast<Obj*>();
     return filter && field.IsValid() && PickedLaneDependency(field[filter].Get());
 }
-inline std::shared_ptr<Core::ManagedRuntime::Root> LaneProxy() {
+inline std::shared_ptr<Core::ManagedRuntime::Root> LaneProxy(Obj* model) {
     auto type=BNM::Class("PvZCards.Engine.Queries","HasComponentQuery");
-    auto root=std::make_shared<Core::ManagedRuntime::Root>(type.CreateNewObjectParameters());
+    auto root=Core::ManagedPool::AcquireScoped(Core::ManagedPool::ModelInstances(model),type);
+    if(!root && type.IsValid())root=std::make_shared<Core::ManagedRuntime::Root>(type.CreateNewObjectParameters());
     auto field=type.GetField("ComponentType").cast<void*>();auto lane=BNM::Class("PvZCards.Engine.Components","Lane");
-    if(!root->Get() || !field.IsValid() || !lane.IsValid())return {};
+    if(!root || !root->Get() || !field.IsValid() || !lane.IsValid())return {};
     field[root->Get()].Set(lane.GetMonoType());return root;
 }
 }

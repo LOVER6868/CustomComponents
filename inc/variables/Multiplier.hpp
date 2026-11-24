@@ -130,6 +130,7 @@ inline std::optional<int> VariableFactor(VariableMultiplier* spec, Context c) {
     // A primary target uses the recipient of this one runtime effect, not the
     // trigger target; retain last-known-lane support for dying source cards.
     const bool primaryTargetOwner = ownerMode == MultiplierPolicy::OwnerMode::PrimaryTarget;
+    const auto expression=Text(spec->Expression);
     MultiplierPolicy::Accumulator result(aggregation);
     for (Obj* owner : owners) {
         auto lookup = [&](std::string_view name) -> std::optional<Value> {
@@ -155,7 +156,7 @@ inline std::optional<int> VariableFactor(VariableMultiplier* spec, Context c) {
                 return Value{Kind::Int, {*stat}};
             return {};
         };
-        auto number = Expressions::Evaluate(Text(spec->Expression), lookup);
+        auto number = Expressions::Evaluate(expression, lookup);
         if (!number) return {};
         result.Add(*number);
     }

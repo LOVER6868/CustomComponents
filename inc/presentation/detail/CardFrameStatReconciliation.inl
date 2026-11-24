@@ -172,22 +172,48 @@
         static auto icons=type.GetField("CardFrameIconView").cast<Obj*>();
         static auto board=type.GetField("CardFrameOnBoardSpriteView").cast<Obj*>();
         if(!icons.IsValid() || !board.IsValid() || !Core::Metadata::Bind(icons,frame).Get() || !Core::Metadata::Bind(board,frame).Get())return;
-        Obj* state=stateClass.CreateNewInstance();Core::ManagedRuntime::Root stateRoot(state);
+        // Scratch is only used to compare signatures. Stock presentation
+        // receives its own state and can retain it across asynchronous work.
+        static thread_local bool probing=false;
+        if(probing)return;
+        struct ProbeScope {
+            bool& active;
+            explicit ProbeScope(bool& flag):active(flag){active=true;}
+            ~ProbeScope(){active=false;}
+        } scope(probing);
+        static thread_local std::unique_ptr<Core::ManagedRuntime::Root> scratch;
+        if(!scratch || !scratch->Get()){
+            scratch=std::make_unique<Core::ManagedRuntime::Root>(stateClass.CreateNewInstance());
+            if(!scratch->Get())return;
+            stateCtor[scratch->Get()]();
+        }
         if(!traitChecker || !traitChecker->Get()){
             traitChecker=std::make_shared<Core::ManagedRuntime::Root>(checkerClass.CreateNewInstance());
             if(traitChecker->Get())Core::Metadata::Bind(checkerCtor,traitChecker->Get())();
         }
         Obj* checker=traitChecker?traitChecker->Get():nullptr;
-        if(!stateRoot.Get() || !checker) return;
-        stateCtor[state]();
-        Obj* abilities=stateAbilities[state].Get();
-        if(!abilities) return;
+        if(!checker)return;
+        Obj* abilities=stateAbilities[scratch->Get()].Get();
+        if(!abilities)return;
+        static const auto clearMetadata=BNM::Class(abilities).GetMethod("Clear",0).cast<void>();
+        auto clear=clearMetadata;
+        if(!clear.IsValid())return;
+        clear[abilities]();
         checkerAddSpecialAbilities[checker](abilities,entity);
         const auto* list=reinterpret_cast<BNM::Structures::Mono::List<int>*>(abilities);
         if(!Engine::EntityAccess::Valid(list))return;
-        std::vector<int> signature(list->items->m_Items,list->items->m_Items+list->size);
+        const auto first=list->items->m_Items;
+        const auto last=first+list->size;
         const auto previous=frameTraits.Get(frame);
-        if(previous.known && previous.abilities==signature)return;
+        if(previous.known && std::equal(first,last,previous.abilities.begin(),previous.abilities.end()))return;
+        std::vector<int> signature(first,last);
+        Obj* state=stateClass.CreateNewInstance();
+        Core::ManagedRuntime::Root stateRoot(state);
+        if(!stateRoot.Get())return;
+        stateCtor[state]();
+        Obj* presentationAbilities=stateAbilities[state].Get();
+        if(!presentationAbilities)return;
+        checkerAddSpecialAbilities[checker](presentationAbilities,entity);
         // Rebuilding unchanged sprites can restart native icon presentation
         // and load assets during unrelated plays/Level changes.
         const auto error=BNM::TryInvoke([&]{Core::Metadata::Bind(frameSetSpecialAbilitySprites,frame)(state);});

@@ -14,9 +14,27 @@ inline std::uint64_t Revision(Obj* model){auto token=Core::ModelRegistry::Identi
 inline void Changed(Obj* model){if(!model)return;auto token=Core::ModelRegistry::Identify(model,true);std::lock_guard<std::mutex> guard(lock);++revisions[token];}
 inline Core::Observers<Obj*> settled;
 inline Obj* ProcessorModel(Obj* processor){
-    static auto metadata=BNM::Class("PvZCards.Engine","EffectCollectionProcessor").GetField("<Instances>k__BackingField").cast<Obj*>();auto field=metadata;
-    return processor && field.IsValid()?Match::Provide(field[processor].Get(),BNM::Class("PvZCards.Engine","EntityModel").GetMonoType()):nullptr;
+    if(!processor)return nullptr;
+    static const auto type=BNM::Class("PvZCards.Engine","EffectCollectionProcessor");
+    static const auto routerField=type.GetField("<EffectRouter>k__BackingField").cast<Obj*>();
+    static const auto instancesField=type.GetField("<Instances>k__BackingField").cast<Obj*>();
+    static const auto modelType=BNM::Class("PvZCards.Engine","EntityModel").GetMonoType();
+    auto router=routerField;
+    if(router.IsValid()){
+        if(auto* owner=router[processor].Get()){
+            const auto token=RouterContext::RouterModel(owner);
+            if(auto* model=Core::ModelRegistry::Get(token))return model;
+        }
+    }
+    auto instances=instancesField;
+    return instances.IsValid()?Match::Provide(instances[processor].Get(),modelType):nullptr;
 }
-inline void Complete(Obj* processor,Obj*){Obj* model=ProcessorModel(processor);Changed(model);settled.Notify(model);}
+inline void Complete(Obj* processor,Obj*){
+    Core::Performance::Scope cost(Core::Performance::Area::Maintenance,"effect-completion-reconciliation");
+    Obj* model=ProcessorModel(processor);
+    if(!model)return;
+    Changed(model);
+    settled.Notify(model);
+}
 inline bool Initialize(){Engine::EffectGuards::before.Add([](const auto&){++depth;});Engine::EffectGuards::after.Add([](const auto& c){Changed(Core::ModelRegistry::Get(Engine::RouterContext::RouterModel(c.router)));if(depth)--depth;});Core::ModelRegistry::retired.Add([](auto token){std::lock_guard<std::mutex> guard(lock);revisions.erase(token);});return Events::effectCompletionReady && Events::afterEffectComplete.Add(Complete);}
 }

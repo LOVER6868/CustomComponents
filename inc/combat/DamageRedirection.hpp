@@ -26,19 +26,52 @@ inline BNM::Field<IntList*> lanes;
 inline BNM::Method<IntList*> fighters;
 inline BNM::Method<int> damageAmount;
 inline BNM::Field<int> currentDamage;
-inline BNM::Field<bool> cancelled;
+inline BNM::Field<bool> cancelled,requiresTargetValidation,showImpact,willKillHero;
 struct Origin {int target=-1;std::uint64_t record=0;};
 inline Core::WeakObjectSettings<Origin> origins;
+inline thread_local Obj* convertingRedirect = nullptr;
+inline void (*originalConvert)(Obj*,Obj*,const void*) = nullptr;
+static void Convert(Obj* system, Obj* effect, const void* method) {
+    struct Scope {
+        Obj* previous = convertingRedirect;
+        ~Scope() { convertingRedirect = previous; }
+    } scope;
+    convertingRedirect = effect;
+    static std::atomic<unsigned> samples{0};
+    if (effect && Core::Performance::enabled && !Core::Performance::aiDepth && samples.fetch_add(1) < 64)
+        LOG_INFO("CustomComponents/DamageRedirect/CONVERT: target=%d amount=%d cancelled=%d",
+            Core::Metadata::Bind(effectTarget,effect).Get(),
+            Core::Metadata::Bind(damageAmount,effect)(), int(Core::Metadata::Bind(cancelled,effect).Get()));
+    originalConvert(system, effect, method);
+}
 struct DamageTrace {unsigned long long event;int target,damage;Origin origin;};
 inline thread_local std::vector<DamageTrace> traces;
 inline bool Scene(Obj* model){return model && reinterpret_cast<std::uintptr_t>(model)==Core::SceneViewContext::ModelIdentity();}
 inline void Created(Obj*,Obj* context,Obj* result){
-    if(!incoming || !context || Core::Performance::aiDepth)return;
+    if(!incoming || !context)return;
     const auto* list=reinterpret_cast<Engine::EntityAccess::List*>(result);if(!Engine::EntityAccess::Valid(list))return;
     static std::atomic<unsigned> samples{0};
     for(int i=0;i<list->size;++i){Obj* effect=list->items->m_Items[i];
         if(effect && effect->klass && std::string_view(effect->klass->name)=="RedirectedDamageEffect"){
             const int original=Core::Metadata::Bind(effectTarget,incoming).Get(),target=Core::Metadata::Bind(effectTarget,effect).Get();
+            if (target < 0 || target == original) continue;
+            // The stock redirector already evaluated its authored destination
+            // query. The replacement carries that decision into the queue.
+            // Reapplying the incoming hit's target validation can reject its
+            // new destination before RedirectedDamageEffectSystem runs.
+            Core::Metadata::Bind(requiresTargetValidation,effect).Set(false);
+            Obj* model=Core::Metadata::Bind(contextModel,context).Get();
+            Obj* recipient=Engine::EntityAccess::Find(model,target);
+            if (Engine::EntityAccess::Component(recipient,"LaneElement") &&
+                Engine::EntityAccess::Component(recipient,"Health") &&
+                !Engine::EntityAccess::Component(recipient,"Environment")) {
+                // The copied flags may describe a combat hit on the hero.
+                // Ask the stock damage record to present the hit on this card.
+                Core::Metadata::Bind(showImpact,effect).Set(true);
+                Core::Metadata::Bind(willKillHero,effect).Set(false);
+            }
+            Engine::EffectLifecycleEvents::damageInherited.Notify(incoming, effect);
+            if (Core::Performance::aiDepth) continue;
             const auto id=History::Domain::Emit(Core::Metadata::Bind(contextModel,context).Get(),History::Kind::DamageRule,
                 History::DamageRulePayload{"redirection","created",original,target,Core::Metadata::Bind(damageAmount,incoming)(),Core::Metadata::Bind(damageAmount,effect)(),false},target);
             origins.Set(effect,{original,id});
@@ -47,12 +80,29 @@ inline void Created(Obj*,Obj* context,Obj* result){
             LOG_INFO("CustomComponents/DamageRedirect/CREATED: originalTarget=%d target=%d amount=%d",Core::Metadata::Bind(effectTarget,incoming).Get(),Core::Metadata::Bind(effectTarget,effect).Get(),Core::Metadata::Bind(damageAmount,effect)());
     }
 }
+inline void (*originalDamageCopy)(Obj*,Obj*,Obj*,const void*) = nullptr;
+static void CopyDamage(Obj* self, Obj* source, Obj* instances, const void* method) {
+    const bool redirect = source && source == convertingRedirect && self && self->klass &&
+        std::string_view(self->klass->name) == "DamageEffect";
+    const auto origin = redirect ? origins.Get(source) : Origin{};
+    originalDamageCopy(self, source, instances, method);
+    if (!redirect) return;
+    Engine::EffectLifecycleEvents::damageInherited.Notify(source, self);
+    if (origin.target >= 0) origins.Set(self, origin);
+    static std::atomic<unsigned> samples{0};
+    if (Core::Performance::enabled && !Core::Performance::aiDepth && samples.fetch_add(1) < 64)
+        LOG_INFO("CustomComponents/DamageRedirect/HANDOFF: originalTarget=%d target=%d amount=%d cancelled=%d",
+            origin.target, Core::Metadata::Bind(effectTarget,self).Get(),
+            Core::Metadata::Bind(damageAmount,self)(), int(Core::Metadata::Bind(cancelled,self).Get()));
+}
 inline void Before(const Engine::EffectGuards::Context& context){
-    Obj* effect=context.effect;if(!effect || !effect->klass || std::string_view(effect->klass->name)!="RedirectedDamageEffect")return;
+    Obj* effect=context.effect;if(!effect || !effect->klass || std::string_view(effect->klass->name)!="DamageEffect")return;
+    const auto origin = origins.Get(effect);
+    if (origin.target < 0) return;
     Obj* model=Core::ModelRegistry::Get(Engine::RouterContext::RouterModel(context.router));if(!model || Core::Performance::aiDepth)return;
     const int id=Core::Metadata::Bind(effectTarget,effect).Get();
     Obj* health=Engine::EntityAccess::Component(Engine::EntityAccess::Find(model,id),"Health");
-    traces.push_back({context.event,id,health?Core::Metadata::Bind(currentDamage,health).Get():-1,origins.Get(effect)});
+    traces.push_back({context.event,id,health?Core::Metadata::Bind(currentDamage,health).Get():-1,origin});
 }
 inline void After(const Engine::EffectGuards::Context& context){
     if(traces.empty() || traces.back().event!=context.event)return;
@@ -156,9 +206,19 @@ inline bool Initialize(){
     lanes=BNM::Class("PvZCards.Engine.Components","LaneElement").GetField("LaneIds").cast<IntList*>();
     fighters=BNM::Class("PvZCards.Engine.Components","Lane").GetMethod("GetFightersForPlayer",1).cast<IntList*>();
     auto system=BNM::Class("PvZCards.Core.Systems","DamageEffectRedirectorSystem");
-    damageAmount=BNM::Class("PvZCards.Engine.Effects","DamageEffect").GetMethod("get_DamageAmount",0).cast<int>();
+    auto damage=BNM::Class("PvZCards.Engine.Effects","DamageEffect");
+    damageAmount=damage.GetMethod("get_DamageAmount",0).cast<int>();
+    showImpact=damage.GetField("ShowParticleEffect").cast<bool>();
+    willKillHero=damage.GetField("WillKillHero").cast<bool>();
     currentDamage=BNM::Class("PvZCards.Engine.Components","Health").GetField("CurrentDamage").cast<int>();
-    cancelled=BNM::Class("PvZCards.Engine","Effect").GetField("Cancelled").cast<bool>();
+    auto baseEffect = BNM::Class("PvZCards.Engine","Effect");
+    cancelled=baseEffect.GetField("Cancelled").cast<bool>();
+    requiresTargetValidation=baseEffect.GetField("RequiresTargetValidation").cast<bool>();
+    if (!cancelled.IsValid() || !requiresTargetValidation.IsValid() || !showImpact.IsValid() || !willKillHero.IsValid()) return false;
+    if (!Core::Hooks::Install(BNM::Class("PvZCards.Core.Systems","RedirectedDamageEffectSystem")
+            .GetMethod("ProcessEffect",1),Convert,originalConvert)) return false;
+    if (!Core::Hooks::Install(BNM::Class("PvZCards.Engine.Effects","DamageEffect")
+            .GetMethod("DeepCopyFrom",2),CopyDamage,originalDamageCopy)) return false;
     return contextModel.IsValid() && contextSelf.IsValid() && effectTarget.IsValid() && lanes.IsValid() && fighters.IsValid() && damageAmount.IsValid() && currentDamage.IsValid() && cancelled.IsValid() &&
         Engine::EffectCreationEvents::created.Add(Created) && Engine::EffectGuards::before.Add(Before) && Engine::EffectGuards::after.Add(After) &&
         Core::Hooks::Install(system.GetMethod("ProcessEffect",1),Process,originalProcess) &&

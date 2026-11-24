@@ -601,6 +601,9 @@ static bool FighterShouldChooseSecondary(void* self,int first,void* rawFilter,vo
         const bool candidatesReady=valid && FillFighterList(static_cast<Obj*>(rawCandidates),fighters);
         const bool singletonReady=fighters.size()==1 && candidatesReady && list->size==1 &&
             list->items->m_Items[0]==fighters.front();
+        // The phase-one blocker can carry TargetId=-1 and the UI may use
+        // a different finder. Publish the chosen primary at the chooser.
+        if (!fighters.empty()) RememberFirst(model, Engine::Match::Id(effect), first);
         const bool manualRequired=!fighters.empty() && !singletonReady;
         static std::atomic<unsigned> logs{0};
         if(logs.fetch_add(1)<85)
